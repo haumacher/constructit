@@ -56,7 +56,7 @@ class GroupWordsProbeTest {
         assertTrue(ed.statusHint.startsWith("Grouped"), "creation leads with what succeeded: ${ed.statusHint}")
         assertEquals(emptyList(), strayIds(ed, ed.statusHint), "no internal id reaches the user: ${ed.statusHint}")
         for (w in ed.doc.placementWarnings(flat)) {
-            assertEquals(emptyList(), strayIds(ed, w), "nor through the warnings: $w")
+            assertEquals(emptyList(), strayIds(ed, w.render()), "nor through the warnings: $w")
         }
 
         assertTrue(ed.undo(), "take the flat group back")

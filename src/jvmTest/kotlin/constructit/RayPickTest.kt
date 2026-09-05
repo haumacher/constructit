@@ -8,6 +8,7 @@ import constructit.editor.ElementKind
 import constructit.editor.HitTest
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -47,7 +48,7 @@ class RayPickTest {
         val ed = withRay()
         ed.click(Vec2(60.0, 0.0))
         assertEquals(ray(ed).id, ed.selection?.id, "got: ${ed.statusHint}")
-        assertTrue(ed.selectionLabel().startsWith("ray"), "got: ${ed.selectionLabel()}")
+        assertTrue(ed.selectionLabel().render().startsWith("ray"), "got: ${ed.selectionLabel()}")
     }
 
     /** The user's exact repro: a ray fills the LINE slot, so Perpendicular builds through it. */

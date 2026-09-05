@@ -113,7 +113,7 @@ class ConnectTest {
     ): String {
         val (path, why) = Connect3.connected(a, endA, tensionA, b, endB, tensionB, mode)
         assertNull(path, "this join was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     /** The unit direction the run [p] leaves its own start in — read off its first piece, not off the join. */

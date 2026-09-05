@@ -7,6 +7,7 @@ import constructit.editor.Element
 import constructit.editor.ElementKind
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -90,7 +91,7 @@ class NameAuthorityTest {
 
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(30.0, 0.0))
-        assertEquals("on_curve $name", ed.selectionLabel(), "the inspector header names it as the file does")
+        assertEquals("on_curve $name", ed.selectionLabel().render(), "the inspector header names it as the file does")
 
         // a refusal names the element the same way: this rider is not anchorable to a point off its carrier
         ed.setTool(Tools.MAKE_RELATIVE)
@@ -171,7 +172,7 @@ class NameAuthorityTest {
         assertTrue(doc.elements.any { it.id != doc.nameOf(it) }, "the wheel's ids diverge — parameters and riders take numbers")
         // and the name the load's own note used is one of them (OP-18's migration findings)
         val note = assertNotNull(doc.loadNotes.firstOrNull())
-        assertTrue(declaredNames(text).any { note.startsWith(it) }, "the note names the element as the file does: $note")
+        assertTrue(declaredNames(text).any { note.render().startsWith(it) }, "the note names the element as the file does: $note")
     }
 
     private companion object {

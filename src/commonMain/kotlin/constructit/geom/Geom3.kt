@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -352,7 +354,7 @@ sealed interface Feature3 {
          * construction (OP-9), and that doctrine is untouched: this field can only ever be non-null on a body
          * that came from outside.
          */
-        val openShell: String? = null,
+        val openShell: Msg? = null,
     ) : Feature3 {
         override val footprint: List<Region> get() = plan
     }
@@ -542,10 +544,10 @@ sealed interface Feature3 {
          * the lists are a pure function of `(base, targets, sections, choices, absent)` (OP-15), and being
          * declared in the class **body** they are excluded from the data class's `equals`/`hashCode`/`copy`.
          */
-        internal val dressedFaces: Pair<List<FacePatch>?, String?> by lazy { Blend3.deriveDressedFaces(this) }
+        internal val dressedFaces: Pair<List<FacePatch>?, Msg?> by lazy { Blend3.deriveDressedFaces(this) }
 
         /** The dressed edge list, memoized for the reason [dressedFaces] states. */
-        internal val dressedEdges: Pair<List<SolidEdge>?, String?> by lazy { Blend3.deriveDressedEdges(this) }
+        internal val dressedEdges: Pair<List<SolidEdge>?, Msg?> by lazy { Blend3.deriveDressedEdges(this) }
     }
 
     /**
@@ -1064,13 +1066,13 @@ object Geom3 {
         region: Region,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         quality: MeshQuality = MeshQuality.FINE,
-    ): Pair<TessRegion?, String?> {
+    ): Pair<TessRegion?, Msg?> {
         val outer = tessellateLoop(region.outer, tolMm, quality)
-        if (outer.size < 3) return null to "the outer boundary tessellates to fewer than three corners"
+        if (outer.size < 3) return null to Msgs.refusalSolidOuterBoundaryTessellatesFewerThan()
         val holes = ArrayList<List<Vec2>>(region.holes.size)
         for (h in region.holes) {
             val poly = tessellateLoop(h, tolMm, quality)
-            if (poly.size < 3) return null to "a hole tessellates to fewer than three corners"
+            if (poly.size < 3) return null to Msgs.refusalSolidHoleTessellatesFewerThanThree()
             holes.add(poly)
         }
         // OP-14 normalises the loops, so this only re-states the convention in polygon terms.
@@ -1135,9 +1137,9 @@ object Geom3 {
      *    ear clips the most convex corner instead — progress is guaranteed, so a near-degenerate sliver
      *    cannot hang the mesh.
      */
-    fun triangulate(t: TessRegion): Pair<List<Tri3>?, String?> {
+    fun triangulate(t: TessRegion): Pair<List<Tri3>?, Msg?> {
         val (merged, why) = bridgeHoles(t.outer, t.holes)
-        if (merged == null) return null to (why ?: "cannot triangulate")
+        if (merged == null) return null to (why ?: Msgs.refusalSolidCannotTriangulate())
         return earClip(merged)
     }
 
@@ -1157,7 +1159,7 @@ object Geom3 {
     private fun bridgeHoles(
         outer: List<Vec2>,
         holes: List<List<Vec2>>,
-    ): Pair<List<Vec2>?, String?> {
+    ): Pair<List<Vec2>?, Msg?> {
         if (holes.isEmpty()) return outer to null
         val anchors = holes.map { anchorIndex(it) }
         val order =
@@ -1180,7 +1182,7 @@ object Geom3 {
                 spliced = true
                 break
             }
-            if (!spliced) return null to "no bridge from hole ${hi + 1} to the outer boundary is visible"
+            if (!spliced) return null to Msgs.refusalSolidNoBridgeHoleOuterBoundary(hi = hi + 1)
         }
         return merged to null
     }
@@ -1297,7 +1299,7 @@ object Geom3 {
         return inside
     }
 
-    private fun earClip(poly: List<Vec2>): Pair<List<Tri3>?, String?> {
+    private fun earClip(poly: List<Vec2>): Pair<List<Tri3>?, Msg?> {
         val ring = ArrayList<Int>(poly.size)
         for (i in poly.indices) ring.add(i)
         val tris = ArrayList<Tri3>(max(1, poly.size - 2))
@@ -1331,7 +1333,7 @@ object Geom3 {
                 break
             }
             if (!clipped) {
-                if (bestK < 0) return null to "the boundary cannot be triangulated (is it self-intersecting?)"
+                if (bestK < 0) return null to Msgs.refusalSolidBoundaryCannotBeTriangulatedIs()
                 // No corner is a clean ear — clip the most convex one anyway, so a near-degenerate
                 // sliver costs a little accuracy rather than an endless loop.
                 val ip = ring[(bestK - 1 + ring.size) % ring.size]
@@ -1347,7 +1349,7 @@ object Geom3 {
             val c = poly[ring[2]]
             if (abs((b - a).cross(c - b)) > AREA_EPS) tris.add(Tri3(a, b, c))
         }
-        if (tris.isEmpty()) return null to "the boundary encloses no area"
+        if (tris.isEmpty()) return null to Msgs.refusalSolidBoundaryEnclosesNoArea()
         return tris to null
     }
 
@@ -1434,8 +1436,8 @@ object Geom3 {
         depth: Double,
         stepOff: Boolean,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
-        if (regions.isEmpty()) return null to "a sketch needs at least one region"
+    ): Pair<Solid3?, Msg?> {
+        if (regions.isEmpty()) return null to Msgs.refusalSolidSketchNeedsLeastOneRegion()
         val m = Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)
         val mirrored =
             regions.map { r ->
@@ -1465,17 +1467,17 @@ object Geom3 {
         sketch: Sketch3,
         depth: Double,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
-        if (sketch.regions.isEmpty()) return null to "a sketch with no region cannot be extruded"
-        if (depth <= WELD_TOL) return null to "extrude depth must be positive"
+    ): Pair<Solid3?, Msg?> {
+        if (sketch.regions.isEmpty()) return null to Msgs.refusalSolidSketchNoRegionCannotBe()
+        if (depth <= WELD_TOL) return null to Msgs.refusalSolidExtrudeDepthMustBePositive()
         val plane = sketch.plane
         val n = plane.normal
         val prepared = ArrayList<Pair<TessRegion, List<Tri3>>>(sketch.regions.size)
         for (region in sketch.regions) {
             val (tess, why) = tessellateRegion(region, tolMm)
-            if (tess == null) return null to (why ?: "cannot tessellate the sketch")
+            if (tess == null) return null to (why ?: Msgs.refusalSolidCannotTessellateSketch())
             val (tris, reason) = triangulate(tess)
-            if (tris == null) return null to (reason ?: "cannot triangulate the sketch")
+            if (tris == null) return null to (reason ?: Msgs.refusalSolidCannotTriangulateSketch())
             prepared.add(tess to tris)
         }
         return Solid3.derived(Feature3.Extrusion(sketch, depth)) { quality ->
@@ -1522,7 +1524,7 @@ object Geom3 {
         axisOrigin: Vec2,
         axisDir: Vec2,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> = revolve(sketch, axisOrigin, axisDir, Turn3.Full, tolMm)
+    ): Pair<Solid3?, Msg?> = revolve(sketch, axisOrigin, axisDir, Turn3.Full, tolMm)
 
     /**
      * A **partial** solid of revolution: [sketch] swept [angle] rad about the axis through [axisOrigin]
@@ -1545,7 +1547,7 @@ object Geom3 {
         angle: Double,
         offset: Double = 0.0,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> = revolve(sketch, axisOrigin, axisDir, Turn3.Arc.of(offset, angle), tolMm)
+    ): Pair<Solid3?, Msg?> = revolve(sketch, axisOrigin, axisDir, Turn3.Arc.of(offset, angle), tolMm)
 
     /**
      * The one revolve, over the interval [turn] describes (OP-17 slice 2).
@@ -1573,15 +1575,15 @@ object Geom3 {
         axisDir: Vec2,
         turn: Turn3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
-        if (sketch.regions.isEmpty()) return null to "a sketch with no region cannot be revolved"
-        if (axisDir.length() < Vec2.EPS) return null to "the axis of revolution has no direction"
+    ): Pair<Solid3?, Msg?> {
+        if (sketch.regions.isEmpty()) return null to Msgs.refusalSolidSketchNoRegionCannotBe2()
+        if (axisDir.length() < Vec2.EPS) return null to Msgs.refusalSolidAxisRevolutionHasNoDirection()
         val twoPi = 2.0 * PI
         val arc = turn as? Turn3.Arc
         if (arc != null && arc.sweep <= WELD_TOL) {
-            return null to "a revolve needs an angle to sweep through — this one sweeps none"
+            return null to Msgs.refusalSolidRevolveNeedsAngleSweepThrough()
         }
-        if (arc != null && arc.sweep > twoPi + 1e-9) return null to "revolve angle must not exceed a full turn"
+        if (arc != null && arc.sweep > twoPi + 1e-9) return null to Msgs.refusalSolidRevolveAngleMustNotExceed()
         val start = arc?.start ?: 0.0
         val angle = arc?.sweep ?: twoPi
         val full = arc == null || abs(angle - twoPi) <= 1e-9
@@ -1589,7 +1591,7 @@ object Geom3 {
         val tessellated = ArrayList<TessRegion>(sketch.regions.size)
         for (region in sketch.regions) {
             val (tess, why) = tessellateRegion(region, tolMm)
-            if (tess == null) return null to (why ?: "cannot tessellate the sketch")
+            if (tess == null) return null to (why ?: Msgs.refusalSolidCannotTessellateSketch())
             tessellated.add(tess)
         }
 
@@ -1602,10 +1604,10 @@ object Geom3 {
         val radii = allPoints.map { (it - axisOrigin).dot(axis.perp()) }
         val hasPos = radii.any { it > WELD_TOL }
         val hasNeg = radii.any { it < -WELD_TOL }
-        if (hasPos && hasNeg) return null to "the profile crosses the axis of revolution"
+        if (hasPos && hasNeg) return null to Msgs.refusalSolidProfileCrossesAxisRevolution()
         if (hasNeg) axis = -axis
         val perp = axis.perp()
-        if (!hasPos && !hasNeg) return null to "the profile lies on the axis of revolution"
+        if (!hasPos && !hasNeg) return null to Msgs.refusalSolidProfileLiesAxisRevolution()
 
         // The same frame in the world: A along the axis, P the in-plane radial direction at angle 0,
         // N = A x P the plane's own normal, so increasing the angle turns P towards N.
@@ -1641,7 +1643,7 @@ object Geom3 {
         if (!full) {
             for (tess in tessellated) {
                 val (tris, reason) = triangulate(tess)
-                if (tris == null) return null to (reason ?: "cannot triangulate the revolve profile")
+                if (tris == null) return null to (reason ?: Msgs.refusalSolidCannotTriangulateRevolveProfile())
                 caps.add(tris)
             }
         }
@@ -1738,7 +1740,7 @@ object Geom3 {
         seed: FrameSeed? = null,
         /** How the run's own twist varies with the station, or null for the linear distribution (session 79). */
         twistLaw: SizeLaw? = null,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         // **The law first, on its own fixed grid** (OP-26, session 77): it is the statement that decides
         // whether *any* station has a size, `t = 0` included, so it is asked before the constant reading of
         // the radius below — which for a law-carrying tube is that same law read at the start.
@@ -1747,19 +1749,19 @@ object Geom3 {
         // round, so what is asked of it is only that it can be read (OP-26, session 79).
         twistLaw?.let { law -> SizeLaws.unreadable(law)?.let { return null to it } }
         if (profile is SweepProfile.Round && profile.radius <= WELD_TOL) {
-            return null to "a tube needs a positive radius — this one is ${Frames3.mm(profile.radius)} mm"
+            return null to Msgs.refusalSolidTubeNeedsPositiveRadiusThis(mm = Frames3.mm(profile.radius))
         }
         val family = profile as? SweepProfile.Family
         val region = profile.region
         for (loop in listOf(region.outer) + region.holes) openBoundary(loop)?.let { return null to it }
         val (tess, why) = tessellateRegion(region, tolMm)
-        if (tess == null) return null to (why ?: "cannot tessellate the profile")
-        if (tessArea(tess) <= AREA_EPS) return null to "the profile encloses no area, so there is nothing to sweep"
+        if (tess == null) return null to (why ?: Msgs.refusalSolidCannotTessellateProfile())
+        if (tessArea(tess) <= AREA_EPS) return null to Msgs.refusalSolidProfileEnclosesNoAreaSo()
         // how far the profile reaches from the path — the number the self-intersection criterion is about,
         // and the radius the twist's own sampling refinement is measured at. For a **family** it is the
         // largest any of its stations ever reaches (OP-26, session 79), read off the family's own grid.
         val reach = family?.reach ?: tess.outer.maxOf { it.length() }
-        if (reach <= WELD_TOL) return null to "the profile has no size, so there is nothing to sweep"
+        if (reach <= WELD_TOL) return null to Msgs.refusalSolidProfileHasNoSizeSo()
         // **The sampling is refined for the largest the section ever is** (OP-26, session 77), read off the
         // law's own fixed grid and never off the stations — so a horn's wide end is resolved by exactly the
         // rule a constant section of that size would get, and no criterion's resolution is the mesh's.
@@ -1779,7 +1781,7 @@ object Geom3 {
         val lawSpans = max(SizeLaws.spans(profile, reach, tolMm), family?.composedSpans(tolMm) ?: 0)
 
         val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, edgeGrown, tolMm, seed, lawSpans, twistLaw)
-        if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
+        if (frame == null) return null to (noFrame ?: Msgs.refusalSolidCannotBuildMovingFrameAlong())
         // **The per-station reading of the size** — one `t` over the whole run by arc length, stated once
         // here so the mesh, the plan hint and all three refusal terms read the identical number. Null for a
         // constant section, which is what keeps every message and every triangle of one byte-identical.
@@ -1813,15 +1815,15 @@ object Geom3 {
         // the local term's own directional figure is already the scaled one, and a round tube — which has no
         // outline to speak through — gains the inward wording it never needed while its radius was one number.
         val sectionOutline = if (profile is SweepProfile.Round) null else tess.outer
-        val intoTheBend: ((Double) -> String)? =
+        val intoTheBend: ((Double) -> Msg)? =
             when {
                 // …and a **family** names the section the drawing states *at that station*, since there is no
                 // one formula to quote and the whole point is that the outline differs along the run
                 // (OP-26, session 79). First, because every other branch below is about a section that has
                 // one size for the whole run.
-                family != null -> { d -> "the section the family states there (${Frames3.mm(d)} mm into the bend)" }
-                profile !is SweepProfile.Round -> { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
-                profile.law != null -> { d -> "the tube's radius there (${Frames3.mm(d)} mm)" }
+                family != null -> { d -> Msgs.refusalSolidSectionFamilyStatesThereMm(mm = Frames3.mm(d)) }
+                profile !is SweepProfile.Round -> { d -> Msgs.refusalSolidProfileReachBendMm(mm = Frames3.mm(d)) }
+                profile.law != null -> { d -> Msgs.refusalSolidTubeRadiusThereMm(mm = Frames3.mm(d)) }
                 else -> null
             }
         Embedding.check(
@@ -1848,9 +1850,7 @@ object Geom3 {
         // carried through unchanged — which is why this fires only where the condition is real.
         if (frame.closed && abs(frame.seam) > Frames3.SEAM_EPS) {
             return null to
-                "the frame does not come back to itself round this closed curve — it is ${Frames3.deg(frame.seam)}° " +
-                "out at the seam, which would twist the last piece of the sweep against the first; state a twist " +
-                "of ${Frames3.deg(twistRad - frame.seam)}° (or that plus any whole number of turns) to close it"
+                Msgs.refusalSolidFrameDoesNotComeBack(deg = Frames3.deg(frame.seam), deg2 = Frames3.deg(twistRad - frame.seam))
         }
 
         val (shells, noMesh) =
@@ -1865,7 +1865,7 @@ object Geom3 {
             ) { st, p ->
                 st.place(p)
             }
-        if (shells == null) return null to (noMesh ?: "cannot build this sweep")
+        if (shells == null) return null to (noMesh ?: Msgs.refusalSolidCannotBuildThisSweep())
         // **The plan comes off the run, not off the triangles** ([Silhouette.ofSwept]). It used to be
         // `Silhouette.of(mesh, plan)`, which made the 2D view the one consumer that could not avoid meshing —
         // and this body is exactly the one the deferral is for. The stations are already in hand from the
@@ -2057,14 +2057,14 @@ object Geom3 {
          */
         family: ((Int) -> TessRegion)? = null,
         place: (Frame3, Vec2) -> Vec3,
-    ): Pair<((MeshQuality) -> Mesh3)?, String?> {
-        if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
+    ): Pair<((MeshQuality) -> Mesh3)?, Msg?> {
+        if (stations.size < 2) return null to Msgs.refusalSolidSweepNeedsLeastTwoStations()
         val caps = ArrayList<List<Tri3>>(if (closed) 0 else sections.size)
         if (!closed) {
             for (tess in sections) {
                 // a family's first cap is its **start station's** own ring, and a family is one section
                 val (tris, noTris) = triangulate(if (family == null) tess else family(0))
-                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+                if (tris == null) return null to (noTris ?: Msgs.refusalSolidCannotCapThisSweep())
                 caps.add(tris)
             }
         }
@@ -2076,7 +2076,7 @@ object Geom3 {
                 null
             } else {
                 val (tris, noTris) = triangulate(family(stations.lastIndex))
-                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+                if (tris == null) return null to (noTris ?: Msgs.refusalSolidCannotCapThisSweep())
                 tris
             }
         return { quality: MeshQuality ->
@@ -2157,14 +2157,13 @@ object Geom3 {
     }
 
     /** Why [loop] is not a closed outline — naming the piece that leaves the gap — or null when it is one. */
-    private fun openBoundary(loop: Loop): String? {
+    private fun openBoundary(loop: Loop): Msg? {
         val els = loop.elements
-        if (els.isEmpty()) return "the profile has an empty boundary, so it is no closed section"
+        if (els.isEmpty()) return Msgs.refusalSolidProfileHasEmptyBoundarySo()
         for (i in els.indices) {
             val j = (i + 1) % els.size
             if ((GeomMath.endOf(els[i]) - GeomMath.startOf(els[j])).length() > WELD_TOL) {
-                return "the profile's outline does not close — piece ${i + 1} ends where piece ${j + 1} does not " +
-                    "begin, and a sweep needs a closed section"
+                return Msgs.refusalSolidProfileOutlineDoesNotClose(i = i + 1, j = j + 1)
             }
         }
         return null
@@ -2174,19 +2173,19 @@ object Geom3 {
     private fun profileReach(
         profile: SweepProfile,
         reach: Double,
-    ): String =
+    ): Msg =
         // A **law** names itself instead of a number, because there is no one number to name — the global
         // term's sentence is about the run as a whole, so it quotes the size the drawing *states* and the
         // per-station figure it actually needed. That is the session-65 rule read at a varying section: the
         // words are about the curve and the stated sizes, and nothing in them is the mesh's.
         when {
-            profile.law != null -> "the section's stated size (${profile.law!!.what()})"
-            profile is SweepProfile.Round -> "the tube's radius (${Frames3.mm(profile.radius)} mm)"
+            profile.law != null -> Msgs.refusalSolidSectionStatedSize(what = profile.law!!.what())
+            profile is SweepProfile.Round -> Msgs.refusalSolidTubeRadiusMm(mm = Frames3.mm(profile.radius))
             // A **family** names the widest it ever is, because there is no formula to quote: what the run
             // has to hold is the largest section the drawing states anywhere along it, and the stations the
             // refusal names are where it did not fit (OP-26, session 79).
-            profile is SweepProfile.Family -> "the widest section the family states (${Frames3.mm(reach)} mm from the path)"
-            else -> "the profile's reach from the path (${Frames3.mm(reach)} mm)"
+            profile is SweepProfile.Family -> Msgs.refusalSolidWidestSectionFamilyStatesMm(mm = Frames3.mm(reach))
+            else -> Msgs.refusalSolidProfileReachPathMm(mm = Frames3.mm(reach))
         }
 
     // ---- the loft: an ordered run of sections, optionally shaped by guides (OP-17's third feature) ----
@@ -2305,7 +2304,7 @@ object Geom3 {
         seams: List<Int> = emptyList(),
         guides: List<LoftGuide> = emptyList(),
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val (plan, why) = loftPlan(sections, seams, guides, tolMm)
         if (plan == null) return null to why
         return loftShell(plan, seams, guides, tolMm)
@@ -2323,14 +2322,14 @@ object Geom3 {
         seams: List<Int> = emptyList(),
         guides: List<LoftGuide> = emptyList(),
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<LoftPlan?, String?> {
+    ): Pair<LoftPlan?, Msg?> {
         if (sections.size < 2) {
-            return null to "a loft needs at least two sections — one area and a point make a pyramid or a cone"
+            return null to Msgs.refusalSolidLoftNeedsLeastTwoSections()
         }
         val apexes = sections.indices.filter { sections[it] is LoftSection.Apex }
-        if (apexes.size > 1) return null to "only one of a loft's sections may be a point — a run between two points has no volume"
+        if (apexes.size > 1) return null to Msgs.refusalSolidOnlyOneLoftSectionsMay()
         if (apexes.any { it != 0 && it != sections.size - 1 }) {
-            return null to "a point may only be a loft's first or last section, not one inside the run"
+            return null to Msgs.refusalSolidPointMayOnlyBeLoft()
         }
 
         // ---- every section as values: an area's polygon and piece starts, or an apex position ----
@@ -2341,19 +2340,18 @@ object Geom3 {
                 is LoftSection.Apex -> centres[k] = s.at
                 is LoftSection.Area -> {
                     if (s.sketch.regions.size != 1) {
-                        return null to "a loft's section is one area, and section ${k + 1} has ${s.sketch.regions.size}"
+                        return null to Msgs.refusalSolidLoftSectionIsOneArea(k = k + 1, count = s.sketch.regions.size)
                     }
                     val region = s.sketch.regions[0]
                     if (region.holes.isNotEmpty()) {
                         return null to
-                            "section ${k + 1} has a hole, and a loft pairs one boundary with one boundary — " +
-                            "loft the outer boundaries and subtract a loft of the holes"
+                            Msgs.refusalSolidSectionHasHoleLoftPairs(k = k + 1)
                     }
                     val (tess, why) = tessellateRegion(region, tolMm)
-                    if (tess == null) return null to "section ${k + 1}: ${why ?: "cannot be tessellated"}"
-                    if (abs(tessArea(tess)) <= AREA_EPS) return null to "section ${k + 1} encloses no area"
+                    if (tess == null) return null to Msgs.refusalSectionOfIndex(k = k + 1, reason = why ?: Msgs.refusalSolidSectionCannotBeTessellated())
+                    if (abs(tessArea(tess)) <= AREA_EPS) return null to Msgs.refusalSolidSectionEnclosesNoArea(k = k + 1)
                     val (poly, starts) = loopWithStarts(region.outer, tolMm)
-                    if (poly.size < 3) return null to "section ${k + 1} tessellates to fewer than three corners"
+                    if (poly.size < 3) return null to Msgs.refusalSolidSectionTessellatesFewerThanThree(k = k + 1)
                     preps[k] = LoftPrep(s.sketch.plane, poly, starts, tess)
                     centres[k] = s.sketch.plane.toWorld(averageOf(poly))
                 }
@@ -2365,7 +2363,7 @@ object Geom3 {
         for (k in 0 until sections.size - 1) {
             val d = centres[k + 1]!! - centres[k]!!
             if (d.length() <= WELD_TOL) {
-                return null to "sections ${k + 1} and ${k + 2} sit at the same place, so the loft has no direction to run in"
+                return null to Msgs.refusalSolidSectionsSitSamePlaceSo(k = k + 1, k2 = k + 2)
             }
             runs.add(d.normalized())
         }
@@ -2378,9 +2376,9 @@ object Geom3 {
                 val neighbour = if (k < runs.size) sections[k + 1] else sections[k - 1]
                 return null to
                     if (neighbour is LoftSection.Apex) {
-                        "the apex lies in section ${k + 1}'s own plane, so the loft has no height"
+                        Msgs.refusalSolidApexLiesSectionOwnPlane(k = k + 1)
                     } else {
-                        "section ${k + 1}'s plane runs along the loft, so its shell would fold through itself"
+                        Msgs.refusalSolidSectionPlaneRunsAlongLoft(k = k + 1)
                     }
             }
             if (n.dot(r) * polygonArea(p.poly) < 0.0) {
@@ -2399,7 +2397,7 @@ object Geom3 {
         // ---- one global parameter set, sampled on every section ----
         val cums = preps.map { it?.let { p -> cumulativeOf(p.poly) } }
         val perims = preps.indices.map { cums[it]?.last() ?: 0.0 }
-        val minPerim = perims.filter { it > 0.0 }.minOrNull() ?: return null to "a loft needs at least one area section"
+        val minPerim = perims.filter { it > 0.0 }.minOrNull() ?: return null to Msgs.refusalSolidLoftNeedsLeastOneArea()
         // params closer together than a corner is wide are one parameter: the sampled points would weld in the
         // mesh but not in a cap's triangulation, and that difference is exactly a crack
         val paramTol = (10.0 * RegionBool.EPS / minPerim).coerceAtMost(1e-6)
@@ -2413,7 +2411,7 @@ object Geom3 {
         val us = ArrayList<Double>(sorted.size)
         for (v in sorted) if (us.isEmpty() || v - us.last() > paramTol) us.add(v)
         if (us.size > 1 && (1.0 - us.last()) + us.first() <= paramTol) us.removeAt(us.size - 1)
-        if (us.size < 3) return null to "the loft's boundaries give fewer than three rails"
+        if (us.size < 3) return null to Msgs.refusalSolidLoftBoundariesGiveFewerThan()
         val ring2 = preps.indices.map { k -> preps[k]?.let { p -> us.map { u -> pointAtParam(p.poly, cums[k]!!, u) } } }
         val ringW =
             sections.indices.map { k ->
@@ -2425,7 +2423,7 @@ object Geom3 {
         val rails = ArrayList<LoftRail>(guides.size)
         for ((gi, g) in guides.withIndex()) {
             val (rail, why) = railOf(gi, g, sections, preps, cums, perims, tolMm)
-            if (rail == null) return null to (why ?: "cannot honour guide ${gi + 1}")
+            if (rail == null) return null to (why ?: Msgs.refusalSolidCannotHonourGuide(gi = gi + 1))
             rails.add(rail)
         }
         return LoftPlan(sections, preps.toList(), us, ring2, ringW, runs, hand, rails) to null
@@ -2445,7 +2443,7 @@ object Geom3 {
         seams: List<Int>,
         guides: List<LoftGuide>,
         tolMm: Double,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val sections = plan.sections
         val preps = plan.preps
         val us = plan.us
@@ -2466,17 +2464,13 @@ object Geom3 {
                 for (j in 0 until m) {
                     if ((ringW[k + 1][j] - ringW[k][j]).dot(runs[k]) <= WELD_TOL) {
                         return null to
-                            "sections ${k + 1} and ${k + 2} fold into each other — their planes cross inside the " +
-                            "loft, so its shell would pass through itself"
+                            Msgs.refusalSolidSectionsFoldEachOtherTheir(k = k + 1, k2 = k + 2)
                     }
                 }
                 val fold = crossingRails(ringW[k], ringW[k + 1])
                 if (fold != null) {
                     return null to
-                        "the seam pairs sections ${k + 1} and ${k + 2} so that their rails cross " +
-                        "(the ones at ${percent(us[fold.first])} and ${percent(us[fold.second])} of the boundary meet " +
-                        "in mid-run), which would fold the shell through itself — start the correspondence at " +
-                        "another vertex"
+                        Msgs.refusalSolidSeamPairsSectionsSoThat(k = k + 1, k2 = k + 2, percent = percent(us[fold.first]), percent2 = percent(us[fold.second]))
                 }
             }
         }
@@ -2488,9 +2482,9 @@ object Geom3 {
         for (k in listOf(0, sections.size - 1)) {
             val p = preps[k] ?: continue
             val (tris, why) = triangulate(p.tess)
-            if (tris == null) return null to "section ${k + 1}: ${why ?: "cannot be triangulated"}"
+            if (tris == null) return null to Msgs.refusalSectionOfIndex(k = k + 1, reason = why ?: Msgs.refusalSolidSectionCannotBeTriangulated())
             val (split, why2) = splitToRequired(tris, ring2[k]!!)
-            if (split == null) return null to (why2 ?: "cannot close section ${k + 1}")
+            if (split == null) return null to (why2 ?: Msgs.refusalSolidCannotCloseSection(k = k + 1))
             caps.add(p to split)
             // a cap triangle maps to the world with its normal along +plane.normal; the outward one is against
             // the run at the first section and along it at the last, and `hand` is which of the two that is
@@ -2540,11 +2534,7 @@ object Geom3 {
                     val j2 = (j + 1) % m
                     if (!foldedQuad(rows[i][j], rows[i][j2], rows[i + 1][j2], rows[i + 1][j])) continue
                     return null to
-                        "the seam pairs sections ${k + 1} and ${k + 2} so that the band between them folds " +
-                        "over itself: the strip at ${percent(us[j])} of the boundary turns so far that the " +
-                        "two triangles its own split makes of it face against each other, so the shell " +
-                        "passes through the run rather than running along it — start the correspondence at " +
-                        "another vertex, or turn one of the sections so the rails run the same way about it"
+                        Msgs.refusalSolidSeamPairsSectionsSoThat2(k = k + 1, k2 = k + 2, percent = percent(us[j]))
                 }
             }
         }
@@ -2575,10 +2565,7 @@ object Geom3 {
         // a correspondence that folds in a way no single quad does ([MeshCanon.fault]: flap and hollow)
         MeshCanon.fault(shell)?.let {
             return null to
-                "the correspondence folds this loft's shell back on itself — $it. Two bands that are wound " +
-                "against each other along the rail they share are the surface doubling back, which is what a " +
-                "seam turned too far does short of making two rails meet: start the correspondence at " +
-                "another vertex, or turn one of the sections so the rails run the same way about the run"
+                Msgs.refusalSolidCorrespondenceFoldsThisLoftShell(itWord = it)
         }
         return Solid3.derivedFine(Feature3.Loft(sections, seams, guides)) { shell } to null
     }
@@ -2676,17 +2663,17 @@ object Geom3 {
         cums: List<List<Double>?>,
         perims: List<Double>,
         tolMm: Double,
-    ): Pair<LoftRail?, String?> {
+    ): Pair<LoftRail?, Msg?> {
         val flat = ArrayList<Vec2>()
         for (e in g.pieces) {
             for (p in GeomMath.tessellatePiece(e, tolMm)) {
                 if (flat.isEmpty() || (p - flat.last()).length() > WELD_TOL) flat.add(p)
             }
         }
-        if (flat.size < 2) return null to "guide ${gi + 1} is not a curve — it has no length to run along"
+        if (flat.size < 2) return null to Msgs.refusalSolidGuideIsNotCurveIt(gi = gi + 1)
         val poly = flat.map { g.plane.toWorld(it) }
         val cum = cumulative3(poly)
-        if (cum.last() <= WELD_TOL) return null to "guide ${gi + 1} has no length"
+        if (cum.last() <= WELD_TOL) return null to Msgs.refusalSolidGuideHasNoLength(gi = gi + 1)
         val touch = HashMap<Int, Pair<Double, Double>>()
         for (k in sections.indices) {
             val p = preps[k] ?: continue
@@ -2695,14 +2682,12 @@ object Geom3 {
         }
         if (touch.size < 2) {
             return null to
-                "guide ${gi + 1} passes through ${touch.size} of the loft's sections — a guide must pass through " +
-                "the corresponding point of at least two of them"
+                Msgs.refusalSolidGuidePassesThroughLoftSections(gi = gi + 1, count = touch.size)
         }
         val spanned = touch.keys.sorted()
         if (spanned.last() - spanned.first() + 1 != spanned.size) {
             return null to
-                "guide ${gi + 1} skips section ${(spanned.first()..spanned.last()).first { it !in touch }.plus(1)} — " +
-                "a guide shapes a consecutive run of sections"
+                Msgs.refusalSolidGuideSkipsSectionGuideShapes(gi = gi + 1, first = (spanned.first()..spanned.last()).first { it !in touch }.plus(1))
         }
         val ref = touch[spanned.first()]!!.first
         for (k in spanned) {
@@ -2710,10 +2695,7 @@ object Geom3 {
             val off = circularDistance(u, ref) * perims[k]
             if (off > max(tolMm, 10.0 * WELD_TOL)) {
                 return null to
-                    "guide ${gi + 1} meets section ${spanned.first() + 1} at ${percent(ref)} of its boundary but " +
-                    "section ${k + 1} at ${percent(u)} — that is ${round(off * 100.0) / 100.0} mm along section " +
-                    "${k + 1}'s boundary from the corresponding point, and a guide must pass through " +
-                    "corresponding points"
+                    Msgs.refusalSolidGuideMeetsSectionItsBoundary(gi = gi + 1, first = spanned.first() + 1, percent = percent(ref), k = k + 1, percent2 = percent(u), round = (round(off * 100.0) / 100.0).toString())
             }
         }
         return LoftRail(poly, cum, touch, ref) to null
@@ -2950,8 +2932,8 @@ object Geom3 {
     /** Heights closer together than this (mm) are one level of the stack. */
     const val Z_EPS = 1e-7
 
-    private const val NOT_PRISMATIC =
-        "this solid is not a prism, so it has no same-axis boolean; general booleans arrive with Manifold (OP-9)"
+    private val NOT_PRISMATIC =
+        Msgs.refusalSolidThisSolidIsNotPrism()
 
     /**
      * The **prismatic reading** of a feature (OP-22), or null with a reason.
@@ -2965,7 +2947,7 @@ object Geom3 {
     fun prismatic(
         feature: Feature3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Feature3.Prism?, String?> =
+    ): Pair<Feature3.Prism?, Msg?> =
         when (feature) {
             is Feature3.Prism -> feature to null
             is Feature3.Revolution -> null to NOT_PRISMATIC
@@ -3038,8 +3020,8 @@ object Geom3 {
     private fun oneSlab(
         feature: Feature3.Extrusion,
         tolMm: Double,
-    ): Pair<Feature3.Prism?, String?> {
-        if (feature.depth <= WELD_TOL) return null to "extrude depth must be positive"
+    ): Pair<Feature3.Prism?, Msg?> {
+        if (feature.depth <= WELD_TOL) return null to Msgs.refusalSolidExtrudeDepthMustBePositive()
         val (rings, why) = RegionBool.ringsOf(feature.sketch.regions, tolMm)
         if (rings == null) return null to why
         val (regions, why2) = RegionBool.regionsOf(RegionBool.canonical(rings))
@@ -3064,7 +3046,7 @@ object Geom3 {
         a: Solid3,
         b: Solid3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val (pa, whyA) = prismatic(a.feature, tolMm)
         if (pa == null) return null to (whyA ?: NOT_PRISMATIC)
         val (pb, whyB) = prismatic(b.feature, tolMm)
@@ -3080,20 +3062,20 @@ object Geom3 {
             val z1 = levels[i + 1]
             if (z1 - z0 <= Z_EPS) continue
             val (rings, why) = RegionBool.combine(ringsBetween(slabsA, z0, z1), ringsBetween(slabsB, z0, z1), kind)
-            if (rings == null) return null to (why ?: "the boolean failed on the slice $z0..$z1 mm")
+            if (rings == null) return null to (why ?: Msgs.refusalSolidBooleanFailedSliceMm(z0 = z0.toString(), z1 = z1.toString()))
             if (rings.isEmpty()) continue
             val (regions, why2) = RegionBool.regionsOf(rings)
-            if (regions == null) return null to (why2 ?: "the boolean produced an area that does not nest")
+            if (regions == null) return null to (why2 ?: Msgs.refusalSolidBooleanProducedAreaThatDoes())
             out.add(Slab(regions, z0, z1))
         }
         val merged = mergeSlabs(out)
-        if (merged.isEmpty()) return null to "the boolean leaves nothing of the solid"
+        if (merged.isEmpty()) return null to Msgs.refusalSolidBooleanLeavesNothingSolid()
         val prism = Feature3.Prism(pa.plane, merged)
         // The analytic boolean is analytic all the way: its result is a prism, so it refuses like one and its
         // triangles wait like one — nothing here reads either operand's mesh (see `Construction.booleanValue`
         // for the general engine, which does and therefore cannot wait).
         val (shell, whyMesh) = prismShell(prism, tolMm)
-        if (shell == null) return null to (whyMesh ?: "cannot build the boolean's mesh")
+        if (shell == null) return null to (whyMesh ?: Msgs.refusalSolidCannotBuildBooleanMesh())
         // **One level** ([Solid3.meshAt]): a prism's cost is its region algebra and the one global corner set
         // every ring is conformed to, not its chords — so a coarse level would redo all of the expensive part
         // to save the cheap one, and a body whose walls are flat has nothing to gain by it anyway.
@@ -3117,7 +3099,7 @@ object Geom3 {
         kind: BoolOp,
         a: Solid3,
         b: Solid3,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         combines++
         return if (sameAxis(a.feature, b.feature)) {
             boolean(kind, a, b)
@@ -3193,12 +3175,12 @@ object Geom3 {
     private fun onAxisOf(
         prism: Feature3.Prism,
         ref: Plane3,
-    ): Pair<List<Slab>?, String?> {
+    ): Pair<List<Slab>?, Msg?> {
         val n = ref.normal.normalized()
         val nb = prism.plane.normal.normalized()
         val dot = n.dot(nb)
         if (abs(abs(dot) - 1.0) > 1e-9) {
-            return null to "the two solids are not extruded along a common axis; general booleans arrive with Manifold (OP-9)"
+            return null to Msgs.refusalSolidTwoSolidsAreNotExtruded()
         }
         val flip = dot < 0.0
         val base = (prism.plane.origin - ref.origin).dot(n)
@@ -3301,7 +3283,7 @@ object Geom3 {
     fun prismMesh(
         prism: Feature3.Prism,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Mesh3?, String?> {
+    ): Pair<Mesh3?, Msg?> {
         val (emit, why) = prismShell(prism, tolMm)
         return if (emit == null) null to why else emit() to null
     }
@@ -3317,12 +3299,12 @@ object Geom3 {
     internal fun prismShell(
         prism: Feature3.Prism,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<(() -> Mesh3)?, String?> {
+    ): Pair<(() -> Mesh3)?, Msg?> {
         val slabs = prism.slabs
-        if (slabs.isEmpty()) return null to "a prism needs at least one slab"
-        for (s in slabs) if (s.height <= WELD_TOL) return null to "a slab of the prism has no height"
+        if (slabs.isEmpty()) return null to Msgs.refusalSolidPrismNeedsLeastOneSlab()
+        for (s in slabs) if (s.height <= WELD_TOL) return null to Msgs.refusalSolidSlabPrismHasNoHeight()
         for (i in 0 until slabs.size - 1) {
-            if (slabs[i].z1 > slabs[i + 1].z0 + Z_EPS) return null to "the prism's slabs overlap"
+            if (slabs[i].z1 > slabs[i + 1].z0 + Z_EPS) return null to Msgs.refusalSolidPrismSlabsOverlap()
         }
         val slabRings = ArrayList<List<List<Vec2>>>(slabs.size)
         for (s in slabs) {
@@ -3441,7 +3423,7 @@ object Geom3 {
     internal fun splitToRequired(
         tris: List<Tri3>,
         required: List<Vec2>,
-    ): Pair<List<Tri3>?, String?> {
+    ): Pair<List<Tri3>?, Msg?> {
         val out = ArrayList<Tri3>(tris.size)
         val pending = ArrayDeque<Tri3>()
         pending.addAll(tris)
@@ -3453,7 +3435,7 @@ object Geom3 {
                 out.add(t)
                 continue
             }
-            if (budget-- <= 0) return null to "a cap of the prism cannot be split to meet its neighbours"
+            if (budget-- <= 0) return null to Msgs.refusalSolidCapPrismCannotBeSplit()
             val (edge, p) = hit
             when (edge) {
                 0 -> {
@@ -3506,7 +3488,7 @@ object Geom3 {
     fun facePlane(
         feature: Feature3,
         which: SolidFace,
-    ): Pair<Plane3?, String?> =
+    ): Pair<Plane3?, Msg?> =
         when (feature) {
             is Feature3.Extrusion ->
                 when (which) {
@@ -3533,11 +3515,10 @@ object Geom3 {
             is Feature3.Revolution -> {
                 val f = Revolve3.frameOf(feature)
                 when {
-                    f == null -> null to "the axis of revolution has no direction"
+                    f == null -> null to Msgs.refusalSolidAxisRevolutionHasNoDirection()
                     f.full ->
                         null to
-                            "this solid is a complete revolution, so it has no start and no end and therefore no " +
-                            "top or bottom face — put a datum plane where you want to sketch"
+                            Msgs.refusalSolidThisSolidIsCompleteRevolution()
                     else -> Revolve3.capPlane(f, which) to null
                 }
             }
@@ -3545,24 +3526,23 @@ object Geom3 {
             // terminal sections'), but their frames are the sections' own — which may be tilted relative to
             // each other and absent altogether at an apex — so naming one TOP would invent a convention this
             // slice has no use for. A datum plane reaches any of them (DESIGN.md, the loft's note).
-            is Feature3.Loft -> null to "a lofted solid has no named top or bottom face — put a datum plane where you want to sketch"
+            is Feature3.Loft -> null to Msgs.refusalSolidLoftedSolidHasNoNamed()
             // A general boolean's result is a mesh (OP-9's sink rule): its faces are emergent, not
             // constructed, so there is nothing here that a provenance accessor could name.
-            is Feature3.MeshBoolean -> null to "a general boolean's result is mesh-only, so it has no named faces (OP-9)"
+            is Feature3.MeshBoolean -> null to Msgs.refusalSolidGeneralBooleanResultIsMesh()
             // Same rule, same reason: an imported body's faces are emergent triangles, and naming one would
             // be discovery (OP-9, OP-23).
-            is Feature3.Imported -> null to "an imported body is mesh-only, so it has no named faces (OP-9)"
+            is Feature3.Imported -> null to Msgs.refusalSolidImportedBodyIsMeshOnly()
             // Refused for the loft's own reason, one step further: a sweep's end caps *are* planes, but their
             // frames are the moving frame's at each end — which for a closed path do not exist at all — so
             // naming one TOP would invent a convention. A datum plane reaches either of them.
-            is Feature3.Sweep -> null to "a swept solid has no top or bottom face — put a datum plane where you want to sketch"
+            is Feature3.Sweep -> null to Msgs.refusalSolidSweptSolidHasNoTop()
             // A skin's two ends are its own end **sections**, which are faces of the body and are named
             // ([Skin3.faces]) — but neither is a *top* or a *bottom*, because the run they stand across is a
             // curve. So the same refusal the sweep gives, pointing at the face that does exist.
             is Feature3.Skin ->
                 null to
-                    "a skin over drawn sections has no top or bottom face — its ends are its own end sections, " +
-                    "which you can sketch on by clicking one, and a datum plane reaches anywhere else"
+                    Msgs.refusalSolidSkinOverDrawnSectionsHas()
             // **The dressed part keeps its named faces** (session 71, slice 3): a blend does not move a face's
             // plane, it trims the face's outline, so `TOP` of a filleted plate is the plate's own top face and
             // a boss sketched on it before the fillet is on it after. That is the whole point of the feature
@@ -3654,29 +3634,29 @@ object Geom3 {
     fun sideFace(
         feature: Feature3,
         piece: Int,
-    ): Pair<SideFace?, String?> {
+    ): Pair<SideFace?, Msg?> {
         val span =
             prismSpan(feature)
-                ?: return null to "this solid is not a prism, so it has no constructed side faces (OP-8)"
+                ?: return null to Msgs.refusalSolidThisSolidIsNotPrism2()
         val (plane, s0, s1) = span
         val n = plane.normal.normalized()
         if (abs(abs(n.z) - 1.0) > 1e-9) {
-            return null to "this solid is not extruded vertically, so its side faces are not upright"
+            return null to Msgs.refusalSolidThisSolidIsNotExtruded()
         }
         val pieces = boundaryPieces(feature)
         val p =
             pieces.getOrNull(piece)
-                ?: return null to "this solid has no boundary piece #${piece + 1} (it has ${pieces.size})"
+                ?: return null to Msgs.refusalSolidThisSolidHasNoBoundary(piece = piece + 1, count = pieces.size)
         val seg =
             (p as? ProfileElement.Seg)?.segment
-                ?: return null to "that boundary edge is curved, so the face it sweeps is not planar — pick a straight edge"
+                ?: return null to Msgs.refusalSolidThatBoundaryEdgeIsCurved()
         // n is ±Z, and the frame's u/v therefore lie in the plan, so a point's world height is the plane's
         // own origin height plus its axis coordinate along n.
         val zA = plane.origin.z + n.z * s0
         val zB = plane.origin.z + n.z * s1
         val zLo = min(zA, zB)
         val zHi = max(zA, zB)
-        if (zHi - zLo <= WELD_TOL) return null to "this solid has no height, so its side faces have no area"
+        if (zHi - zLo <= WELD_TOL) return null to Msgs.refusalSolidThisSolidHasNoHeight()
         // A plane whose normal is −Z maps 2D orientation-reversingly into the world, so the boundary runs
         // the other way round there: traversing the piece backwards is what keeps the material on the left
         // in the world, and hence what makes the piece's right point *out* of the material.
@@ -3685,7 +3665,7 @@ object Geom3 {
         val wb = plane.toWorld(if (forward) seg.b else seg.a)
         val d = Vec2(wb.x - wa.x, wb.y - wa.y)
         val len = d.length()
-        if (len <= WELD_TOL) return null to "that boundary edge has no length"
+        if (len <= WELD_TOL) return null to Msgs.refusalSolidThatBoundaryEdgeHasNo()
         val along = Vec3(d.x / len, d.y / len, 0.0)
         // out of the material: the traversal direction's right, in the world
         val outward = along.cross(Vec3.Z)
@@ -3734,9 +3714,9 @@ object Geom3 {
         base: Plane3,
         line: Line,
         angle: Double,
-    ): Pair<Plane3?, String?> {
+    ): Pair<Plane3?, Msg?> {
         val len = line.dir.length()
-        if (len <= WELD_TOL) return null to "that line has no direction, so it fixes no sketch plane"
+        if (len <= WELD_TOL) return null to Msgs.refusalSolidThatLineHasNoDirection()
         val dir = line.dir * (1.0 / len)
         // OP-20's anchor: the carrier's nearest-origin point, so stretching the host cannot move the datum
         val anchor = line.origin - dir * line.origin.dot(dir)
@@ -3744,7 +3724,7 @@ object Geom3 {
         val n = base.normal.normalized()
         val w = n.cross(u)
         val v = (w * cos(angle) + n * sin(angle)).normalized()
-        if (u.length() < Vec3.EPS || v.length() < Vec3.EPS) return null to "that sketch plane's own frame is degenerate"
+        if (u.length() < Vec3.EPS || v.length() < Vec3.EPS) return null to Msgs.refusalSolidThatSketchPlaneOwnFrame()
         return Plane3(base.toWorld(anchor), u, v) to null
     }
 
@@ -3779,31 +3759,30 @@ object Geom3 {
     fun sectionAt(
         feature: Feature3,
         height: Double,
-    ): Pair<List<Region>?, String?> {
+    ): Pair<List<Region>?, Msg?> {
         val plane: Plane3
         val layers: List<Slab>
         when (feature) {
             is Feature3.Revolution ->
-                return null to "a revolved solid has no prismatic cross-section; sectioning one needs an analytic revolve section (OP-17)"
+                return null to Msgs.refusalSolidRevolvedSolidHasNoPrismatic()
             is Feature3.MeshBoolean ->
-                return null to "a general boolean's result is mesh-only, so it has no analytic cross-section (OP-9); slicing its mesh is a separate operation"
+                return null to Msgs.refusalSolidGeneralBooleanResultIsMesh2()
             is Feature3.Imported ->
-                return null to "an imported body is mesh-only, so it has no analytic cross-section (OP-9)"
+                return null to Msgs.refusalSolidImportedBodyIsMeshOnly2()
             // A loft is not a stack of areas over height intervals — its area varies *continuously* along the
             // run — so it has no slab to answer with. Refused rather than interpolated: the honest answer is
             // an analytic loft section, which is its own piece of work (DESIGN.md, the loft's note).
             is Feature3.Loft ->
-                return null to "a lofted solid has no prismatic cross-section, because its area changes along the run; sectioning one needs an analytic loft section (OP-17)"
+                return null to Msgs.refusalSolidLoftedSolidHasNoPrismatic()
             // The same answer for the same reason, and a stronger one: a sweep's section is normal to its
             // *path*, which a horizontal cut is not — the station of OP-26's step 4 is where that lives.
             is Feature3.Sweep ->
-                return null to "a swept solid has no prismatic cross-section, because its axis is a curve; sectioning one needs an analytic sweep section (OP-26)"
+                return null to Msgs.refusalSolidSweptSolidHasNoPrismatic()
             // The loft's own answer, for the loft's own reason (session 78): a skin's area changes along its
             // run, so no height names a slab of it. A working plane's section is the reading that does work.
             is Feature3.Skin ->
                 return null to
-                    "a skin over drawn sections has no prismatic cross-section, because its outline changes " +
-                    "along the run; cut it with a working plane instead"
+                    Msgs.refusalSolidSkinOverDrawnSectionsHas2()
             // A **horizontal** cut of a blended body is not one of the base's slabs: the blend rounds the
             // walls, so the area at a height inside the rounding is not the base's area there. Refused by
             // name rather than answered with the base's — a working plane's section (`Section3.sectionOf`)
@@ -3823,9 +3802,7 @@ object Geom3 {
             // shows both walls ([Section3.sectionOf]).
             is Feature3.Shell ->
                 return null to
-                    "this solid is a shelled body, so its horizontal cross-section is not one of the base's slabs — " +
-                    "the cavity takes the middle out of it; cut it with a working plane instead, whose section " +
-                    "of a shelled part is exact, shows both walls and offers inputs"
+                    Msgs.refusalSolidThisSolidIsShelledBody()
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this
@@ -3840,7 +3817,7 @@ object Geom3 {
         }
         val n = plane.normal.normalized()
         if (abs(abs(n.z) - 1.0) > 1e-9) {
-            return null to "this solid is not extruded vertically, so a horizontal cut is not one of its cross-sections"
+            return null to Msgs.refusalSolidThisSolidIsNotExtruded2()
         }
         // the solid's own axis coordinate of the cut: n is ±Z, so dividing by n.z is multiplying by it
         val s = (height - plane.origin.z) * n.z
@@ -3851,7 +3828,7 @@ object Geom3 {
             }
         if (hit == null) {
             val zs = layers.flatMap { listOf(plane.origin.z + n.z * it.z0, plane.origin.z + n.z * it.z1) }
-            return null to "the solid has no material at z = $height mm (it spans ${zs.min()} to ${zs.max()} mm, and its top face is not a section)"
+            return null to Msgs.refusalSolidSolidHasNoMaterialZ(height = height.toString(), min = zs.min().toString(), max = zs.max().toString())
         }
         // sketch coordinates -> world plan coordinates: u and v as the columns of a 2D affine, which is
         // rigid (the frame is orthonormal and its normal is ±Z, so u and v lie in the plan), hence exact.

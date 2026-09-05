@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 
 /**
@@ -20,8 +22,8 @@ data class ProjectedCurve(
     val fitted: Boolean,
 ) {
     /** How this curve's exactness is spoken of in a status line — the honesty line, in one phrase. */
-    val exactnessWord: String
-        get() = if (fitted) "fitted to ${Frames3.mm(Intersect3.FIT_TOL_MM * 1000.0)} µm" else "exact"
+    val exactnessWord: Msg
+        get() = if (fitted) Msgs.refusalProjectFittedM(mm = Frames3.mm(Intersect3.FIT_TOL_MM * 1000.0)) else Msgs.wordExactnessExact()
 }
 
 /**
@@ -200,17 +202,15 @@ object Project3 {
         view: List<ProfileElement>,
         from: Plane3,
         face: FacePatch,
-    ): Pair<ProjectedCurve?, String?> {
+    ): Pair<ProjectedCurve?, Msg?> {
         val plane =
             face.plane
                 ?: return null to
-                    (face.reason ?: "${face.name.label} is not a plane, so there is no flat answer to project onto it")
+                    (face.reason ?: Msgs.refusalProjectIsNotPlaneSoThere(name = face.name.label))
         val map =
             mapOnto(from, plane)
                 ?: return null to
-                    "${face.name.label} is edge-on to the space this curve is drawn in — a drawing thrown along " +
-                    "that space's own normal lands on that face in a line, not in a curve; tilt the space, draw " +
-                    "the curve in one that faces it, or pick a face this one can see"
+                    Msgs.refusalProjectIsEdgeSpaceThisCurve(name = face.name.label)
         val mapped = view.map { mapped(it, map) }
         var fitted = false
         val elements = ArrayList<Curve3Element>()
@@ -220,7 +220,7 @@ object Project3 {
             elements.addAll(made)
         }
         if (elements.isEmpty()) {
-            return null to "this drawing has no length, so its projection is a point rather than a curve"
+            return null to Msgs.refusalProjectThisDrawingHasNoLength()
         }
         // Closure is read off the **operand**, which is step 6's own rule for a *derived* curve: whether the
         // drawing comes back to itself is a fact about the drawing, and the map is injective, so the answer
@@ -398,9 +398,9 @@ object Project3 {
         feature: Feature3,
         view: List<ProfileElement>,
         from: Plane3,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val (faces, why) = Section3.faces(feature)
-        if (faces == null) return null to (why ?: "this body has no named faces to project onto")
+        if (faces == null) return null to (why ?: Msgs.refusalProjectThisBodyHasNoNamed())
         var best: Int? = null
         var bestKey: Triple<Int, Double, Int>? = null
         for (i in faces.indices) {
@@ -417,8 +417,7 @@ object Project3 {
         }
         if (best == null) {
             return null to
-                "every flat face of this body is edge-on to the space this curve is drawn in, so a drawing " +
-                "thrown along that space's normal lands on none of them in a curve"
+                Msgs.refusalProjectEveryFlatFaceThisBody()
         }
         return best to null
     }

@@ -25,6 +25,9 @@ import constructit.geom.Solid3
 import constructit.geom.Sphere3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.Msg
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 import constructit.units.Quantity
 
 /** A typed value flowing through the graph (OP-5). Strongly typed, one output per node. */
@@ -217,16 +220,26 @@ data class SectionValue(val section: PlaneSection) : Value
 sealed interface EvalResult {
     data class Ok(val value: Value) : EvalResult
 
-    data class Invalid(val reason: String) : EvalResult
+    /**
+     * **A refusal is a message value, not a sentence** (OP-29 slice 2, OP-3).
+     *
+     * [why] carries the key and the arguments; [reason] renders it in the active language, which is what
+     * every reader of a refusal — the panel, the status line, a gesture test — actually wants. The engine
+     * itself never renders: `commonMain` stays locale-free exactly as it stays platform-free.
+     */
+    data class Invalid(val why: Msg) : EvalResult {
+        /** [why] in the active language ([L10n.locale]) — English on the JVM, so tests read English. */
+        val reason: String get() = why.render()
+    }
 }
 
 /**
- * How a reason that is **only the cascade** begins (OP-3): a node that is invalid because an input is, not
+ * The key of the reason that is **only the cascade** (OP-3): a node that is invalid because an input is, not
  * because anything failed here. Named rather than spelled out at the two ends, because a route that tells the
  * user *which* element to look at has to be able to tell the two apart (see `Document.invalidElements`) —
  * pointing at a dependent would send them to the wrong place.
  */
-const val CASCADE_PREFIX = "depends on invalid input"
+const val CASCADE_KEY = "refusal.cascade"
 
 /** A node in the construction DAG. Stable [id]; pure function of its [inputs] (OP-5). */
 abstract class Node(val id: String) {
@@ -549,13 +562,13 @@ class Evaluator(
         val invalid = argResults.firstOrNull { it is EvalResult.Invalid } as EvalResult.Invalid?
         val result: EvalResult =
             if (invalid != null) {
-                EvalResult.Invalid("$CASCADE_PREFIX (${invalid.reason})")
+                EvalResult.Invalid(Msgs.refusalCascade(reason = invalid.why))
             } else {
                 try {
                     val args = argResults.map { (it as EvalResult.Ok).value }
                     if (under) node.computeSubstituted(args) else node.computeMemoized(args)
                 } catch (e: Exception) {
-                    EvalResult.Invalid(e.message ?: e.toString())
+                    EvalResult.Invalid(if (e is MsgError) e.why else Msg.text(e.message ?: e.toString()))
                 }
             }
         cache[node.id] = result

@@ -74,7 +74,47 @@ class GenerateMessagesTaskTest {
             listOf("title: String", "count: Int", "locale: String = L10n.locale"),
             signature.split(",").map { it.trim() }.filter { it.isNotEmpty() },
         )
-        assertTrue(out.contains("""formatMessage(locale, text("ui.dialog.title", locale), mapOf("title" to title, "count" to count))"""), out)
+        assertTrue(out.contains("""): String = Msgs.uiDialogTitle(title, count).render(locale)"""), out)
+    }
+
+    /**
+     * …and the same keys as **values** (OP-29 slice 2): one `Msgs` factory per key, returning the message
+     * rather than the sentence. `Messages` is a rendering face over it, which is why there is one signature.
+     */
+    @Test
+    fun everyKeyIsAlsoAValueFactory() {
+        val out = GenerateMessagesTask.renderBundles(bundles("app_en.arb" to english, "app_de.arb" to german))
+        assertTrue(out.contains("""public object Msgs {"""), out)
+        assertTrue(out.contains("""public fun uiUndo(): Msg = Msg("ui.undo")"""), out)
+        val signature = out.substringAfter("public fun uiDialogTitle(", "").substringAfter("public fun uiDialogTitle(").substringBefore(")")
+        assertEquals(
+            listOf("title: String", "count: Int"),
+            signature.split(",").map { it.trim() }.filter { it.isNotEmpty() },
+        )
+        assertTrue(out.contains("""): Msg = Msg("ui.dialog.title", mapOf("title" to title, "count" to count))"""), out)
+    }
+
+    /**
+     * A placeholder that is **itself a message** (OP-29 slice 2) — a face's name inside a refusal — is
+     * declared `"type": "message"` and typed `Msg`, so a call site cannot pass a pre-rendered English word.
+     */
+    @Test
+    fun aMessageTypedPlaceholderIsAMessage() {
+        val nested =
+            """
+            {
+              "@@locale": "en",
+              "refusal.notAPlane": "{name} is not a plane",
+              "@refusal.notAPlane": {
+                "description": "Why a face cannot be used.",
+                "placeholders": { "name": { "type": "message" } }
+              }
+            }
+            """.trimIndent()
+        val out = GenerateMessagesTask.renderBundles(bundles("app_en.arb" to nested))
+        val factory = out.substringAfter("public object Msgs {").substringAfter("public fun refusalNotAPlane(")
+        assertEquals("name: Msg,", factory.lineSequence().first().ifEmpty { factory.lineSequence().drop(1).first() }.trim())
+        assertTrue(out.contains("""): Msg = Msg("refusal.notAPlane", mapOf("name" to name))"""), out)
     }
 
     /**

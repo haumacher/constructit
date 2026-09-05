@@ -13,6 +13,7 @@ import constructit.editor.Tools
 import constructit.geom.Feature3
 import constructit.geom.ProfileElement
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -180,7 +181,7 @@ class RevolveFaceSpaceTest {
         // the edge on the axis is the other honest refusal, and it names the axis
         val axisEdge = faces.indexOfFirst { it.surface?.band is constructit.geom.Revolve3.Band.Degenerate }
         val axisWhy = assertNotNull(ed.doc.faceRefusal(body, axisEdge))
-        assertTrue("axis of revolution" in axisWhy, axisWhy)
+        assertTrue("axis of revolution" in axisWhy, "$axisWhy")
     }
 
     /**
@@ -256,7 +257,7 @@ class RevolveFaceSpaceTest {
             assertNotNull(
                 constructit.geom.Geom3.facePlane(whole.featureOf(whole.solids().single()), constructit.geom.SolidFace.TOP).second,
             )
-        assertTrue("complete revolution" in why, why)
+        assertTrue("complete revolution" in why, "$why")
     }
 
     /** A **complete** revolution has no caps, and says so in the words its own kind uses. */
@@ -265,8 +266,8 @@ class RevolveFaceSpaceTest {
         val ed = shaft()
         val body = ed.solids().single()
         val why = assertNotNull(ed.doc.faceRefusal(body, 4), "there is no fifth face")
-        assertTrue("complete revolution" in why, why)
-        assertTrue("no start and no end" in why, why)
+        assertTrue("complete revolution" in why, "$why")
+        assertTrue("no start and no end" in why, "$why")
     }
 
     // ---- the identity rule, exercised through the editor ----

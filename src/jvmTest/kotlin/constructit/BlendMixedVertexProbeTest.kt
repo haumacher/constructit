@@ -20,6 +20,7 @@ import constructit.geom.Mesh3
 import constructit.geom.Section3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -122,9 +123,9 @@ class BlendMixedVertexProbeTest {
     ): SolidRef {
         val body = Evaluator().solid(on)
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyTargets)
+        assertNotNull(targets, whyTargets?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(on, on, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 
@@ -229,8 +230,8 @@ class BlendMixedVertexProbeTest {
         assertBracket(vFar, exactFar, "the far upright between two rounded caps")
         // the faces both levels name: the two horn tori are superseded with a reason, two ring tori stand
         val faces = assertNotNull(Section3.faces(Evaluator().solid(fill).feature).first)
-        val superseded = faces.count { it.reason != null && it.plane == null && "stands in its place" in (it.reason ?: "") }
-        assertEquals(2, superseded, "two horn tori superseded: ${faces.filter { it.reason != null }.map { it.name.label + ": " + it.reason }}")
+        val superseded = faces.count { it.reason != null && it.plane == null && "stands in its place" in it.reason }
+        assertEquals(2, superseded, "two horn tori superseded: ${faces.filter { it.reason != null }.map { "${it.name.label}: ${it.reason}" }}")
     }
 
     // ---- 3. a body with two inside corners ----

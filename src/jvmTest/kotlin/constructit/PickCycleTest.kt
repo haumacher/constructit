@@ -11,6 +11,7 @@ import constructit.editor.ElementKind
 import constructit.editor.PointerButton
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -333,7 +334,7 @@ class PickCycleTest {
         assertEquals(1, ed.pickCyclePosition)
         ed.click(Vec2(40.0, 1.0))
         assertNull(ed.selectedJamb)
-        assertTrue(ed.selectionLabel().startsWith("leg"), "the carrier leg the jamb outranked: ${ed.selectionLabel()}")
+        assertTrue(ed.selectionLabel().render().startsWith("leg"), "the carrier leg the jamb outranked: ${ed.selectionLabel()}")
     }
 
     /**
@@ -347,7 +348,7 @@ class PickCycleTest {
         ed.click(Vec2(-900.0, -900.0))
         ed.click(Vec2(41.0, 0.3))
         assertNull(ed.selectedJamb, "along the wall the leg is nearer: ${ed.selectionLabel()}")
-        assertTrue(ed.selectionLabel().startsWith("leg"), "got: ${ed.selectionLabel()}")
+        assertTrue(ed.selectionLabel().render().startsWith("leg"), "got: ${ed.selectionLabel()}")
         ed.click(Vec2(41.0, 0.3))
         assertNotNull(ed.selectedJamb, "and the jamb is reachable by clicking again: ${ed.statusHint}")
         assertEquals(listOf("position", "width", "sill", "head"), ed.selectionFields().map { it.label })

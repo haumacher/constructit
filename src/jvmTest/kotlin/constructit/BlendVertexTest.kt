@@ -23,6 +23,7 @@ import constructit.geom.ProfileElement
 import constructit.geom.Section3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -130,7 +131,7 @@ class BlendVertexTest {
     ): SolidRef {
         val body = Evaluator().solid(base)
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         // one address per gesture, so a many-edge fixture is many gestures — which is also what makes the
         // order-independence assertions below say something
         var out = base
@@ -395,7 +396,7 @@ class BlendVertexTest {
 
         val faces = assertNotNull(Section3.faces(solid.feature).first, "the dressed part names its faces")
         val corner = assertNotNull(faces.firstOrNull { it.name is FaceName.BlendCorner }, "a corner face: ${faces.map { it.name.label }}")
-        assertTrue(corner.name.label.startsWith("the rounded corner where edge #"), "it says what it is: ${corner.name.label}")
+        assertTrue(corner.name.label.render().startsWith("the rounded corner where edge #"), "it says what it is: ${corner.name.label}")
         assertTrue(corner.name.label.contains(" and edge #"), "…and which three edges meet there: ${corner.name.label}")
         assertEquals(faces.last().name, corner.name, "the corners are appended last, so no other face's index moved")
         assertTrue(corner.plane == null, "a ball is not a plane")

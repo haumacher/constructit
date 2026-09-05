@@ -194,6 +194,13 @@ first-class goal and the current implementation focus.
 - **A material per solid** — base colour, roughness and metalness, one row in the inspector, recorded in the
   drawing like any other decision and restated on every save. Five numbers is what makes an exported file
   render honestly in any PBR viewer — and the preview and the export read the same five.
+- **Two languages, end to end** — English and German, switched from the top bar and remembered; the app
+  starts in the browser's own language. Every word is translated, not just the chrome: the tool titles and
+  the panel, and equally the status line, the reasons a tool refuses, and the names the drawing gives a face
+  or an edge inside those reasons. A message is a *value* — a key and typed arguments — that becomes a
+  sentence only where it is shown, so switching the language re-reads the note already standing without
+  repeating a gesture. The drawing file itself stays locale-neutral: element names, parameter names and
+  numbers are format, never words. Adding a language is one entry in the build and one translated file.
 - **Browser canvas** — an interactive HTML5-canvas editor; the engine is pure Kotlin shared between
   the JVM and the browser.
 

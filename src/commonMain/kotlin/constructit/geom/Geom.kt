@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -598,19 +600,19 @@ object GeomMath {
      * keeps its own direction, and the traversal is then forced) and is what lets the caller name a
      * boundary by simply clicking round it. Returns null with a reason when the chain does not close.
      */
-    fun chainLoop(parts: List<ProfileElement>): Pair<Loop?, String?> {
-        if (parts.isEmpty()) return null to "a loop needs at least one piece"
+    fun chainLoop(parts: List<ProfileElement>): Pair<Loop?, Msg?> {
+        if (parts.isEmpty()) return null to Msgs.refusalOutlineLoopNeedsLeastOnePiece()
         if (parts.any { it is ProfileElement.CircleE || it is ProfileElement.EllipseE }) {
             return if (parts.size == 1) {
                 Loop(parts) to null
             } else {
-                null to "a whole circle or ellipse already closes, so it cannot be chained with other pieces"
+                null to Msgs.refusalOutlineWholeCircleEllipseAlreadyCloses()
             }
         }
         val (chained, why) = chainRun(parts)
         if (chained == null) return null to why
         val closingGap = (startOf(chained[0]) - endOf(chained.last())).length()
-        if (closingGap > JOIN_TOL) return null to "loop does not close (gap $closingGap mm)"
+        if (closingGap > JOIN_TOL) return null to Msgs.refusalOutlineLoopDoesNotCloseGap(closingGap = closingGap.toString())
         return Loop(chained) to null
     }
 
@@ -624,8 +626,8 @@ object GeomMath {
      * of it (OP-26) is that clicking a segment and then an arc produces the run the clicks describe, with no
      * question about which way either piece happened to have been built.
      */
-    fun chainRun(parts: List<ProfileElement>): Pair<List<ProfileElement>?, String?> {
-        if (parts.isEmpty()) return null to "a run needs at least one piece"
+    fun chainRun(parts: List<ProfileElement>): Pair<List<ProfileElement>?, Msg?> {
+        if (parts.isEmpty()) return null to Msgs.refusalOutlineRunNeedsLeastOnePiece()
         val chained = ArrayList<ProfileElement>(parts.size)
         chained.add(parts[0])
         var cursor = endOf(parts[0])
@@ -636,7 +638,7 @@ object GeomMath {
             val pick = if (forward <= backward) e else reverse(e)
             val gap = kotlin.math.min(forward, backward)
             if (gap > JOIN_TOL) {
-                return null to "piece ${i + 1} does not meet the previous one (gap $gap mm)"
+                return null to Msgs.refusalOutlinePieceDoesNotMeetPrevious(i = i + 1, gap = gap.toString())
             }
             chained.add(pick)
             cursor = endOf(pick)
@@ -662,11 +664,11 @@ object GeomMath {
         closed: Boolean,
         offsets: List<Double>,
         cuts: List<CornerCut?> = emptyList(),
-    ): Pair<ThickFaces?, String?> {
-        if (points.size < 2) return null to "a thick path needs at least two carrier points"
-        if (closed && points.size < 3) return null to "a closed carrier needs at least three points"
-        if (offsets.size != 2) return null to "a thick path has exactly two faces"
-        if (abs(offsets[1] - offsets[0]) < EPS) return null to "a thick path needs a non-zero thickness"
+    ): Pair<ThickFaces?, Msg?> {
+        if (points.size < 2) return null to Msgs.refusalOutlineThickPathNeedsLeastTwo()
+        if (closed && points.size < 3) return null to Msgs.refusalOutlineClosedCarrierNeedsLeastThree()
+        if (offsets.size != 2) return null to Msgs.refusalOutlineThickPathHasExactlyTwo()
+        if (abs(offsets[1] - offsets[0]) < EPS) return null to Msgs.refusalOutlineThickPathNeedsNonZero()
         val legCount = if (closed) points.size else points.size - 1
         val legs = ArrayList<Line>(legCount)
         val lengths = ArrayList<Double>(legCount)
@@ -675,7 +677,7 @@ object GeomMath {
             val b = points[(i + 1) % points.size]
             val d = b - a
             val len = d.length()
-            if (len < EPS) return null to "carrier leg ${i + 1} has zero length"
+            if (len < EPS) return null to Msgs.refusalOutlineCarrierLegHasZeroLength(i = i + 1)
             legs.add(Line(a, d * (1.0 / len)))
             lengths.add(len)
         }
@@ -691,12 +693,12 @@ object GeomMath {
             val corners = ArrayList<Vec2>(points.size)
             if (closed) {
                 for (j in 0 until legCount) {
-                    corners.add(mitre((j - 1 + legCount) % legCount, j) ?: return null to "corner ${j + 1} has collinear legs, so no mitre")
+                    corners.add(mitre((j - 1 + legCount) % legCount, j) ?: return null to Msgs.refusalOutlineCornerHasCollinearLegsSo(j = j + 1))
                 }
             } else {
                 corners.add(legs.first().origin + legs.first().dir.perp() * off)
                 for (j in 1 until legCount) {
-                    corners.add(mitre(j - 1, j) ?: return null to "corner ${j + 1} has collinear legs, so no mitre")
+                    corners.add(mitre(j - 1, j) ?: return null to Msgs.refusalOutlineCornerHasCollinearLegsSo(j = j + 1))
                 }
                 corners.add(legs.last().origin + legs.last().dir * lengths.last() + legs.last().dir.perp() * off)
             }
@@ -726,21 +728,21 @@ object GeomMath {
      * is decided here by comparing the enclosed areas rather than by a sign convention the caller would
      * have to keep true as the carrier is edited.
      */
-    fun thickRegion(f: ThickFaces): Pair<Region?, String?> {
+    fun thickRegion(f: ThickFaces): Pair<Region?, Msg?> {
         // **the cut corners take their own route, and only they do** (GitHub #25): a wall whose carrier is
         // mitred everywhere goes through the very arithmetic it always did, so every stored `wall` step
         // replays to the identical region — which is the guarantee the ortho carrier exists to keep
         if (f.anyCut) return cutThickRegion(f)
         if (f.closed) {
-            val a = polygonLoop(f.faces[0]) ?: return null to "a face of the ring is degenerate"
-            val b = polygonLoop(f.faces[1]) ?: return null to "a face of the ring is degenerate"
+            val a = polygonLoop(f.faces[0]) ?: return null to Msgs.refusalOutlineFaceRingIsDegenerate()
+            val b = polygonLoop(f.faces[1]) ?: return null to Msgs.refusalOutlineFaceRingIsDegenerate()
             val outer = if (abs(signedArea(a)) >= abs(signedArea(b))) a else b
             val inner = if (outer === a) b else a
             return Region(orient(outer, ccw = true), listOf(orient(inner, ccw = false))) to null
         }
         // one loop: out along one face, across the end cap, back along the other, across the start cap
         val ring = f.faces[1] + f.faces[0].reversed()
-        val loop = polygonLoop(ring) ?: return null to "the footprint is degenerate"
+        val loop = polygonLoop(ring) ?: return null to Msgs.refusalOutlineFootprintIsDegenerate()
         return Region(orient(loop, ccw = true), emptyList()) to null
     }
 
@@ -757,11 +759,11 @@ object GeomMath {
      * `d` *toward* the centre, so a radius smaller than that offset would fold the face inside out. That
      * refuses with the thickest wall the corner can host (OP-3, and it heals when either number moves).
      */
-    private fun cutThickRegion(f: ThickFaces): Pair<Region?, String?> {
+    private fun cutThickRegion(f: ThickFaces): Pair<Region?, Msg?> {
         val sides = f.offsets.indices.map { side -> cutFacePieces(f, side).let { (p, why) -> p ?: return null to why } }
         if (f.closed) {
-            val a = chainLoop(sides[0]).first ?: return null to "a face of the ring is degenerate"
-            val b = chainLoop(sides[1]).first ?: return null to "a face of the ring is degenerate"
+            val a = chainLoop(sides[0]).first ?: return null to Msgs.refusalOutlineFaceRingIsDegenerate()
+            val b = chainLoop(sides[1]).first ?: return null to Msgs.refusalOutlineFaceRingIsDegenerate()
             val outer = if (abs(signedArea(a)) >= abs(signedArea(b))) a else b
             val inner = if (outer === a) b else a
             return Region(orient(outer, ccw = true), listOf(orient(inner, ccw = false))) to null
@@ -769,7 +771,7 @@ object GeomMath {
         // one loop, exactly as the mitred case builds it: out along one face, across the end cap, back along
         // the other, across the start cap — the chaining flips whatever needs flipping
         val ring = sides[1] + capBetween(sides[1], sides[0], atEnd = true) + sides[0].reversed() + capBetween(sides[0], sides[1], atEnd = false)
-        val loop = chainLoop(ring).first ?: return null to "the footprint is degenerate"
+        val loop = chainLoop(ring).first ?: return null to Msgs.refusalOutlineFootprintIsDegenerate()
         return Region(orient(loop, ccw = true), emptyList()) to null
     }
 
@@ -788,7 +790,7 @@ object GeomMath {
     private fun cutFacePieces(
         f: ThickFaces,
         side: Int,
-    ): Pair<List<ProfileElement>?, String?> {
+    ): Pair<List<ProfileElement>?, Msg?> {
         val off = f.offsets[side]
         val n = f.legCount
         // where each leg's face piece begins and ends, and what sits between it and the next
@@ -809,8 +811,8 @@ object GeomMath {
         }
         val out = ArrayList<ProfileElement>(n * 2)
         for (i in 0 until n) {
-            val s = starts[i] ?: return null to "corner ${i + 1} has collinear legs, so no mitre"
-            val e = ends[i] ?: return null to "corner ${i + 1} has collinear legs, so no mitre"
+            val s = starts[i] ?: return null to Msgs.refusalOutlineCornerHasCollinearLegsSo2(i = i + 1)
+            val e = ends[i] ?: return null to Msgs.refusalOutlineCornerHasCollinearLegsSo2(i = i + 1)
             if ((e - s).length() > EPS) out.add(ProfileElement.Seg(Segment(s, e)))
             between[i]?.let { out.add(it) }
         }
@@ -830,14 +832,13 @@ object GeomMath {
         f: ThickFaces,
         k: Int,
         off: Double,
-    ): String {
+    ): Msg {
         val cut = f.cutAt(k)
         val thickness = abs(f.offsets[1] - f.offsets[0])
         return if (cut is CornerCut.Round && abs(off) > cut.radius) {
-            "the inner face of a ${fmt(thickness)} mm wall cannot follow a corner radius of ${fmt(cut.radius)} mm — " +
-                "it would fold inside out; the largest thickness that fits there is ${fmt(cut.radius * 2)} mm"
+            Msgs.refusalOutlineInnerFaceMmWallCannot(fmt = fmt(thickness), fmt2 = fmt(cut.radius), fmt3 = fmt(cut.radius * 2))
         } else {
-            "corner ${k + 1} has collinear legs, so no mitre"
+            Msgs.refusalOutlineCornerHasCollinearLegsSo3(k = k + 1)
         }
     }
 

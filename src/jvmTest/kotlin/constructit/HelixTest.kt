@@ -79,7 +79,7 @@ class HelixTest {
     ): String {
         val (solid, why) = Geom3.sweep(path, up, profile)
         assertNull(solid, "this sweep was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     // ---- 1. the curve is the closed form it claims to be ----
@@ -270,9 +270,9 @@ class HelixTest {
         assertTrue(volume > 0.0, "and it encloses material")
 
         val (frame, why) = Frames3.along(path, up, reach = 3.0)
-        val f = assertNotNull(frame, why)
+        val f = assertNotNull(frame, why?.render())
         val (tess, noTess) = Geom3.tessellateRegion(profile.region)
-        val area = Geom3.tessArea(assertNotNull(tess, noTess))
+        val area = Geom3.tessArea(assertNotNull(tess, noTess?.render()))
         assertClose(volume, area * f.length, 1e-6 * volume, "Pappus, exactly: the section's area along the spine it rides")
         assertClose(volume, PI * 9.0 * h.arcLength, 0.015 * volume, "and within the tessellation's own gap of π·r²·L")
 
@@ -310,11 +310,11 @@ class HelixTest {
         val solid = sweptOrFail(path, SweepProfile.Round(2.5), up = axis)
         assertManifold(solid.mesh, "the tilted spring")
         val (frame, why) = Frames3.along(path, axis, reach = 2.5)
-        val f = assertNotNull(frame, why)
+        val f = assertNotNull(frame, why?.render())
         val (tess, noTess) = Geom3.tessellateRegion(SweepProfile.Round(2.5).region)
         assertClose(
             Geom3.volume(solid.mesh),
-            Geom3.tessArea(assertNotNull(tess, noTess)) * f.length,
+            Geom3.tessArea(assertNotNull(tess, noTess?.render())) * f.length,
             1e-6 * Geom3.volume(solid.mesh),
             "the same Pappus reading, about an axis that lines up with nothing",
         )
@@ -331,11 +331,11 @@ class HelixTest {
         val solid = sweptOrFail(pathOf(h), SweepProfile.Section(region))
         assertManifold(solid.mesh, "the coiled bar")
         val (frame, why) = Frames3.along(pathOf(h), up, reach = sqrt(9.0 + 2.25))
-        val f = assertNotNull(frame, why)
+        val f = assertNotNull(frame, why?.render())
         val (tess, noTess) = Geom3.tessellateRegion(region)
         assertClose(
             Geom3.volume(solid.mesh),
-            Geom3.tessArea(assertNotNull(tess, noTess)) * f.length,
+            Geom3.tessArea(assertNotNull(tess, noTess?.render())) * f.length,
             1e-6 * Geom3.volume(solid.mesh),
             "a rectangular wire, coiled",
         )

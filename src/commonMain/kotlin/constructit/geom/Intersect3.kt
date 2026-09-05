@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
@@ -30,12 +32,12 @@ data class IntersectionCurve(
     val sampled: Boolean,
 ) {
     /** How this curve is spoken of in a status line — the honesty line, in one phrase. */
-    val exactnessWord: String
+    val exactnessWord: Msg
         get() =
             when {
-                sampled -> "chords of the section's own tessellation (${Frames3.mm(GeomMath.TESS_TOL_MM)} mm)"
-                fitted -> "fitted to ${Frames3.mm(Intersect3.FIT_TOL_MM * 1000.0)} µm"
-                else -> "exact"
+                sampled -> Msgs.refusalIntersectChordsSectionOwnTessellationMm(mm = Frames3.mm(GeomMath.TESS_TOL_MM))
+                fitted -> Msgs.refusalIntersectFittedM(mm = Frames3.mm(Intersect3.FIT_TOL_MM * 1000.0))
+                else -> Msgs.wordExactnessExact()
             }
 }
 

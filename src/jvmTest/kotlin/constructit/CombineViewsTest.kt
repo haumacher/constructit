@@ -73,7 +73,7 @@ class CombineViewsTest {
     ): String {
         val (path, why) = Combine3.combined(pa, a, pb, b)
         assertNull(path, "these two views were expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     // ---- the independent measurement: how far a point stands from a drawn curve ----

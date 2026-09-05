@@ -115,6 +115,9 @@ import constructit.geom.Watertight
 import constructit.geom.Xform3
 import constructit.geom.movedBy
 import constructit.geom.thickNetwork
+import constructit.l10n.Msg
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -471,7 +474,7 @@ class Construction {
         op(center, radius, angle) {
             val c = (it[0] as PointValue).p
             val r = (it[1] as ScalarValue).q.mm
-            val a = (it[2] as ScalarValue).q.requireDim(Dimension.ANGLE, "angle").base
+            val a = (it[2] as ScalarValue).q.requireDim(Dimension.ANGLE, Msg.text("angle")).base
             EvalResult.Ok(PointValue(c + Vec2(r * kotlin.math.cos(a), r * kotlin.math.sin(a))))
         }
 
@@ -499,7 +502,7 @@ class Construction {
         op(a, b, t) {
             val pa = pt(it[0])
             val pb = pt(it[1])
-            val f = sc(it[2]).requireDim(Dimension.NONE, "ratio").value
+            val f = sc(it[2]).requireDim(Dimension.NONE, Msg.text("ratio")).value
             EvalResult.Ok(PointValue(pa + (pb - pa) * f))
         }
 
@@ -528,7 +531,7 @@ class Construction {
             val pa = (it[0] as PointValue).p
             val pb = (it[1] as PointValue).p
             if ((pb - pa).length() < Vec2.EPS) {
-                EvalResult.Invalid("line through coincident points")
+                EvalResult.Invalid(Msgs.refusalOpLineThroughCoincidentPoints())
             } else {
                 EvalResult.Ok(LineValue(Line(pa, (pb - pa).normalized())))
             }
@@ -547,7 +550,7 @@ class Construction {
         op(center, radius) {
             val r = (it[1] as ScalarValue).q.mm
             if (r <= 0.0) {
-                EvalResult.Invalid("non-positive radius")
+                EvalResult.Invalid(Msgs.refusalOpNonPositiveRadius())
             } else {
                 EvalResult.Ok(CircleValue(Circle((it[0] as PointValue).p, r)))
             }
@@ -562,10 +565,10 @@ class Construction {
     ): ArcRef =
         op(center, radius, startAngle, endAngle) {
             val r = (it[1] as ScalarValue).q.mm
-            val a0 = (it[2] as ScalarValue).q.requireDim(Dimension.ANGLE, "startAngle").base
-            val a1 = (it[3] as ScalarValue).q.requireDim(Dimension.ANGLE, "endAngle").base
+            val a0 = (it[2] as ScalarValue).q.requireDim(Dimension.ANGLE, Msg.text("startAngle")).base
+            val a1 = (it[3] as ScalarValue).q.requireDim(Dimension.ANGLE, Msg.text("endAngle")).base
             if (r <= 0.0) {
-                EvalResult.Invalid("non-positive radius")
+                EvalResult.Invalid(Msgs.refusalOpNonPositiveRadius())
             } else {
                 EvalResult.Ok(ArcValue(Arc((it[0] as PointValue).p, r, a0, a1, ccw)))
             }
@@ -593,10 +596,10 @@ class Construction {
             val c = pt(it[0])
             val d = pt(it[1]) - c
             val a = d.length()
-            val bb = sc(it[2]).requireDim(Dimension.LENGTH, "semi-axis").mm
+            val bb = sc(it[2]).requireDim(Dimension.LENGTH, Msg.text("semi-axis")).mm
             when {
-                a < Vec2.EPS -> EvalResult.Invalid("an ellipse's axis end coincides with its centre, so it has no size and no direction")
-                bb <= 0.0 -> EvalResult.Invalid("an ellipse needs a positive second semi-axis")
+                a < Vec2.EPS -> EvalResult.Invalid(Msgs.refusalOpEllipseAxisEndCoincidesIts())
+                bb <= 0.0 -> EvalResult.Invalid(Msgs.refusalOpEllipseNeedsPositiveSecondSemi())
                 else -> EvalResult.Ok(EllipseValue(Ellipse(c, a, bb, d.angle())))
             }
         }
@@ -616,12 +619,12 @@ class Construction {
             val d = pt(it[1]) - c
             val a = d.length()
             if (a < Vec2.EPS) {
-                return@op EvalResult.Invalid("an ellipse's axis end coincides with its centre, so it has no size and no direction")
+                return@op EvalResult.Invalid(Msgs.refusalOpEllipseAxisEndCoincidesIts())
             }
             val u = d * (1.0 / a)
             val bb = abs((pt(it[2]) - c).cross(u))
             if (bb <= Vec2.EPS) {
-                EvalResult.Invalid("the third point lies on the ellipse's own axis, so there is no second semi-axis")
+                EvalResult.Invalid(Msgs.refusalOpThirdPointLiesEllipseOwn())
             } else {
                 EvalResult.Ok(EllipseValue(Ellipse(c, a, bb, d.angle())))
             }
@@ -638,7 +641,7 @@ class Construction {
     ): PointRef =
         op(ellipse, t) {
             val e = (it[0] as EllipseValue).ellipse
-            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, Msg.text("parameter")).base
             EvalResult.Ok(PointValue(Conics.pointAt(e, a)))
         }
 
@@ -649,10 +652,10 @@ class Construction {
     ): LineRef =
         op(ellipse, t) {
             val e = (it[0] as EllipseValue).ellipse
-            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, Msg.text("parameter")).base
             val d = Conics.tangentAt(e, a)
             if (d.length() < Vec2.EPS) {
-                EvalResult.Invalid("the ellipse is degenerate, so it has no tangent there")
+                EvalResult.Invalid(Msgs.refusalOpEllipseIsDegenerateSoIt())
             } else {
                 EvalResult.Ok(LineValue(Line(Conics.pointAt(e, a), d.normalized())))
             }
@@ -665,7 +668,7 @@ class Construction {
     ): LineRef =
         op(ellipse, t) {
             val e = (it[0] as EllipseValue).ellipse
-            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, Msg.text("parameter")).base
             EvalResult.Ok(LineValue(Line(Conics.pointAt(e, a), Conics.normalAt(e, a))))
         }
 
@@ -693,12 +696,12 @@ class Construction {
         ccw: Boolean = true,
     ): EllipticArcRef =
         op(curve, from, to) {
-            val e = carrierEllipse(it[0]) ?: return@op EvalResult.Invalid("not an elliptic curve")
+            val e = carrierEllipse(it[0]) ?: return@op EvalResult.Invalid(Msgs.refusalOpNotEllipticCurve())
             val t0 = Conics.paramOf(e, pt(it[1]))
             val t1 = Conics.paramOf(e, pt(it[2]))
             val arc = EllipticArc(e, t0, t1, ccw)
             if (abs(Conics.sweep(arc)) < Vec2.EPS) {
-                EvalResult.Invalid("degenerate trim: the cut points coincide")
+                EvalResult.Invalid(Msgs.refusalOpDegenerateTrimCutPointsCoincide())
             } else {
                 EvalResult.Ok(EllipticArcValue(arc))
             }
@@ -821,14 +824,14 @@ class Construction {
     ): FuncCurveRef {
         var dx: Expr? = null
         var dy: Expr? = null
-        var why: String? = null
+        var why: Msg? = null
         try {
             dx = Derive.d(xText, param)
             dy = Derive.d(yText, param)
         } catch (e: DeriveError) {
             dx = null
             dy = null
-            why = e.message
+            why = Msg.text(e.message ?: "")
         }
         val fdx = dx
         val fdy = dy
@@ -836,13 +839,13 @@ class Construction {
         return op(*(refs + listOf(t0, t1)).toTypedArray()) { args ->
             val env = HashMap<String, Quantity>(names.size)
             for ((k, n) in names.withIndex()) {
-                val q = (args[k] as? ScalarValue)?.q ?: return@op EvalResult.Invalid("$n is not a number")
+                val q = (args[k] as? ScalarValue)?.q ?: return@op EvalResult.Invalid(Msgs.refusalOpIsNotNumber(n = n))
                 env[n] = q
             }
             val a = (args[names.size] as ScalarValue).q
             val b = (args[names.size + 1] as ScalarValue).q
             if (a.dim != Dimension.NONE || b.dim != Dimension.NONE) {
-                return@op EvalResult.Invalid("the domain of $param is a pair of plain numbers, and this one is ${a.dim} to ${b.dim}")
+                return@op EvalResult.Invalid(Msgs.refusalOpDomainIsPairPlainNumbers(param = param, dim = a.dim.toString(), dim2 = b.dim.toString()))
             }
             val curve = FuncCurve(xText, yText, fdx, fdy, fwhy, env, a.base, b.base, param, text = text)
             FuncCurves.invalidity(curve)?.let { return@op EvalResult.Invalid(it) }
@@ -861,8 +864,8 @@ class Construction {
         op(curve, t) {
             val c = (it[0] as FuncCurveValue).curve
             val at = (it[1] as ScalarValue).q
-            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid("a function curve's parameter is a plain number, and this is ${at.dim}")
-            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no point at ${c.param} = ${at.base}")
+            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid(Msgs.refusalOpFunctionCurveParameterIsPlain(dim = at.dim.toString()))
+            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid(Msgs.refusalOpCurveHasNoPoint(param = c.param, base = at.base))
             EvalResult.Ok(PointValue(p))
         }
 
@@ -886,11 +889,11 @@ class Construction {
         op(curve, t) {
             val c = (it[0] as FuncCurveValue).curve
             val at = (it[1] as ScalarValue).q
-            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid("a function curve's parameter is a plain number, and this is ${at.dim}")
+            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid(Msgs.refusalOpFunctionCurveParameterIsPlain(dim = at.dim.toString()))
             c.noTangent?.let { why -> return@op EvalResult.Invalid(why) }
-            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no point at ${c.param} = ${at.base}")
-            val d = FuncCurves.tangentAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no tangent at ${c.param} = ${at.base}")
-            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid("the curve stands still at ${c.param} = ${at.base}, so it has no direction there")
+            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid(Msgs.refusalOpCurveHasNoPoint(param = c.param, base = at.base))
+            val d = FuncCurves.tangentAt(c, at.base) ?: return@op EvalResult.Invalid(Msgs.refusalOpCurveHasNoTangent(param = c.param, base = at.base))
+            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpCurveStandsStillSoIt(param = c.param, base = at.base))
             EvalResult.Ok(LineValue(Line(p, if (normal) d.normalized().perp() else d.normalized())))
         }
 
@@ -906,7 +909,7 @@ class Construction {
     ): PointRef =
         op(curve) {
             val c = (it[0] as FuncCurveValue).curve
-            val p = (if (atStart) FuncCurves.start(c) else FuncCurves.end(c)) ?: return@op EvalResult.Invalid("the curve has no end there")
+            val p = (if (atStart) FuncCurves.start(c) else FuncCurves.end(c)) ?: return@op EvalResult.Invalid(Msgs.refusalOpCurveHasNoEndThere())
             EvalResult.Ok(PointValue(p))
         }
 
@@ -961,7 +964,7 @@ class Construction {
     fun select(
         set: PointSetRef,
         sign: Int,
-        emptyReason: String = "empty intersection",
+        emptyReason: Msg = Msgs.refusalOpEmptyIntersection(),
     ): PointRef =
         op(set) {
             val pts = (it[0] as PointSetValue).set.points
@@ -993,7 +996,7 @@ class Construction {
     fun selectAt(
         set: PointSetRef,
         index: Int,
-        emptyReason: String = "empty intersection",
+        emptyReason: Msg = Msgs.refusalOpEmptyIntersection(),
     ): PointRef =
         op(set) {
             val pts = (it[0] as PointSetValue).set.points
@@ -1001,8 +1004,7 @@ class Construction {
                 pts.isEmpty() -> EvalResult.Invalid(emptyReason)
                 index < 0 || index >= pts.size ->
                     EvalResult.Invalid(
-                        "this crossing has ${pts.size} solution(s) now, so branch ${index + 1} is gone — " +
-                            "move the curves back until it exists, or take the intersection again",
+                        Msgs.refusalOpThisCrossingHasSolutionS(count = pts.size, index = index + 1),
                     )
                 else -> EvalResult.Ok(PointValue(pts[index]))
             }
@@ -1055,7 +1057,7 @@ class Construction {
             val pa = pt(it[0])
             val pb = pt(it[1])
             if ((pb - pa).length() < Vec2.EPS) {
-                EvalResult.Invalid("bisector of coincident points")
+                EvalResult.Invalid(Msgs.refusalOpBisectorCoincidentPoints())
             } else {
                 EvalResult.Ok(LineValue(Line((pa + pb) * 0.5, (pb - pa).perp().normalized())))
             }
@@ -1085,7 +1087,7 @@ class Construction {
             val ub = (pt(it[2]) - v).normalized()
             val bis = ua + ub
             if (bis.length() < Vec2.EPS) {
-                EvalResult.Invalid("degenerate angle bisector (straight/opposite)")
+                EvalResult.Invalid(Msgs.refusalOpDegenerateAngleBisectorStraight())
             } else {
                 EvalResult.Ok(LineValue(Line(v, bis.normalized())))
             }
@@ -1147,9 +1149,9 @@ class Construction {
             val c = cir(it[0])
             val p = pt(it[1])
             val d = sc(it[2]).mm
-            if (c.radius <= Vec2.EPS) return@op EvalResult.Invalid("a chamfer cannot run along a circle of no radius")
+            if (c.radius <= Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpChamferCannotRunAlongCircle())
             val r = p - c.center
-            if (r.length() < Vec2.EPS) return@op EvalResult.Invalid("the corner is at the circle's own centre, so there is no way along it")
+            if (r.length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpCornerIsCircleOwnCentre())
             val a = r.angle() + sign * d / c.radius
             EvalResult.Ok(PointValue(c.center + Vec2(c.radius * kotlin.math.cos(a), c.radius * kotlin.math.sin(a))))
         }
@@ -1161,7 +1163,7 @@ class Construction {
     ): PointRef =
         op(circle, angle) {
             val c = cir(it[0])
-            val a = sc(it[1]).requireDim(Dimension.ANGLE, "angle").base
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, Msg.text("angle")).base
             EvalResult.Ok(PointValue(c.center + Vec2(c.radius * kotlin.math.cos(a), c.radius * kotlin.math.sin(a))))
         }
 
@@ -1172,7 +1174,7 @@ class Construction {
     ): CircleRef =
         op(center, through) {
             val r = (pt(it[1]) - pt(it[0])).length()
-            if (r < Vec2.EPS) EvalResult.Invalid("zero-radius circle") else EvalResult.Ok(CircleValue(Circle(pt(it[0]), r)))
+            if (r < Vec2.EPS) EvalResult.Invalid(Msgs.refusalOpZeroRadiusCircle()) else EvalResult.Ok(CircleValue(Circle(pt(it[0]), r)))
         }
 
     // ================= Tier 1: general transforms (any geometry) =================
@@ -1189,7 +1191,7 @@ class Construction {
         angle: ScalarRef,
     ): Ref<V> =
         op(g, center, angle) {
-            EvalResult.Ok(transformValue(Affine.rotation(pt(it[1]), sc(it[2]).requireDim(Dimension.ANGLE, "angle").base), it[0]))
+            EvalResult.Ok(transformValue(Affine.rotation(pt(it[1]), sc(it[2]).requireDim(Dimension.ANGLE, Msg.text("angle")).base), it[0]))
         }
 
     /**
@@ -1239,7 +1241,7 @@ class Construction {
         op(circle, distance) {
             val c = cir(it[0])
             val r = c.radius + sign * sc(it[1]).mm
-            if (r <= 0.0) EvalResult.Invalid("non-positive radius") else EvalResult.Ok(CircleValue(Circle(c.center, r)))
+            if (r <= 0.0) EvalResult.Invalid(Msgs.refusalOpNonPositiveRadius()) else EvalResult.Ok(CircleValue(Circle(c.center, r)))
         }
 
     // ================= Tier 1: scalar functions =================
@@ -1261,7 +1263,7 @@ class Construction {
         b: ScalarRef,
     ): ScalarRef =
         op(a, b) {
-            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("min of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError(Msgs.refusalDimensionTwoOperands(op = "min", a = sc(it[0]).dim.toString(), b = sc(it[1]).dim.toString()))
             EvalResult.Ok(ScalarValue(Quantity(minOf(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
         }
 
@@ -1270,7 +1272,7 @@ class Construction {
         b: ScalarRef,
     ): ScalarRef =
         op(a, b) {
-            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("max of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError(Msgs.refusalDimensionTwoOperands(op = "max", a = sc(it[0]).dim.toString(), b = sc(it[1]).dim.toString()))
             EvalResult.Ok(ScalarValue(Quantity(maxOf(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
         }
 
@@ -1279,7 +1281,7 @@ class Construction {
         b: ScalarRef,
     ): ScalarRef =
         op(a, b) {
-            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("mod of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError(Msgs.refusalDimensionTwoOperands(op = "mod", a = sc(it[0]).dim.toString(), b = sc(it[1]).dim.toString()))
             EvalResult.Ok(ScalarValue(Quantity(sc(it[0]).base % sc(it[1]).base, sc(it[0]).dim)))
         }
 
@@ -1295,8 +1297,8 @@ class Construction {
     fun sqrtS(a: ScalarRef): ScalarRef =
         op(a) {
             val q = sc(it[0])
-            if (q.dim.length % 2 != 0 || q.dim.angle % 2 != 0) throw DimensionError("sqrt of odd dimension ${q.dim}")
-            if (q.base < 0) throw ArithmeticException("sqrt of negative")
+            if (q.dim.length % 2 != 0 || q.dim.angle % 2 != 0) throw DimensionError(Msgs.refusalDimensionSqrtOdd(dim = q.dim.toString()))
+            if (q.base < 0) throw MsgError(Msgs.refusalOpSqrtOfNegative())
             EvalResult.Ok(ScalarValue(Quantity(kotlin.math.sqrt(q.base), Dimension(q.dim.length / 2, q.dim.angle / 2))))
         }
 
@@ -1311,7 +1313,7 @@ class Construction {
         x: ScalarRef,
     ): ScalarRef =
         op(y, x) {
-            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("atan2 of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+            if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError(Msgs.refusalDimensionTwoOperands(op = "atan2", a = sc(it[0]).dim.toString(), b = sc(it[1]).dim.toString()))
             EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.atan2(sc(it[0]).base, sc(it[1]).base))))
         }
 
@@ -1325,11 +1327,11 @@ class Construction {
      * gear tooth's flank is made of: the addition is a units op, not a gear feature.
      */
     fun radians(x: ScalarRef): ScalarRef =
-        op(x) { EvalResult.Ok(ScalarValue(Quantity.rad(sc(it[0]).requireDim(Dimension.NONE, "radians").base))) }
+        op(x) { EvalResult.Ok(ScalarValue(Quantity.rad(sc(it[0]).requireDim(Dimension.NONE, Msg.text("radians")).base))) }
 
     /** An angle's measure in radians as a plain number — the exact inverse of [radians]. */
     fun radianMeasure(a: ScalarRef): ScalarRef =
-        op(a) { EvalResult.Ok(ScalarValue(Quantity.number(sc(it[0]).requireDim(Dimension.ANGLE, "radianMeasure").base))) }
+        op(a) { EvalResult.Ok(ScalarValue(Quantity.number(sc(it[0]).requireDim(Dimension.ANGLE, Msg.text("radianMeasure")).base))) }
 
     /**
      * [value] itself, but **invalid with [what] as the reason** when it is not positive (OP-3) — a stated
@@ -1342,7 +1344,7 @@ class Construction {
      */
     fun requirePositive(
         value: ScalarRef,
-        what: String,
+        what: Msg,
     ): ScalarRef =
         op(value) {
             val q = sc(it[0])
@@ -1361,7 +1363,7 @@ class Construction {
             val va = pt(it[0]) - pt(it[1])
             val vb = pt(it[2]) - pt(it[1])
             if (va.length() < Vec2.EPS || vb.length() < Vec2.EPS) {
-                EvalResult.Invalid("zero-length arm")
+                EvalResult.Invalid(Msgs.refusalOpZeroLengthArm())
             } else {
                 EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.acos((va.dot(vb) / (va.length() * vb.length())).coerceIn(-1.0, 1.0)))))
             }
@@ -1454,12 +1456,12 @@ class Construction {
             val u1 = (pt(it[0]) - v).normalized()
             val u2 = (pt(it[2]) - v).normalized()
             val bis = u1 + u2
-            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner")
+            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpDegenerateCorner())
             val bisU = bis.normalized()
             val half = kotlin.math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
             val sinH = kotlin.math.sin(half)
             val tanH = kotlin.math.tan(half)
-            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner angle")
+            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpDegenerateCornerAngle())
             val center = v + bisU * (r / sinH)
             val t1 = v + u1 * (r / tanH)
             val t2 = v + u2 * (r / tanH)
@@ -1478,7 +1480,7 @@ class Construction {
             val p = pt(it[1])
             val radial = p - c.center
             if (radial.length() < Vec2.EPS) {
-                EvalResult.Invalid("point at circle centre")
+                EvalResult.Invalid(Msgs.refusalOpPointCircleCentre())
             } else {
                 EvalResult.Ok(LineValue(Line(p, radial.perp().normalized())))
             }
@@ -1500,17 +1502,17 @@ class Construction {
             val lb = ln(it[1])
             val r = sc(it[2]).mm
             val denom = la.dir.cross(lb.dir)
-            if (kotlin.math.abs(denom) < Vec2.EPS) return@op EvalResult.Invalid("parallel legs")
+            if (kotlin.math.abs(denom) < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpParallelLegs())
             val corner = la.origin + la.dir * ((lb.origin - la.origin).cross(lb.dir) / denom)
             val u1 = la.dir * sign1.toDouble()
             val u2 = lb.dir * sign2.toDouble()
             val bis = u1 + u2
-            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner")
+            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpDegenerateCorner())
             val bisU = bis.normalized()
             val half = kotlin.math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
             val sinH = kotlin.math.sin(half)
             val tanH = kotlin.math.tan(half)
-            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner angle")
+            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpDegenerateCornerAngle())
             val center = corner + bisU * (r / sinH)
             val t1 = corner + u1 * (r / tanH)
             val t2 = corner + u2 * (r / tanH)
@@ -1534,7 +1536,7 @@ class Construction {
             val c = cir(it[0])
             val d = pt(it[1]) - c.center
             if (d.length() < Vec2.EPS) {
-                EvalResult.Invalid("no radial direction from the circle's own centre")
+                EvalResult.Invalid(Msgs.refusalOpNoRadialDirectionCircleOwn())
             } else {
                 EvalResult.Ok(PointValue(c.center + d.normalized() * c.radius))
             }
@@ -1562,11 +1564,11 @@ class Construction {
             val a = pt(it[1]) - c
             val b = pt(it[2]) - c
             val r = a.length()
-            if (r < Vec2.EPS) return@op EvalResult.Invalid("zero-radius fillet")
+            if (r < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpZeroRadiusFillet())
             if (abs(b.length() - r) > GeomMath.JOIN_TOL) {
-                return@op EvalResult.Invalid("fillet tangent points are not equidistant from its centre")
+                return@op EvalResult.Invalid(Msgs.refusalOpFilletTangentPointsAreNot())
             }
-            if ((a + b).length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate fillet (tangent points opposite)")
+            if ((a + b).length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpDegenerateFilletTangentPoints())
             EvalResult.Ok(ArcValue(Arc(c, r, a.angle(), b.angle(), a.cross(b) > 0)))
         }
 
@@ -1604,7 +1606,7 @@ class Construction {
         op(c1, c2) {
             val lines = GeomMath.commonTangents(cir(it[0]), cir(it[1]), inner)
             val idx = if (sign >= 0) 0 else 1
-            if (idx >= lines.size) EvalResult.Invalid("no such common tangent") else EvalResult.Ok(LineValue(lines[idx]))
+            if (idx >= lines.size) EvalResult.Invalid(Msgs.refusalOpNoSuchCommonTangent()) else EvalResult.Ok(LineValue(lines[idx]))
         }
 
     fun ray(
@@ -1613,7 +1615,7 @@ class Construction {
     ): RayRef =
         op(origin, through) {
             val d = pt(it[1]) - pt(it[0])
-            if (d.length() < Vec2.EPS) EvalResult.Invalid("ray through coincident points") else EvalResult.Ok(RayValue(Ray(pt(it[0]), d.normalized())))
+            if (d.length() < Vec2.EPS) EvalResult.Invalid(Msgs.refusalOpRayThroughCoincidentPoints()) else EvalResult.Ok(RayValue(Ray(pt(it[0]), d.normalized())))
         }
 
     /** Circumcircle through three points. */
@@ -1625,7 +1627,7 @@ class Construction {
         op(a, b, c) {
             val cc =
                 GeomMath.circumcenter(pt(it[0]), pt(it[1]), pt(it[2]))
-                    ?: return@op EvalResult.Invalid("collinear points")
+                    ?: return@op EvalResult.Invalid(Msgs.refusalOpCollinearPoints())
             EvalResult.Ok(CircleValue(Circle(cc, (pt(it[0]) - cc).length())))
         }
 
@@ -1641,7 +1643,7 @@ class Construction {
             val e = pt(it[2])
             val r = (s - c).length()
             if (r < Vec2.EPS) {
-                EvalResult.Invalid("start coincides with centre")
+                EvalResult.Invalid(Msgs.refusalOpStartCoincidesCentre())
             } else {
                 EvalResult.Ok(ArcValue(Arc(c, r, (s - c).angle(), (e - c).angle(), ccw = true)))
             }
@@ -1657,7 +1659,7 @@ class Construction {
             val pa = pt(it[0])
             val pb = pt(it[1])
             val pc = pt(it[2])
-            val cc = GeomMath.circumcenter(pa, pb, pc) ?: return@op EvalResult.Invalid("collinear points")
+            val cc = GeomMath.circumcenter(pa, pb, pc) ?: return@op EvalResult.Invalid(Msgs.refusalOpCollinearPoints())
             val r = (pa - cc).length()
             val ccw = (pb - pa).cross(pc - pa) > 0
             EvalResult.Ok(ArcValue(Arc(cc, r, (pa - cc).angle(), (pc - cc).angle(), ccw)))
@@ -1669,7 +1671,7 @@ class Construction {
     ): DirectionRef =
         op(from, to) {
             val d = pt(it[1]) - pt(it[0])
-            if (d.length() < Vec2.EPS) EvalResult.Invalid("zero direction") else EvalResult.Ok(DirectionValue(Direction(d.normalized())))
+            if (d.length() < Vec2.EPS) EvalResult.Invalid(Msgs.refusalOpZeroDirection()) else EvalResult.Ok(DirectionValue(Direction(d.normalized())))
         }
 
     // ================= Tier 3: profile (bridge to 3D) =================
@@ -1810,11 +1812,11 @@ class Construction {
         to: PointRef,
     ): SegmentRef =
         op(curve, from, to) {
-            val l = carrierLine(it[0]) ?: return@op EvalResult.Invalid("not a linear curve")
+            val l = carrierLine(it[0]) ?: return@op EvalResult.Invalid(Msgs.refusalOpNotLinearCurve())
             val a = l.origin + l.dir * (pt(it[1]) - l.origin).dot(l.dir)
             val b = l.origin + l.dir * (pt(it[2]) - l.origin).dot(l.dir)
             if ((b - a).length() < Vec2.EPS) {
-                EvalResult.Invalid("degenerate trim: the cut points coincide")
+                EvalResult.Invalid(Msgs.refusalOpDegenerateTrimCutPointsCoincide())
             } else {
                 EvalResult.Ok(SegmentValue(Segment(a, b)))
             }
@@ -1835,15 +1837,15 @@ class Construction {
         ccw: Boolean = true,
     ): ArcRef =
         op(curve, from, to) {
-            val c = carrierCircle(it[0]) ?: return@op EvalResult.Invalid("not a circular curve")
+            val c = carrierCircle(it[0]) ?: return@op EvalResult.Invalid(Msgs.refusalOpNotCircularCurve())
             val d0 = pt(it[1]) - c.center
             val d1 = pt(it[2]) - c.center
             if (d0.length() < Vec2.EPS || d1.length() < Vec2.EPS) {
-                return@op EvalResult.Invalid("a cut point coincides with the centre")
+                return@op EvalResult.Invalid(Msgs.refusalOpCutPointCoincidesCentre())
             }
             val arc = Arc(c.center, c.radius, d0.angle(), d1.angle(), ccw)
             if (abs(GeomMath.sweep(arc)) < Vec2.EPS) {
-                EvalResult.Invalid("degenerate trim: the cut points coincide")
+                EvalResult.Invalid(Msgs.refusalOpDegenerateTrimCutPointsCoincide())
             } else {
                 EvalResult.Ok(ArcValue(arc))
             }
@@ -1876,7 +1878,7 @@ class Construction {
             val seg = (it[0] as SegmentValue).seg
             val d = seg.b - seg.a
             val len = d.length()
-            if (len < Vec2.EPS) return@op EvalResult.Invalid("this leg has no length to round")
+            if (len < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpThisLegHasNoLength())
             val dir = d * (1.0 / len)
             val keepAtA = (pt(it[1]) - seg.a).length() <= (pt(it[1]) - seg.b).length()
             val from = if (keepAtA) seg.a else seg.b
@@ -1886,13 +1888,11 @@ class Construction {
                 // the handover has passed the end that is kept: the rounding wants more of the leg than the
                 // leg has, and how much it has *is* the largest rounding it can host
                 EvalResult.Invalid(
-                    "the rounding overruns this leg: it reaches ${fmtMm(len - t)} back from the corner and the leg " +
-                        "is only ${fmtMm(len)} long, so the largest that fits here is ${fmtMm(len)} from the corner",
+                    Msgs.refusalOpRoundingOverrunsThisLegIt(fmtMm = fmtMm(len - t), fmtMm2 = fmtMm(len)),
                 )
             } else if (t > len + Vec2.EPS) {
                 EvalResult.Invalid(
-                    "the rounding's handover lies ${fmtMm(t - len)} past this leg's far end, so none of the leg is " +
-                        "left between them",
+                    Msgs.refusalOpRoundingHandoverLiesPastThis(fmtMm = fmtMm(t - len)),
                 )
             } else {
                 EvalResult.Ok(SegmentValue(Segment(from, from + along * t)))
@@ -1913,26 +1913,24 @@ class Construction {
         op(piece, keep, cut) {
             val arc = (it[0] as ArcValue).arc
             val sweep = GeomMath.sweep(arc)
-            if (abs(sweep) < Vec2.EPS) return@op EvalResult.Invalid("this leg has no length to round")
+            if (abs(sweep) < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpThisLegHasNoLength())
             val start = GeomMath.arcStart(arc)
             val keepAtStart = (pt(it[1]) - start).length() <= (pt(it[1]) - GeomMath.arcEnd(arc)).length()
             val from = if (keepAtStart) arc.startAngle else arc.endAngle
             val ccw = if (keepAtStart) arc.ccw else !arc.ccw
             val d = pt(it[2]) - arc.center
-            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid("the rounding's tangency is at this leg's own centre")
+            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid(Msgs.refusalOpRoundingTangencyIsThisLeg())
             val turn = if (ccw) norm2pi(d.angle() - from) else norm2pi(from - d.angle())
             val room = abs(sweep)
             val reach = turn * arc.radius
             val left = room * arc.radius
             if (turn < Vec2.EPS) {
                 EvalResult.Invalid(
-                    "the rounding overruns this leg: it reaches ${fmtMm(left - reach)} back from the corner and the " +
-                        "leg is only ${fmtMm(left)} long, so the largest that fits here is ${fmtMm(left)} from the corner",
+                    Msgs.refusalOpRoundingOverrunsThisLegIt(fmtMm = fmtMm(left - reach), fmtMm2 = fmtMm(left)),
                 )
             } else if (turn > room + Vec2.EPS) {
                 EvalResult.Invalid(
-                    "the rounding's handover lies ${fmtMm(reach - left)} past this leg's far end, so none of the leg " +
-                        "is left between them",
+                    Msgs.refusalOpRoundingHandoverLiesPastThis(fmtMm = fmtMm(reach - left)),
                 )
             } else {
                 EvalResult.Ok(ArcValue(Arc(arc.center, arc.radius, from, if (ccw) from + turn else from - turn, ccw)))
@@ -1977,13 +1975,13 @@ class Construction {
                         is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
                         is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
                         is FuncCurveValue -> ProfileElement.FuncE(v.curve)
-                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle, an ellipse, a Bézier or a function curve")
+                        else -> return@op EvalResult.Invalid(Msgs.refusalOpLoopPieceMustBeSegment())
                     }
                 elems.add(e)
             }
             val (chained, reason) = GeomMath.chainLoop(elems)
             if (chained == null) {
-                EvalResult.Invalid(reason ?: "not a closed loop")
+                EvalResult.Invalid(reason ?: Msgs.refusalOpNotClosedLoop())
             } else {
                 EvalResult.Ok(LoopValue(GeomMath.orient(chained, ccw = true)))
             }
@@ -2020,9 +2018,9 @@ class Construction {
                 // one thing a refusal may not do (session 65)
                 EvalResult.Invalid(
                     if (h.isEmpty()) {
-                        "this boundary encloses no area, so it bounds nothing"
+                        Msgs.refusalOpThisBoundaryEnclosesNoArea()
                     } else {
-                        "the holes remove more area than the outer boundary encloses"
+                        Msgs.refusalOpHolesRemoveMoreAreaThan()
                     },
                 )
             } else {
@@ -2069,9 +2067,9 @@ class Construction {
             val t = (args.last() as ScalarValue).q.mm
             val cuts = cornerCuts(args, n, rounds.size, bevels.size)
             val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t), cuts)
-            if (faces == null) return@op EvalResult.Invalid(why ?: "no footprint")
+            if (faces == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpNoFootprint())
             val (region, reason) = GeomMath.thickRegion(faces)
-            if (region == null) EvalResult.Invalid(reason ?: "no footprint") else EvalResult.Ok(RegionValue(region))
+            if (region == null) EvalResult.Invalid(reason ?: Msgs.refusalOpNoFootprint()) else EvalResult.Ok(RegionValue(region))
         }
 
     /**
@@ -2120,10 +2118,10 @@ class Construction {
         thickness: ScalarRef,
     ): RegionRef =
         op(*(curves + thickness).toTypedArray()) { args ->
-            val carriers = carrierCurves(args.dropLast(1), sides) ?: return@op EvalResult.Invalid("a wall's carrier must be curves")
-            val t = (args.last() as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
+            val carriers = carrierCurves(args.dropLast(1), sides) ?: return@op EvalResult.Invalid(Msgs.refusalOpWallCarrierMustBeCurves())
+            val t = (args.last() as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("thickness")).mm
             val (body, why) = thickNetwork(carriers, t)
-            if (body == null) EvalResult.Invalid(why ?: "no footprint") else EvalResult.Ok(RegionValue(body.region))
+            if (body == null) EvalResult.Invalid(why ?: Msgs.refusalOpNoFootprint()) else EvalResult.Ok(RegionValue(body.region))
         }
 
     /**
@@ -2145,14 +2143,14 @@ class Construction {
     ): RegionRef =
         op(*(curves + listOf(thickness, position, width)).toTypedArray()) { args ->
             val carriers =
-                carrierCurves(args.dropLast(3), sides) ?: return@op EvalResult.Invalid("a wall's carrier must be curves")
-            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
-            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, "position").mm
-            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, "width").mm
-            if (w <= 0.0) return@op EvalResult.Invalid("an opening needs a positive width")
+                carrierCurves(args.dropLast(3), sides) ?: return@op EvalResult.Invalid(Msgs.refusalOpWallCarrierMustBeCurves())
+            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("thickness")).mm
+            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("position")).mm
+            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("width")).mm
+            if (w <= 0.0) return@op EvalResult.Invalid(Msgs.refusalOpOpeningNeedsPositiveWidth())
             val (body, why) = thickNetwork(carriers, t)
-            if (body == null) return@op EvalResult.Invalid(why ?: "no footprint")
-            if (legIndex < 0 || legIndex >= body.legCount) return@op EvalResult.Invalid("leg ${legIndex + 1} is not a leg of this wall")
+            if (body == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpNoFootprint())
+            if (legIndex < 0 || legIndex >= body.legCount) return@op EvalResult.Invalid(Msgs.refusalOpLegIsNotLegThis(legIndex = legIndex + 1))
             val leg = body.legs[legIndex]
             // A straight leg's opening is the rectangle it always was, sharing the wall's own faces exactly
             // (OP-21). A curved one is sampled — and *overhangs* the wall instead of sharing its faces, so
@@ -2204,7 +2202,7 @@ class Construction {
             val region = (it[0] as RegionValue).region
             val corners = (listOf(region.outer) + region.holes).flatMap { l -> l.elements.map { e -> GeomMath.startOf(e) } }
             if (index < 0 || index >= corners.size) {
-                EvalResult.Invalid("this area has ${corners.size} corners, so corner ${index + 1} is gone — extract its key points again")
+                EvalResult.Invalid(Msgs.refusalOpThisAreaHasCornersSo(count = corners.size, index = index + 1))
             } else {
                 EvalResult.Ok(PointValue(corners[index]))
             }
@@ -2242,13 +2240,13 @@ class Construction {
     ): RegionRef =
         op(*(vertices + listOf(thickness, position, width)).toTypedArray()) { args ->
             val pts = args.dropLast(3).map { (it as PointValue).p }
-            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
-            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, "position").mm
-            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, "width").mm
-            if (w <= 0.0) return@op EvalResult.Invalid("an opening needs a positive width")
+            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("thickness")).mm
+            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("position")).mm
+            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, Msg.text("width")).mm
+            if (w <= 0.0) return@op EvalResult.Invalid(Msgs.refusalOpOpeningNeedsPositiveWidth())
             val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t))
-            if (faces == null) return@op EvalResult.Invalid(why ?: "no footprint")
-            if (legIndex < 0 || legIndex >= faces.legCount) return@op EvalResult.Invalid("leg ${legIndex + 1} is not a leg of this path")
+            if (faces == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpNoFootprint())
+            if (legIndex < 0 || legIndex >= faces.legCount) return@op EvalResult.Invalid(Msgs.refusalOpLegIsNotLegThis2(legIndex = legIndex + 1))
             val a = GeomMath.facePoint(faces, legIndex, pos, 0)
             val b = GeomMath.facePoint(faces, legIndex, pos + w, 0)
             val c = GeomMath.facePoint(faces, legIndex, pos + w, 1)
@@ -2277,7 +2275,7 @@ class Construction {
             val reg = (it[0] as RegionValue).region
             val a = GeomMath.signedArea(reg.outer) + reg.holes.sumOf { h -> GeomMath.signedArea(h) }
             if (a <= 0.0) {
-                EvalResult.Invalid("the holes remove more area than the outer boundary encloses")
+                EvalResult.Invalid(Msgs.refusalOpHolesRemoveMoreAreaThan())
             } else {
                 EvalResult.Ok(ScalarValue(Quantity(a, Dimension.AREA)))
             }
@@ -2304,9 +2302,9 @@ class Construction {
     ): PlaneRef =
         op {
             val uu = u.normalized()
-            if (uu.length() < Vec3.EPS) return@op EvalResult.Invalid("a plane's first axis has no direction")
+            if (uu.length() < Vec3.EPS) return@op EvalResult.Invalid(Msgs.refusalOpPlaneFirstAxisHasNo())
             val vv = (v - uu * v.dot(uu)).normalized()
-            if (vv.length() < Vec3.EPS) return@op EvalResult.Invalid("a plane's axes are parallel")
+            if (vv.length() < Vec3.EPS) return@op EvalResult.Invalid(Msgs.refusalOpPlaneAxesAreParallel())
             EvalResult.Ok(PlaneValue(Plane3(origin, uu, vv)))
         }
 
@@ -2348,9 +2346,9 @@ class Construction {
         angle: ScalarRef,
     ): PlaneRef =
         op(base, line, angle) {
-            val a = sc(it[2]).requireDim(Dimension.ANGLE, "sketch plane angle").base
+            val a = sc(it[2]).requireDim(Dimension.ANGLE, Msgs.refusalOpSketchPlaneAngle()).base
             val (p, why) = Geom3.datumPlane((it[0] as PlaneValue).plane, ln(it[1]), a)
-            if (p == null) EvalResult.Invalid(why ?: "cannot place that sketch plane") else EvalResult.Ok(PlaneValue(p))
+            if (p == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotPlaceThatSketchPlane()) else EvalResult.Ok(PlaneValue(p))
         }
 
     /**
@@ -2381,10 +2379,10 @@ class Construction {
     ): PlaneRef =
         op(path, space, distance) {
             val pl = (it[1] as PlaneValue).plane
-            val s = sc(it[2]).requireDim(Dimension.LENGTH, "station distance").mm
+            val s = sc(it[2]).requireDim(Dimension.LENGTH, Msgs.refusalOpStationDistance()).mm
             val (station, why) = Stations3.at((it[0] as Path3Value).path, pl.normal.normalized(), s)
             if (station == null) {
-                EvalResult.Invalid(why ?: "cannot stand a plane across this curve there")
+                EvalResult.Invalid(why ?: Msgs.refusalOpCannotStandPlaneAcrossThis())
             } else {
                 EvalResult.Ok(PlaneValue(station.plane))
             }
@@ -2416,8 +2414,8 @@ class Construction {
         op(plane, at, dx, dy) {
             val p = (it[0] as PlaneValue).plane
             val a = pt(it[1])
-            val x = sc(it[2]).requireDim(Dimension.LENGTH, "space origin dx").mm
-            val y = sc(it[3]).requireDim(Dimension.LENGTH, "space origin dy").mm
+            val x = sc(it[2]).requireDim(Dimension.LENGTH, Msgs.refusalOpSpaceOriginDx()).mm
+            val y = sc(it[3]).requireDim(Dimension.LENGTH, Msgs.refusalOpSpaceOriginDy()).mm
             EvalResult.Ok(PlaneValue(Plane3(p.toWorld(Vec2(a.x + x, a.y + y)), p.u, p.v)))
         }
 
@@ -2432,7 +2430,7 @@ class Construction {
         vararg regions: RegionRef,
     ): SketchRef =
         op(plane, *regions) { args ->
-            if (regions.isEmpty()) return@op EvalResult.Invalid("a sketch needs at least one region")
+            if (regions.isEmpty()) return@op EvalResult.Invalid(Msgs.refusalOpSketchNeedsLeastOneRegion())
             val p = (args[0] as PlaneValue).plane
             EvalResult.Ok(SketchValue(Sketch3(p, args.drop(1).map { (it as RegionValue).region })))
         }
@@ -2455,7 +2453,7 @@ class Construction {
         stepOff: Boolean,
     ): SolidRef =
         op(plane, region, depth) {
-            val d = sc(it[2]).requireDim(Dimension.LENGTH, "cut depth")
+            val d = sc(it[2]).requireDim(Dimension.LENGTH, Msgs.refusalOpCutDepth())
             val (solid, why) =
                 Geom3.cutTool(
                     (it[0] as PlaneValue).plane,
@@ -2463,7 +2461,7 @@ class Construction {
                     d.mm,
                     stepOff,
                 )
-            if (solid == null) EvalResult.Invalid(why ?: "cannot cut") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotCut()) else EvalResult.Ok(SolidValue(solid))
         }
 
     /** The plane a sketch is embedded on — the accessor a further datum is offset from. */
@@ -2482,9 +2480,9 @@ class Construction {
         depth: ScalarRef,
     ): SolidRef =
         op(sketch, depth) {
-            val d = sc(it[1]).requireDim(Dimension.LENGTH, "extrude depth")
+            val d = sc(it[1]).requireDim(Dimension.LENGTH, Msgs.refusalOpExtrudeDepth())
             val (solid, why) = Geom3.extrude((it[0] as SketchValue).sketch, d.mm)
-            if (solid == null) EvalResult.Invalid(why ?: "cannot extrude") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotExtrude()) else EvalResult.Ok(SolidValue(solid))
         }
 
     /**
@@ -2511,8 +2509,8 @@ class Construction {
         offset: ScalarRef? = null,
     ): SolidRef =
         op(*listOfNotNull(sketch, axisOrigin, axisDir, angle, offset).toTypedArray()) {
-            val a = sc(it[3]).requireDim(Dimension.ANGLE, "revolve angle").base
-            val o = if (it.size > 4) sc(it[4]).requireDim(Dimension.ANGLE, "revolve offset").base else 0.0
+            val a = sc(it[3]).requireDim(Dimension.ANGLE, Msgs.refusalOpRevolveAngle()).base
+            val o = if (it.size > 4) sc(it[4]).requireDim(Dimension.ANGLE, Msgs.refusalOpRevolveOffset()).base else 0.0
             val (solid, why) =
                 Geom3.revolve(
                     (it[0] as SketchValue).sketch,
@@ -2521,7 +2519,7 @@ class Construction {
                     a,
                     o,
                 )
-            if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotRevolve()) else EvalResult.Ok(SolidValue(solid))
         }
 
     /**
@@ -2544,7 +2542,7 @@ class Construction {
                     pt(it[1]),
                     (it[2] as DirectionValue).dir.v,
                 )
-            if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotRevolve()) else EvalResult.Ok(SolidValue(solid))
         }
 
     /**
@@ -2572,7 +2570,7 @@ class Construction {
     ): Point3Ref =
         op(plane, base, height) {
             val pl = (it[0] as PlaneValue).plane
-            val h = sc(it[2]).requireDim(Dimension.LENGTH, "height").mm
+            val h = sc(it[2]).requireDim(Dimension.LENGTH, Msg.text("height")).mm
             EvalResult.Ok(Point3Value(pl.toWorld(pt(it[1])) + pl.normal.normalized() * (sign * h)))
         }
 
@@ -2636,13 +2634,12 @@ class Construction {
                 val b = pts[(i + 1) % n]
                 if ((b - a).length() <= Vec3.EPS) {
                     return@op EvalResult.Invalid(
-                        "points ${i + 1} and ${(i + 1) % n + 1} of this curve are in the same place, " +
-                            "so the piece between them has no direction — move one of them",
+                        Msgs.refusalOpPointsThisCurveAreSame(i = i + 1, n = (i + 1) % n + 1),
                     )
                 }
             }
             val elements = if (smooth) Curves3.smoothThrough(pts, closed) else Curves3.straightThrough(pts, closed)
-            if (elements.isEmpty()) return@op EvalResult.Invalid("a curve needs at least two points")
+            if (elements.isEmpty()) return@op EvalResult.Invalid(Msgs.refusalOpCurveNeedsLeastTwoPoints())
             EvalResult.Ok(Path3Value(Path3(elements, closed)))
         }
 
@@ -2690,13 +2687,12 @@ class Construction {
         op(plane, center, radius, pitch, turns) {
             val pl = (it[0] as PlaneValue).plane
             val at = (it[1] as Point3Value).p
-            val r = sc(it[2]).requireDim(Dimension.LENGTH, "helix radius").mm
-            val p = sc(it[3]).requireDim(Dimension.LENGTH, "helix pitch").mm
-            val n = sc(it[4]).requireDim(Dimension.NONE, "helix turns").value
+            val r = sc(it[2]).requireDim(Dimension.LENGTH, Msgs.refusalOpHelixRadius()).mm
+            val p = sc(it[3]).requireDim(Dimension.LENGTH, Msgs.refusalOpHelixPitch()).mm
+            val n = sc(it[4]).requireDim(Dimension.NONE, Msgs.refusalOpHelixTurns()).value
             if (r <= Vec3.EPS) {
                 return@op EvalResult.Invalid(
-                    "a helix needs a positive radius — this one is ${Frames3.mm(r)} mm, and a coil of no " +
-                        "radius is a straight line along its own axis",
+                    Msgs.refusalOpHelixNeedsPositiveRadiusThis(mm = Frames3.mm(r)),
                 )
             }
             helixRising(at, pl.normal, pl.u, r, p, n, hand)
@@ -2741,16 +2737,14 @@ class Construction {
             val pl = (it[0] as PlaneValue).plane
             val at = (it[1] as Point3Value).p
             val from = (it[2] as Point3Value).p
-            val p = sc(it[3]).requireDim(Dimension.LENGTH, "helix pitch").mm
-            val n = sc(it[4]).requireDim(Dimension.NONE, "helix turns").value
+            val p = sc(it[3]).requireDim(Dimension.LENGTH, Msgs.refusalOpHelixPitch()).mm
+            val n = sc(it[4]).requireDim(Dimension.NONE, Msgs.refusalOpHelixTurns()).value
             val axis = pl.normal.normalized()
             val out = (from - at).let { d -> d - axis * d.dot(axis) }
             val r = out.length()
             if (r <= Vec3.EPS) {
                 return@op EvalResult.Invalid(
-                    "a helix needs a positive radius, and here that is how far its start point stands from " +
-                        "the axis — this one stands on the axis itself (${Frames3.mm(r)} mm off it), which " +
-                        "states neither a radius nor a direction to start in: move it off the centre",
+                    Msgs.refusalOpHelixNeedsPositiveRadiusHere(mm = Frames3.mm(r)),
                 )
             }
             helixRising(at, axis, out, r, p, n, hand)
@@ -2777,23 +2771,21 @@ class Construction {
     ): EvalResult {
         if (p == 0.0) {
             return EvalResult.Invalid(
-                "a helix rises: with a pitch of nothing it closes back onto itself, which is a circle — " +
-                    "draw one in this space instead, or state the rise per turn",
+                Msgs.refusalOpHelixRisesPitchNothingIt(),
             )
         }
         if (p < 0.0) {
             return EvalResult.Invalid(
-                "a helix's pitch is its rise per turn and cannot be negative (${Frames3.mm(p)} mm): a coil " +
-                    "that descends while it turns ${hand.word} *is* the ${
-                        (if (hand == Handedness.RIGHT) Handedness.LEFT else Handedness.RIGHT).word
-                    } coil, so state that handedness rather than a negative pitch",
+                Msgs.refusalOpHelixPitchIsItsRise(
+                    mm = Frames3.mm(p),
+                    word = hand.word,
+                    word2 = (if (hand == Handedness.RIGHT) Handedness.LEFT else Handedness.RIGHT).word,
+                ),
             )
         }
         if (n <= 0.0) {
             return EvalResult.Invalid(
-                "a helix needs a positive number of turns — no turns is a point, and a negative count is " +
-                    "this same coil on the other side of its axis point, which is said by turning the " +
-                    "axis round",
+                Msgs.refusalOpHelixNeedsPositiveNumberTurns(),
             )
         }
         return EvalResult.Ok(Path3Value(Path3(listOf(Curve3Element.Helix3.about(origin, axis, phase, r, p, n, hand)))))
@@ -2831,14 +2823,14 @@ class Construction {
         op(planeA, viewA, planeB, viewB) { args ->
             val a =
                 guidePieces(args[1])
-                    ?: return@op EvalResult.Invalid("the first view must be a curve — a segment, an arc, a Bézier or a conic")
+                    ?: return@op EvalResult.Invalid(Msgs.refusalOpFirstViewMustBeCurve())
             val b =
                 guidePieces(args[3])
-                    ?: return@op EvalResult.Invalid("the second view must be a curve — a segment, an arc, a Bézier or a conic")
+                    ?: return@op EvalResult.Invalid(Msgs.refusalOpSecondViewMustBeCurve())
             val (path, why) =
                 Combine3.combined((args[0] as PlaneValue).plane, a, (args[2] as PlaneValue).plane, b)
             if (path == null) {
-                EvalResult.Invalid(why ?: "these two views cannot be combined into one run")
+                EvalResult.Invalid(why ?: Msgs.refusalOpTheseTwoViewsCannotBe())
             } else {
                 EvalResult.Ok(Path3Value(path))
             }
@@ -2873,12 +2865,12 @@ class Construction {
         mode: Continuity,
     ): Path3Ref =
         op(a, b, tensionA, tensionB) {
-            val ta = sc(it[2]).requireDim(Dimension.NONE, "connect tension").value
-            val tb = sc(it[3]).requireDim(Dimension.NONE, "connect tension").value
+            val ta = sc(it[2]).requireDim(Dimension.NONE, Msgs.refusalOpConnectTension()).value
+            val tb = sc(it[3]).requireDim(Dimension.NONE, Msgs.refusalOpConnectTension()).value
             val (path, why) =
                 Connect3.connected((it[0] as Path3Value).path, endA, ta, (it[1] as Path3Value).path, endB, tb, mode)
             if (path == null) {
-                EvalResult.Invalid(why ?: "these two ends cannot be joined")
+                EvalResult.Invalid(why ?: Msgs.refusalOpTheseTwoEndsCannotBe())
             } else {
                 EvalResult.Ok(Path3Value(path))
             }
@@ -2914,21 +2906,19 @@ class Construction {
             val plane = (args[1] as PlaneValue).plane
             if (path.elements.size != spans) {
                 return@op EvalResult.Invalid(
-                    "this join is ${path.elements.size} piece(s) where the drawing reads it as $spans, so it " +
-                        "cannot be drawn as a curve of the sketch",
+                    Msgs.refusalOpThisJoinIsPieceS(count = path.elements.size, spans = spans),
                 )
             }
             val cubic =
                 path.elements[span] as? Curve3Element.Bezier3
                     ?: return@op EvalResult.Invalid(
-                        "piece ${span + 1} of this join is not a cubic, so the drawing has no curve to read it as",
+                        Msgs.refusalOpPieceThisJoinIsNot(span = span + 1),
                     )
             val controls = listOf(cubic.p0, cubic.p1, cubic.p2, cubic.p3)
             val off = controls.maxOf { abs(plane.distanceTo(it)) }
             if (off > PLANAR_JOIN_TOL_MM) {
                 return@op EvalResult.Invalid(
-                    "this join stands ${Frames3.mm(off)} mm out of the plane it is read in, so it is a curve in " +
-                        "space rather than one of the drawing",
+                    Msgs.refusalOpThisJoinStandsMmOut(mm = Frames3.mm(off)),
                 )
             }
             EvalResult.Ok(
@@ -2969,21 +2959,20 @@ class Construction {
         op(view, from, solid) { args ->
             val pieces =
                 guidePieces(args[0])
-                    ?: return@op EvalResult.Invalid("what is projected must be a curve — a segment, an arc, a Bézier, a conic or an outline")
+                    ?: return@op EvalResult.Invalid(Msgs.refusalOpWhatIsProjectedMustBe())
             val feature = (args[2] as SolidValue).solid.feature
             val (faces, why) = Section3.faces(feature)
             if (faces == null) {
-                return@op EvalResult.Invalid(why ?: "this body has no named faces to project onto")
+                return@op EvalResult.Invalid(why ?: Msgs.refusalOpThisBodyHasNoNamed())
             }
             val patch =
                 faces.getOrNull(face)
                     ?: return@op EvalResult.Invalid(
-                        "this body now has ${faces.size} face(s), so the face this curve was thrown at " +
-                            "(#${face + 1}) is gone — put it back, or project onto one it still has",
+                        Msgs.refusalOpThisBodyNowHasFace(count = faces.size, face = face + 1),
                     )
             val (made, whyNot) = Project3.projectedOnto(pieces, (args[1] as PlaneValue).plane, patch)
             if (made == null) {
-                EvalResult.Invalid(whyNot ?: "this drawing cannot be projected onto that face")
+                EvalResult.Invalid(whyNot ?: Msgs.refusalOpThisDrawingCannotBeProjected())
             } else {
                 EvalResult.Ok(Path3Value(made.path))
             }
@@ -3021,12 +3010,11 @@ class Construction {
                 pieces.addAll(
                     liftablePieces(args[i])
                         ?: return@op EvalResult.Invalid(
-                            "what is lifted must be a drawn curve — a segment, an arc, a Bézier, a conic, an " +
-                                "outline or an area",
+                            Msgs.refusalOpWhatIsLiftedMustBe(),
                         ),
                 )
             }
-            if (pieces.isEmpty()) return@op EvalResult.Invalid("there is nothing drawn here to lift")
+            if (pieces.isEmpty()) return@op EvalResult.Invalid(Msgs.refusalOpThereIsNothingDrawnHere())
             val (chained, why) =
                 if (closed) {
                     val (loop, reason) = GeomMath.chainLoop(pieces)
@@ -3034,7 +3022,7 @@ class Construction {
                 } else {
                     GeomMath.chainRun(pieces)
                 }
-            if (chained == null) return@op EvalResult.Invalid(why ?: "these pieces do not make one run")
+            if (chained == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpThesePiecesDoNotMake())
             EvalResult.Ok(Path3Value(Intersect3.liftedRun(chained, (args[0] as PlaneValue).plane, closed).first))
         }
 
@@ -3098,16 +3086,16 @@ class Construction {
             // law read at the start of the run ([SweepProfile.of]). With no law the node is exactly the node
             // it always was, arity and arithmetic alike (OP-18: nothing changes meaning).
             if (law == null) {
-                val r = sc(it[2]).requireDim(Dimension.LENGTH, "tube radius").mm
+                val r = sc(it[2]).requireDim(Dimension.LENGTH, Msgs.refusalOpTubeRadius()).mm
                 sweptSolid(it, SweepProfile.Round(r))
             } else {
                 val profile =
                     try {
                         SweepProfile.of(SizeLaw(law.ast, law.env(it, 5), Dimension.LENGTH, law.param, law.text))
                     } catch (e: DimensionError) {
-                        return@op EvalResult.Invalid("${law.what(Dimension.LENGTH)}: ${e.message}")
+                        return@op EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(law.what(Dimension.LENGTH)), reason = Msg.text(e.message ?: "")))
                     } catch (e: ExprError) {
-                        return@op EvalResult.Invalid("${law.what(Dimension.LENGTH)}: ${e.message}")
+                        return@op EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(law.what(Dimension.LENGTH)), reason = Msg.text(e.message ?: "")))
                     }
                 sweptSolid(it, profile)
             }
@@ -3207,9 +3195,9 @@ class Construction {
                     try {
                         SizeLaw(law.ast, law.env(it, lawFrom), Dimension.NONE, law.param, law.text)
                     } catch (e: DimensionError) {
-                        return@op EvalResult.Invalid("${law.what(Dimension.NONE)}: ${e.message}")
+                        return@op EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(law.what(Dimension.NONE)), reason = Msg.text(e.message ?: "")))
                     } catch (e: ExprError) {
-                        return@op EvalResult.Invalid("${law.what(Dimension.NONE)}: ${e.message}")
+                        return@op EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(law.what(Dimension.NONE)), reason = Msg.text(e.message ?: "")))
                     }
                 }
             val at = if (rides == null) null else it[5]
@@ -3251,7 +3239,7 @@ class Construction {
         var fromBehind = false
         if (at is PlaneValue) {
             val (reading, why) = Pierce3.readingAt(path, at.plane, pierce)
-            if (reading == null) return EvalResult.Invalid(why ?: "this section does not cross the run's own plane")
+            if (reading == null) return EvalResult.Invalid(why ?: Msgs.refusalOpThisSectionDoesNotCross())
             seed = reading.seed
             inPlaceAnchor = reading.anchor
             fromBehind = reading.fromBehind
@@ -3264,7 +3252,7 @@ class Construction {
                     else -> region
                 }
             }
-        if (built == null) return EvalResult.Invalid(noFamily ?: "cannot read this section along the run")
+        if (built == null) return EvalResult.Invalid(noFamily ?: Msgs.refusalOpCannotReadThisSectionAlong())
         return sweptSolid(args, built.profile.copy(law = sizing), seed, built.twist)
     }
 
@@ -3291,7 +3279,7 @@ class Construction {
         law: SizeLaw? = null,
     ): EvalResult {
         val (reading, why) = Pierce3.readingAt((args[0] as Path3Value).path, section, pierce)
-        if (reading == null) return EvalResult.Invalid(why ?: "this section does not cross the run's own plane")
+        if (reading == null) return EvalResult.Invalid(why ?: Msgs.refusalOpThisSectionDoesNotCross())
         return sweptSolid(args, SweepProfile.Section(readFrom(region, reading.anchor, reading.fromBehind), law), reading.seed)
     }
 
@@ -3335,8 +3323,8 @@ class Construction {
         twistLaw: SizeLaw? = null,
     ): EvalResult {
         val plane = (args[1] as PlaneValue).plane
-        val roll = sc(args[3]).requireDim(Dimension.ANGLE, "sweep roll").base
-        val twist = sc(args[4]).requireDim(Dimension.ANGLE, "sweep twist").base
+        val roll = sc(args[3]).requireDim(Dimension.ANGLE, Msgs.refusalOpSweepRoll()).base
+        val twist = sc(args[4]).requireDim(Dimension.ANGLE, Msgs.refusalOpSweepTwist()).base
         val (solid, why) =
             Geom3.sweep(
                 (args[0] as Path3Value).path,
@@ -3348,7 +3336,7 @@ class Construction {
                 seed = seed,
                 twistLaw = twistLaw,
             )
-        return if (solid == null) EvalResult.Invalid(why ?: "cannot sweep along this curve") else EvalResult.Ok(SolidValue(solid))
+        return if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotSweepAlongThisCurve()) else EvalResult.Ok(SolidValue(solid))
     }
 
     /**
@@ -3395,14 +3383,14 @@ class Construction {
                         val pieces =
                             guidePieces(curve)
                                 ?: return@op EvalResult.Invalid(
-                                    "a loft's guide must be a curve — a segment, an arc, a Bézier or a chain of them",
+                                    Msgs.refusalOpLoftGuideMustBeCurve(),
                                 )
                         guides.add(LoftGuide(plane, pieces))
                     }
                 }
             }
             val (solid, why) = Geom3.loft(sections, seams, guides)
-            if (solid == null) EvalResult.Invalid(why ?: "cannot loft these sections") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotLoftTheseSections()) else EvalResult.Ok(SolidValue(solid))
         }
     }
 
@@ -3451,11 +3439,11 @@ class Construction {
             val sections = ArrayList<SkinSection>(n)
             for (i in 0 until n) {
                 val sketch = (args[2 * i] as SketchValue).sketch
-                val at = sc(args[2 * i + 1]).requireDim(Dimension.LENGTH, "station distance").mm
+                val at = sc(args[2 * i + 1]).requireDim(Dimension.LENGTH, Msgs.refusalOpStationDistance()).mm
                 sections.add(SkinSection(sketch, at))
             }
             val (solid, why) = Skin3.skin(sections, row, matches)
-            if (solid == null) EvalResult.Invalid(why ?: "cannot skin these sections") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotSkinTheseSections()) else EvalResult.Ok(SolidValue(solid))
         }
     }
 
@@ -3558,16 +3546,16 @@ class Construction {
                 val body = if (chained) (it[iBase] as SolidValue).solid else tip
                 openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
                 val plane = (it[iSpace] as PlaneValue).plane
-                val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
+                val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, Msg.text("${kind.word} ${kind.sizeWord}")).mm
                 val drawn = if (iProfile < 0) emptyList() else (it[iProfile] as ProfileValue).profile.elements
                 val sec = BlendSection(kind, r, drawn)
                 val (resolved, whyTargets) =
                     if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
                 val targets = resolved
-                if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
+                if (targets == null) return@op EvalResult.Invalid(whyTargets ?: Msgs.refusalOpThisSolidHasNoEdge())
                 val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
                 val (out, why) = Blend3.blended(body, tip, targets, sec, choices, rootBody)
-                if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
+                if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotBlendThatEdge())
                 val dressed =
                     if (!chained) {
                         // **The dress-up feature** (session 71, slice 3): the body addressed *is* the body cut,
@@ -3580,7 +3568,7 @@ class Construction {
                         // claim faces it cannot produce, and every reader downstream would meet the refusal
                         // instead of this node (OP-3: the refusal belongs where the decision is)
                         val (faces, whyFaces) = Section3.faces(f)
-                        if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
+                        if (faces == null) return@op EvalResult.Invalid(whyFaces ?: Msgs.refusalOpThisBlendHasNoFaces())
                         out.restated(f)
                     } else {
                         // **The mesh tier, unchanged and stated**: the body cut is *not* the body addressed — a
@@ -3700,7 +3688,7 @@ class Construction {
                 val absent = HashMap<Int, Int>()
                 for ((k, run) in runs.withIndex()) {
                     val r =
-                        if (iSize[k] < 0) 0.0 else sc(it[iSize[k]]).requireDim(Dimension.LENGTH, "${run.kind.word} ${run.kind.sizeWord}").mm
+                        if (iSize[k] < 0) 0.0 else sc(it[iSize[k]]).requireDim(Dimension.LENGTH, Msg.text("${run.kind.word} ${run.kind.sizeWord}")).mm
                     val drawn = if (iProfile[k] < 0) emptyList() else (it[iProfile[k]] as ProfileValue).profile.elements
                     val sec = BlendSection(run.kind, r, drawn)
                     for ((j, t) in run.targets.withIndex()) {
@@ -3712,10 +3700,10 @@ class Construction {
                 }
                 val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
                 val (out, why) = Blend3.blended(body, body, targets, sections, choices, absent, rootBody)
-                if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
+                if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotBlendThatEdge())
                 val f = Feature3.Blend(body.feature, targets, sections, choices, absent)
                 val (faces, whyFaces) = Section3.faces(f)
-                if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
+                if (faces == null) return@op EvalResult.Invalid(whyFaces ?: Msgs.refusalOpThisBlendHasNoFaces())
                 EvalResult.Ok(SolidValue(out.restated(f)))
             }
         blendChainRoot[made.node] = chainRoot ?: from
@@ -3772,16 +3760,16 @@ class Construction {
         op(base, thickness) {
             val body = (it[0] as SolidValue).solid
             openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
-            val t = sc(it[1]).requireDim(Dimension.LENGTH, "wall thickness").mm
+            val t = sc(it[1]).requireDim(Dimension.LENGTH, Msgs.refusalOpWallThickness()).mm
             val (out, why) = Shell3.shelled(body, t, openFaces)
-            if (out == null) return@op EvalResult.Invalid(why ?: "cannot hollow this body")
+            if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotHollowThisBody())
             // **The dress-up feature**: the triangles are the boolean's, restated under the analytic shell and
             // sharing the very same derivation ([Solid3.restated]) — one mesh, two statements of one body. It
             // must still say why if the shelled face list cannot be stated, or a body would claim faces it
             // cannot produce and every reader downstream would meet the refusal instead of this node (OP-3).
             val f = Feature3.Shell(body.feature, t, openFaces)
             val (faces, whyFaces) = Section3.faces(f)
-            if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this shell has no faces to name")
+            if (faces == null) return@op EvalResult.Invalid(whyFaces ?: Msgs.refusalOpThisShellHasNoFaces())
             EvalResult.Ok(SolidValue(out.restated(f)))
         }
 
@@ -3836,7 +3824,7 @@ class Construction {
             openShellOf(sa)?.let { return@op EvalResult.Invalid(it) }
             openShellOf(sb)?.let { return@op EvalResult.Invalid(it) }
             val (solid, why) = booleanValue(kind, sa, sb)
-            if (solid == null) EvalResult.Invalid(why ?: "cannot combine these solids") else EvalResult.Ok(SolidValue(solid))
+            if (solid == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotCombineTheseSolids()) else EvalResult.Ok(SolidValue(solid))
         }
 
     /**
@@ -3851,7 +3839,7 @@ class Construction {
         kind: BoolOp,
         a: Solid3,
         b: Solid3,
-    ): Pair<Solid3?, String?> =
+    ): Pair<Solid3?, Msg?> =
         // **The one operation whose mesh stays eager, and the reason is doctrinal** ([Solid3]). Every
         // constructed feature can say *in advance* why it cannot be built — a degenerate profile, an empty
         // area, a bend the section outgrows — so its triangles wait for somebody to want them while its
@@ -3870,11 +3858,10 @@ class Construction {
      * Reads the *feature*, not the mesh: the flag was derived once where the literal was built, so asking it
      * here is a field read rather than a second pass over the triangles on every recompute.
      */
-    private fun openShellOf(solid: Solid3): String? {
+    private fun openShellOf(solid: Solid3): Msg? {
         val f = solid.feature as? Feature3.Imported ?: return null
         f.openShell ?: return null
-        return "an imported open shell cannot be a boolean operand — a boolean needs watertight solids " +
-            "(the body from ${f.source} is a surface that does not close)"
+        return Msgs.refusalOpImportedOpenShellCannotBe(source = f.source)
     }
 
     // ---- cutting with an unbounded chain (OP-22's extension, step 1) ----
@@ -3899,7 +3886,7 @@ class Construction {
     fun chainThrough(points: List<PointRef>): ChainRef =
         op(*points.toTypedArray()) { args ->
             val (chain, why) = Chains.through(args.map { (it as PointValue).p })
-            if (chain == null) return@op EvalResult.Invalid(why ?: "cannot build a chain through these points")
+            if (chain == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotBuildChainThroughThese())
             Chains.defect(chain)?.let { return@op EvalResult.Invalid(it) }
             EvalResult.Ok(ChainValue(chain))
         }
@@ -3916,7 +3903,7 @@ class Construction {
     fun lineChain(line: LineRef): ChainRef =
         op(line) { args ->
             val (chain, why) = Chains.ofLine((args[0] as LineValue).line)
-            if (chain == null) return@op EvalResult.Invalid(why ?: "cannot read this line as a cutting chain")
+            if (chain == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotReadThisLineCutting())
             EvalResult.Ok(ChainValue(chain))
         }
 
@@ -3986,7 +3973,7 @@ class Construction {
                 } else {
                     Chains.sweptTools((it[1] as ChainValue).chain, (it[2] as PlaneValue).plane, directrix, carry, target.mesh)
                 }
-            if (tools == null) return@op EvalResult.Invalid(whyTools ?: "cannot bound the cutting tool to this solid")
+            if (tools == null) return@op EvalResult.Invalid(whyTools ?: Msgs.refusalOpCannotBoundCuttingToolThis())
             val kept = if (side >= 0) tools.first else tools.second
             val dropped = if (side >= 0) tools.second else tools.first
             val (keptSolid, whyKept) = booleanValue(BoolOp.INTERSECT, target, kept)
@@ -3995,16 +3982,13 @@ class Construction {
             when {
                 keptSolid != null && droppedSolid == null && sameVolume(Geom3.volume(keptSolid.mesh), whole) ->
                     EvalResult.Invalid(
-                        "this cut leaves the solid untouched — the chain passes it by on the side that is kept, " +
-                            "which is exactly what picking the wrong side looks like: keep the other side, or move " +
-                            "the chain across the body",
+                        Msgs.refusalOpThisCutLeavesSolidUntouched(),
                     )
                 keptSolid == null && droppedSolid != null && sameVolume(Geom3.volume(droppedSolid.mesh), whole) ->
                     EvalResult.Invalid(
-                        "this cut removes the whole solid — an empty result is not a body, so it is said rather " +
-                            "than shown as nothing: keep the other side, or move the chain into the material",
+                        Msgs.refusalOpThisCutRemovesWholeSolid(),
                     )
-                keptSolid == null -> EvalResult.Invalid(whyKept ?: "cannot cut this solid with this chain")
+                keptSolid == null -> EvalResult.Invalid(whyKept ?: Msgs.refusalOpCannotCutThisSolidThis())
                 else -> EvalResult.Ok(SolidValue(keptSolid))
             }
         }
@@ -4085,10 +4069,10 @@ class Construction {
         op(solid, plane, at, angle) {
             val p = (it[1] as PlaneValue).plane
             val a = pt(it[2])
-            val t = sc(it[3]).requireDim(Dimension.ANGLE, "placement angle").base
+            val t = sc(it[3]).requireDim(Dimension.ANGLE, Msgs.refusalOpPlacementAngle()).base
             val x = placementFrame(p, a, t)
             val (moved, why) = (it[0] as SolidValue).solid.movedBy(x)
-            if (moved == null) EvalResult.Invalid(why ?: "cannot place this solid") else EvalResult.Ok(SolidValue(planned(moved, p)))
+            if (moved == null) EvalResult.Invalid(why ?: Msgs.refusalOpCannotPlaceThisSolid()) else EvalResult.Ok(SolidValue(planned(moved, p)))
         }
 
     /**
@@ -4168,7 +4152,7 @@ class Construction {
         op(path, plane, at, angle) {
             val p = (it[1] as PlaneValue).plane
             val a = pt(it[2])
-            val t = sc(it[3]).requireDim(Dimension.ANGLE, "placement angle").base
+            val t = sc(it[3]).requireDim(Dimension.ANGLE, Msgs.refusalOpPlacementAngle()).base
             EvalResult.Ok(Path3Value((it[0] as Path3Value).path.movedBy(placementFrame(p, a, t))))
         }
 
@@ -4190,7 +4174,7 @@ class Construction {
     fun pathStart(path: Path3Ref): Point3Ref =
         op(path) {
             val p = (it[0] as Path3Value).path.start
-            if (p == null) EvalResult.Invalid("this curve has no pieces, so it has no start point") else EvalResult.Ok(Point3Value(p))
+            if (p == null) EvalResult.Invalid(Msgs.refusalOpThisCurveHasNoPieces()) else EvalResult.Ok(Point3Value(p))
         }
 
     /**
@@ -4200,7 +4184,7 @@ class Construction {
     fun pathEnd(path: Path3Ref): Point3Ref =
         op(path) {
             val p = (it[0] as Path3Value).path.end
-            if (p == null) EvalResult.Invalid("this curve has no pieces, so it has no end point") else EvalResult.Ok(Point3Value(p))
+            if (p == null) EvalResult.Invalid(Msgs.refusalOpThisCurveHasNoPieces2()) else EvalResult.Ok(Point3Value(p))
         }
 
     /**
@@ -4217,8 +4201,7 @@ class Construction {
             val h =
                 helixPiece(it[0])
                     ?: return@op EvalResult.Invalid(
-                        "only a helix has a centre: this run is a chain of segments and curves, whose defining " +
-                            "points are its own — take its start and end instead",
+                        Msgs.refusalOpOnlyHelixHasCentreThis(),
                     )
             EvalResult.Ok(Point3Value(h.origin))
         }
@@ -4257,22 +4240,23 @@ class Construction {
             val h =
                 helixPiece(it[0])
                     ?: return@op EvalResult.Invalid(
-                        "a point on a helix is stated by an angle about the axis, and this run is not a helix — " +
-                            "state a position along a run of any shape with a Station instead",
+                        Msgs.refusalOpPointHelixIsStatedAngle(),
                     )
-            val theta = sc(it[1]).requireDim(Dimension.ANGLE, "helix angle").base
+            val theta = sc(it[1]).requireDim(Dimension.ANGLE, Msgs.refusalOpHelixAngle()).base
             val total = h.totalAngle
             if (theta < 0.0) {
                 return@op EvalResult.Invalid(
-                    "this angle is ${Frames3.deg(theta)}° along the coil, and a coil starts at 0°: " +
-                        "the angle runs the way the curve turns, so a negative one is off its near end",
+                    Msgs.refusalOpThisAngleIsAlongCoil(deg = Frames3.deg(theta)),
                 )
             }
             if (theta > total) {
                 return@op EvalResult.Invalid(
-                    "this angle is ${Frames3.deg(theta)}° along the coil, which has ${
-                        Frames3.mm(h.turns)
-                    } turns and therefore ends at ${Frames3.deg(total)}° — raise the turn count, or bring the angle back",
+                    Msgs.refusalOpThisAngleIsAlongCoil2(
+                        deg = Frames3.deg(theta),
+                        mm =
+                            Frames3.mm(h.turns),
+                        deg2 = Frames3.deg(total),
+                    ),
                 )
             }
             EvalResult.Ok(Point3Value(h.atAngle(theta)))
@@ -4298,7 +4282,7 @@ class Construction {
     fun runPlane(path: Path3Ref): PlaneRef =
         op(path) {
             val (plane, why) = Curves3.planeOfRun((it[0] as Path3Value).path)
-            if (plane == null) EvalResult.Invalid(why ?: "this run lies in no plane") else EvalResult.Ok(PlaneValue(plane))
+            if (plane == null) EvalResult.Invalid(why ?: Msgs.refusalOpThisRunLiesNoPlane()) else EvalResult.Ok(PlaneValue(plane))
         }
 
     /**
@@ -4337,7 +4321,7 @@ class Construction {
     ): PlaneRef =
         op(solid) {
             val (p, why) = Geom3.facePlane((it[0] as SolidValue).solid.feature, which)
-            if (p == null) EvalResult.Invalid(why ?: "no such face") else EvalResult.Ok(PlaneValue(p))
+            if (p == null) EvalResult.Invalid(why ?: Msgs.refusalOpNoSuchFace()) else EvalResult.Ok(PlaneValue(p))
         }
 
     /**
@@ -4365,7 +4349,7 @@ class Construction {
         op(solid) {
             val (face, why) = Section3.facePatchOfFootprintPiece((it[0] as SolidValue).solid.feature, piece)
             val plane = face?.plane
-            if (plane == null) EvalResult.Invalid(why ?: "no such side face") else EvalResult.Ok(PlaneValue(plane))
+            if (plane == null) EvalResult.Invalid(why ?: Msgs.refusalOpNoSuchSideFace()) else EvalResult.Ok(PlaneValue(plane))
         }
 
     /**
@@ -4387,14 +4371,13 @@ class Construction {
         height: ScalarRef,
     ): RegionRef =
         op(solid, height) {
-            val h = sc(it[1]).requireDim(Dimension.LENGTH, "section height")
+            val h = sc(it[1]).requireDim(Dimension.LENGTH, Msgs.refusalOpSectionHeight())
             val (regions, why) = Geom3.sectionAt((it[0] as SolidValue).solid.feature, h.mm)
             if (regions == null) {
-                EvalResult.Invalid(why ?: "cannot section this solid")
+                EvalResult.Invalid(why ?: Msgs.refusalOpCannotSectionThisSolid())
             } else if (regions.size != 1) {
                 EvalResult.Invalid(
-                    "the section at ${h.mm} mm falls into ${regions.size} separate areas, and an area is one region — " +
-                        "cut at a height where the solid is connected",
+                    Msgs.refusalOpSectionMmFallsSeparateAreas(mm = h.mm, count = regions.size),
                 )
             } else {
                 EvalResult.Ok(RegionValue(regions[0]))
@@ -4469,11 +4452,10 @@ class Construction {
         op(set) {
             val curves = (it[0] as Path3SetValue).set.curves
             when {
-                curves.isEmpty() -> EvalResult.Invalid("the plane does not cut that solid, so there is no curve where they meet")
+                curves.isEmpty() -> EvalResult.Invalid(Msgs.refusalOpPlaneDoesNotCutThat())
                 index < 0 || index >= curves.size ->
                     EvalResult.Invalid(
-                        "the plane now cuts that solid in ${curves.size} curve(s), so curve ${index + 1} is gone — " +
-                            "move the plane back until it exists, or take the intersection again",
+                        Msgs.refusalOpPlaneNowCutsThatSolid(count = curves.size, index = index + 1),
                     )
                 else -> EvalResult.Ok(Path3Value(curves[index].path))
             }
@@ -4499,9 +4481,9 @@ class Construction {
         radius: ScalarRef,
     ): Sphere3Ref =
         op(centre, radius) {
-            val r = sc(it[1]).requireDim(Dimension.LENGTH, "radius").mm
+            val r = sc(it[1]).requireDim(Dimension.LENGTH, Msg.text("radius")).mm
             if (r <= 0.0) {
-                EvalResult.Invalid("a sphere locus needs a radius greater than zero, and this one is ${Frames3.mm(r)} mm")
+                EvalResult.Invalid(Msgs.refusalOpSphereLocusNeedsRadiusGreater(mm = Frames3.mm(r)))
             } else {
                 EvalResult.Ok(Sphere3Value(Sphere3((it[0] as Point3Value).p, r)))
             }
@@ -4525,7 +4507,7 @@ class Construction {
             val c = (it[0] as Point3Value).p
             val r = ((it[1] as Point3Value).p - c).length()
             if (r <= 0.0) {
-                EvalResult.Invalid("a sphere locus needs two different points: its centre and the point on it are the same place")
+                EvalResult.Invalid(Msgs.refusalOpSphereLocusNeedsTwoDifferent())
             } else {
                 EvalResult.Ok(Sphere3Value(Sphere3(c, r)))
             }
@@ -4557,18 +4539,16 @@ class Construction {
                 is SphereMeet.Circle -> EvalResult.Ok(Path3Value(Path3(listOf(m.circle), closed = true)))
                 is SphereMeet.Touch ->
                     EvalResult.Invalid(
-                        "those two sphere loci touch at a single point rather than meeting in a circle — " +
-                            "change a radius until they overlap",
+                        Msgs.refusalOpThoseTwoSphereLociTouch(),
                     )
                 SphereMeet.Apart ->
                     EvalResult.Invalid(
-                        "those two sphere loci are ${Frames3.mm((s2.center - s1.center).length())} mm apart and " +
-                            "reach ${Frames3.mm(s1.radius + s2.radius)} mm between them, so they do not meet",
+                        Msgs.refusalOpThoseTwoSphereLociAre(mm = Frames3.mm((s2.center - s1.center).length()), mm2 = Frames3.mm(s1.radius + s2.radius)),
                     )
                 SphereMeet.Nested ->
-                    EvalResult.Invalid("one of those sphere loci runs entirely inside the other, so they do not meet")
+                    EvalResult.Invalid(Msgs.refusalOpOneThoseSphereLociRuns())
                 SphereMeet.Concentric ->
-                    EvalResult.Invalid("those two sphere loci share a centre, so there is no circle where they meet")
+                    EvalResult.Invalid(Msgs.refusalOpThoseTwoSphereLociShare())
             }
         }
 
@@ -4644,7 +4624,7 @@ class Construction {
     fun selectPoint3(
         set: Point3SetRef,
         sign: Int,
-        emptyReason: String = "no point in space is at all of those distances",
+        emptyReason: Msg = Msgs.refusalOpNoPointSpaceIsAll(),
     ): Point3Ref =
         op(set) {
             val pts = (it[0] as Point3SetValue).set.points
@@ -4668,7 +4648,7 @@ class Construction {
     fun selectPoint3At(
         set: Point3SetRef,
         index: Int,
-        emptyReason: String = "the run does not reach that sphere locus, so it crosses it nowhere",
+        emptyReason: Msg = Msgs.refusalOpRunDoesNotReachThat(),
     ): Point3Ref =
         op(set) {
             val pts = (it[0] as Point3SetValue).set.points
@@ -4676,8 +4656,7 @@ class Construction {
                 pts.isEmpty() -> EvalResult.Invalid(emptyReason)
                 index < 0 || index >= pts.size ->
                     EvalResult.Invalid(
-                        "the run crosses that sphere locus ${pts.size} time(s) now, so crossing ${index + 1} is gone — " +
-                            "move it back until it exists, or take the intersection again",
+                        Msgs.refusalOpRunCrossesThatSphereLocus(count = pts.size, index = index + 1),
                     )
                 else -> EvalResult.Ok(Point3Value(pts[index]))
             }
@@ -4735,7 +4714,7 @@ class Construction {
                 else ->
                     when (val c = (e as EvalResult.Ok).value) {
                         is SegmentValue -> EvalResult.Ok(c)
-                        else -> EvalResult.Invalid("section curve ${index + 1} is not a straight edge any more — take the input again")
+                        else -> EvalResult.Invalid(Msgs.refusalOpSectionCurveIsNotStraight(index = index + 1))
                     }
             }
         }
@@ -4751,7 +4730,7 @@ class Construction {
                 else ->
                     when (val c = (e as EvalResult.Ok).value) {
                         is ArcValue -> EvalResult.Ok(c)
-                        else -> EvalResult.Invalid("section curve ${index + 1} is not an arc any more — take the input again")
+                        else -> EvalResult.Invalid(Msgs.refusalOpSectionCurveIsNotArc(index = index + 1))
                     }
             }
         }
@@ -4773,7 +4752,7 @@ class Construction {
                 else ->
                     when (val c = (e as EvalResult.Ok).value) {
                         is EllipseValue -> EvalResult.Ok(c)
-                        else -> EvalResult.Invalid("section curve ${index + 1} is not an ellipse any more — take the input again")
+                        else -> EvalResult.Invalid(Msgs.refusalOpSectionCurveIsNotEllipse(index = index + 1))
                     }
             }
         }
@@ -4789,7 +4768,7 @@ class Construction {
                 else ->
                     when (val c = (e as EvalResult.Ok).value) {
                         is CircleValue -> EvalResult.Ok(c)
-                        else -> EvalResult.Invalid("section curve ${index + 1} is not a circle any more — take the input again")
+                        else -> EvalResult.Invalid(Msgs.refusalOpSectionCurveIsNotCircle(index = index + 1))
                     }
             }
         }
@@ -4814,14 +4793,12 @@ class Construction {
         val e =
             section.edges.getOrNull(index)
                 ?: return EvalResult.Invalid(
-                    "this section has ${section.edges.size} named curves, so curve ${index + 1} is gone — take the input again",
+                    Msgs.refusalOpThisSectionHasNamedCurves(count = section.edges.size, index = index + 1),
                 )
         e.reason?.let { return EvalResult.Invalid(it) }
         if (e.sampled != null) {
             return EvalResult.Invalid(
-                "${e.provenance} is cut into a curve this drawing has no name for, so it draws but cannot be used " +
-                    "as a $want — an inclined cut of a cylinder is an exact ellipse and can be anchored on, but a " +
-                    "cut that leaves the material through its ends, or one through a ruled face, cannot",
+                Msgs.refusalOpIsCutCurveThisDrawing(provenance = e.provenance, want = want),
             )
         }
         return when (val c = e.curve) {
@@ -4830,7 +4807,7 @@ class Construction {
             is ProfileElement.CircleE -> EvalResult.Ok(CircleValue(c.circle))
             is ProfileElement.EllipseE -> EvalResult.Ok(EllipseValue(c.ellipse))
             is ProfileElement.EllipticArcE -> EvalResult.Ok(EllipticArcValue(c.arc))
-            else -> EvalResult.Invalid("${e.provenance} has no curve to take as a $want")
+            else -> EvalResult.Invalid(Msgs.refusalOpHasNoCurveTake(provenance = e.provenance, want = want))
         }
     }
 
@@ -4851,9 +4828,9 @@ class Construction {
             val c =
                 s.corners.getOrNull(index)
                     ?: return@op EvalResult.Invalid(
-                        "this section has ${s.corners.size} named corners, so corner ${index + 1} is gone — take the input again",
+                        Msgs.refusalOpThisSectionHasNamedCorners(count = s.corners.size, index = index + 1),
                     )
-            val at = c.at ?: return@op EvalResult.Invalid(c.reason ?: "the plane does not cross ${c.provenance}")
+            val at = c.at ?: return@op EvalResult.Invalid(c.reason ?: Msgs.refusalOpPlaneDoesNotCross(provenance = c.provenance))
             EvalResult.Ok(PointValue(at))
         }
 
@@ -4894,7 +4871,7 @@ class Construction {
         pick: (Vec3, Vec3) -> Double,
     ): ScalarRef =
         op(solid) {
-            val b = Geom3.bounds((it[0] as SolidValue).solid.mesh) ?: return@op EvalResult.Invalid("the solid has no mesh")
+            val b = Geom3.bounds((it[0] as SolidValue).solid.mesh) ?: return@op EvalResult.Invalid(Msgs.refusalOpSolidHasNoMesh())
             EvalResult.Ok(ScalarValue(Quantity.mm(pick(b.first, b.second))))
         }
 
@@ -4907,7 +4884,7 @@ class Construction {
         op(s) {
             val seg = (it[0] as SegmentValue).seg
             if ((seg.b - seg.a).length() < Vec2.EPS) {
-                EvalResult.Invalid("degenerate segment")
+                EvalResult.Invalid(Msgs.refusalOpDegenerateSegment())
             } else {
                 EvalResult.Ok(LineValue(Line(seg.a, (seg.b - seg.a).normalized())))
             }

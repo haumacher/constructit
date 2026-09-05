@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -19,27 +21,27 @@ import kotlin.math.sin
  */
 sealed interface FaceName {
     /** How this face is spoken of — in a refusal, in a status line, beside a section input. */
-    val label: String
+    val label: Msg
 
     /** The face an extrusion's boundary piece [piece] sweeps (OP-8's order). */
     data class Side(val piece: Int) : FaceName {
-        override val label: String get() = "the face over boundary edge #${piece + 1}"
+        override val label: Msg get() = Msgs.nameSolidFaceOverBoundaryEdge(piece = piece + 1)
     }
 
     /** An extrusion's or prism's named cap. */
     data class Cap(val which: SolidFace) : FaceName {
-        override val label: String get() = if (which == SolidFace.TOP) "the top face" else "the bottom face"
+        override val label: Msg get() = if (which == SolidFace.TOP) Msgs.nameSolidTopFace() else Msgs.nameSolidBottomFace()
     }
 
     /** A loft's ruled face: the band between sections [band] and `band + 1`, over rail interval [rail]. */
     data class Band(val band: Int, val rail: Int) : FaceName {
-        override val label: String
-            get() = "the face between sections ${band + 1} and ${band + 2} at edge #${rail + 1}"
+        override val label: Msg
+            get() = Msgs.nameSolidFaceBetweenSectionsEdge(band = band + 1, band2 = band + 2, rail = rail + 1)
     }
 
     /** A loft's terminal section, as a face of the solid. */
     data class SectionFace(val section: Int) : FaceName {
-        override val label: String get() = "section ${section + 1}'s own face"
+        override val label: Msg get() = Msgs.nameSolidSectionOwnFace(section = section + 1)
     }
 
     /**
@@ -50,8 +52,8 @@ sealed interface FaceName {
      * (the reversed-bottom / upright-top rule the extrude uses). A complete revolution has neither.
      */
     data class RevolveCap(val which: SolidFace) : FaceName {
-        override val label: String
-            get() = if (which == SolidFace.TOP) "the cap at the end of the sweep" else "the cap at the start of the sweep"
+        override val label: Msg
+            get() = if (which == SolidFace.TOP) Msgs.nameSolidCapEndSweep() else Msgs.nameSolidCapStartSweep()
     }
 
     /**
@@ -63,10 +65,13 @@ sealed interface FaceName {
      * one number names both the band and the crease it rounds.
      */
     data class BlendBand(val edge: Int, val piece: Int = 0) : FaceName {
-        override val label: String
+        override val label: Msg
             get() =
-                "the rounded band along edge #${edge + 1}" +
-                    (if (piece == 0) "" else ", piece #${piece + 1}")
+                if (piece == 0) {
+                    Msgs.nameSolidRoundedBandAlongEdge(edge = edge + 1)
+                } else {
+                    Msgs.nameSolidBlendBandPiece(edge = edge + 1, piece = piece + 1)
+                }
     }
 
     /**
@@ -86,13 +91,15 @@ sealed interface FaceName {
      * already carries.
      */
     data class BlendCorner(val edges: List<Int>, val piece: Int = 0) : FaceName {
-        override val label: String
-            get() =
-                "the rounded corner where " +
-                    edges.joinToString(", ") { "edge #${it + 1}" }.let {
-                        val at = it.lastIndexOf(", ")
-                        if (at < 0) it else it.substring(0, at) + " and " + it.substring(at + 2)
-                    } + " meet" + (if (piece == 0) "" else ", piece #${piece + 1}")
+        override val label: Msg
+            get() {
+                val list = Msg.andList(edges.map { Msgs.nameSolidEdgeIndex(edge = it + 1) })
+                return if (piece == 0) {
+                    Msgs.nameSolidBlendCorner(edges = list)
+                } else {
+                    Msgs.nameSolidBlendCornerPiece(edges = list, piece = piece + 1)
+                }
+            }
     }
 
     /**
@@ -105,7 +112,7 @@ sealed interface FaceName {
      * twin of face `i` is the entry at `faces(base).size + i`.
      */
     data class ShellInner(val face: Int) : FaceName {
-        override val label: String get() = "the inner face behind face #${face + 1}"
+        override val label: Msg get() = Msgs.nameSolidInnerFaceBehindFace(face = face + 1)
     }
 
     /**
@@ -118,8 +125,8 @@ sealed interface FaceName {
      * arithmetic in common.
      */
     data class SkinBand(val interval: Int, val strip: Int) : FaceName {
-        override val label: String
-            get() = "the skin between sections ${interval + 1} and ${interval + 2} at strip #${strip + 1}"
+        override val label: Msg
+            get() = Msgs.nameSolidSkinBetweenSectionsStrip(interval = interval + 1, interval2 = interval + 2, strip = strip + 1)
     }
 }
 
@@ -128,27 +135,27 @@ sealed interface FaceName {
  * exactly what the queue entry says a section *corner* is provenance-wise: the two faces it was cut from.
  */
 sealed interface EdgeName {
-    val label: String
+    val label: Msg
 
     /** An extrusion: the edge swept by the start corner of boundary piece [piece]. */
     data class Upright(val piece: Int) : EdgeName {
-        override val label: String get() = "the upright edge at corner #${piece + 1}"
+        override val label: Msg get() = Msgs.nameSolidUprightEdgeCorner(piece = piece + 1)
     }
 
     /** An extrusion: boundary piece [piece] as it lies on cap [which]. */
     data class CapPiece(val which: SolidFace, val piece: Int) : EdgeName {
-        override val label: String
-            get() = "boundary edge #${piece + 1} of ${if (which == SolidFace.TOP) "the top" else "the bottom"} face"
+        override val label: Msg
+            get() = Msgs.nameSolidCapPiece(piece = piece + 1, which = if (which == SolidFace.TOP) "top" else "bottom")
     }
 
     /** A loft: the rail from section [band] to `band + 1` at rail index [rail]. */
     data class Rail(val band: Int, val rail: Int) : EdgeName {
-        override val label: String get() = "the rail from section ${band + 1} to ${band + 2} at corner #${rail + 1}"
+        override val label: Msg get() = Msgs.nameSolidRailSectionCorner(band = band + 1, band2 = band + 2, rail = rail + 1)
     }
 
     /** A loft: interval [rail] of section [section]'s own boundary ring. */
     data class SectionRing(val section: Int, val rail: Int) : EdgeName {
-        override val label: String get() = "edge #${rail + 1} of section ${section + 1}"
+        override val label: Msg get() = Msgs.nameSolidEdgeSection(rail = rail + 1, section = section + 1)
     }
 
     /**
@@ -156,15 +163,13 @@ sealed interface EdgeName {
      * complete turn, an arc over a partial one, and a single point where that corner is on the axis.
      */
     data class RevolveRing(val piece: Int) : EdgeName {
-        override val label: String get() = "the ring traced by profile corner #${piece + 1}"
+        override val label: Msg get() = Msgs.nameSolidRingTracedProfileCorner(piece = piece + 1)
     }
 
     /** A partial revolution: profile edge [piece] as it lies on the cap at [which] end of the sweep. */
     data class RevolveCapPiece(val which: SolidFace, val piece: Int) : EdgeName {
-        override val label: String
-            get() =
-                "profile edge #${piece + 1} of the cap at the " +
-                    (if (which == SolidFace.TOP) "end" else "start") + " of the sweep"
+        override val label: Msg
+            get() = Msgs.nameSolidRevolveCapPiece(piece = piece + 1, which = if (which == SolidFace.TOP) "top" else "bottom")
     }
 
     /**
@@ -175,7 +180,7 @@ sealed interface EdgeName {
      * keeps its index and its reason ([SolidEdge.reason]), and nothing renumbers (OP-21).
      */
     data class BlendRail(val edge: Int, val side: Int) : EdgeName {
-        override val label: String get() = "tangent rail #${side + 1} of the rounded band along edge #${edge + 1}"
+        override val label: Msg get() = Msgs.nameSolidTangentRailRoundedBandAlong(side = side + 1, edge = edge + 1)
     }
 
     /**
@@ -188,7 +193,7 @@ sealed interface EdgeName {
      * inner twin is the rim's own inner boundary) keeps its index and states that instead.
      */
     data class ShellInner(val edge: Int) : EdgeName {
-        override val label: String get() = "the inner edge behind edge #${edge + 1}"
+        override val label: Msg get() = Msgs.nameSolidInnerEdgeBehindEdge(edge = edge + 1)
     }
 }
 
@@ -275,7 +280,7 @@ data class FacePatch(
     val name: FaceName,
     val plane: Plane3?,
     val outline: List<ProfileElement>,
-    val reason: String?,
+    val reason: Msg?,
     /**
      * The **surface** this face is a patch of, where it has an analytic one: a cylindrical, conical,
      * spherical, toroidal or flat band with the axis frame it stands in ([Surface3]) — a revolution's, and
@@ -324,7 +329,7 @@ data class SolidEdge(
      * index-stability rule). [geom] is still the base's carrier, so a reader that only wants the curve gets
      * the curve; a reader that wants to *build on* the edge — a second blend — is refused in these words.
      */
-    val reason: String? = null,
+    val reason: Msg? = null,
 )
 
 /**
@@ -346,10 +351,10 @@ data class SolidEdge(
  */
 data class SectionEdge(
     /** Which face this was cut from, in the user's words — the structural address is the index. */
-    val provenance: String,
+    val provenance: Msg,
     val curve: ProfileElement?,
     val sampled: List<Vec2>?,
-    val reason: String?,
+    val reason: Msg?,
 ) {
     /** OP-15's class of this one curve: sampled means chords between exact points. */
     val approximated: Boolean get() = sampled != null
@@ -357,9 +362,9 @@ data class SectionEdge(
 
 /** One **corner of a section**: where the plane crosses a structurally named edge of the solid. */
 data class SectionCorner(
-    val provenance: String,
+    val provenance: Msg,
     val at: Vec2?,
-    val reason: String?,
+    val reason: Msg?,
 )
 
 /**
@@ -401,7 +406,7 @@ data class PlaneSection(
      * still *draws* its section, from the mesh, because seeing where the plane cuts is worth having; but
      * there is no face to name, so there is nothing an index could address.
      */
-    val inputsRefusal: String?,
+    val inputsRefusal: Msg?,
     /**
      * Everything the section draws, in the cutting plane's (u, v) — including pieces no index names — each
      * with OP-15's class of it ([DrawnPiece]).
@@ -441,25 +446,17 @@ object Section3 {
     /** How finely a curve the vocabulary cannot state is sampled (OP-15: deterministic, never adaptive). */
     private const val SAMPLE_STEPS = 64
 
-    private const val MESH_ONLY =
-        "this solid is mesh-only (a general boolean's result, OP-9), so its section has no faces to name — " +
-            "its curves draw as chords and cannot be used as construction inputs; build the geometry you want " +
-            "to anchor on from the operands' own sketches instead"
+    private val MESH_ONLY =
+        Msgs.refusalSectionThisSolidIsMeshOnly()
 
-    private const val PRISM_ONLY =
-        "this solid is a stack of slabs from the exact boolean algebra (OP-22), whose internal interfaces are " +
-            "not faces — its section draws from the mesh and offers no construction inputs; a horizontal cut " +
-            "through it is exact via the Section tool"
+    private val PRISM_ONLY =
+        Msgs.refusalSectionThisSolidIsStackSlabs()
 
-    private const val SWEEP_ONLY =
-        "this solid is a profile swept along a curve (OP-26), whose faces are the moving frame's and not a " +
-            "constructed list — its section draws from the mesh and offers no construction inputs; put a datum " +
-            "plane where you want to sketch"
+    private val SWEEP_ONLY =
+        Msgs.refusalSectionThisSolidIsProfileSwept()
 
-    private const val IMPORT_ONLY =
-        "this body was imported from a file, so it is triangles and nothing else (OP-9) — its section draws " +
-            "from the mesh and offers no construction inputs; build what you want to anchor on beside it, " +
-            "and place the body against that"
+    private val IMPORT_ONLY =
+        Msgs.refusalSectionThisBodyWasImportedFile()
 
     // ---- the structural face list, per feature kind ----
 
@@ -471,7 +468,7 @@ object Section3 {
      * pieces in loop order — followed by the two caps, so `Side(piece)` is at index `piece`. For a loft it is
      * band-major over the correspondence's rails, followed by the terminal sections.
      */
-    fun faces(feature: Feature3): Pair<List<FacePatch>?, String?> =
+    fun faces(feature: Feature3): Pair<List<FacePatch>?, Msg?> =
         when (feature) {
             is Feature3.Extrusion -> extrusionFaces(feature) to null
             is Feature3.Prism -> prismFaces(feature) to null
@@ -549,7 +546,7 @@ object Section3 {
         }
 
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
-    fun structuralRefusal(feature: Feature3): String? =
+    fun structuralRefusal(feature: Feature3): Msg? =
         when (feature) {
             is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution, is Feature3.Blend, is Feature3.Shell ->
                 faces(feature).second
@@ -598,7 +595,7 @@ object Section3 {
                 val d = b - a
                 val len = d.length()
                 if (len <= Geom3.WELD_TOL) {
-                    FacePatch(name, null, emptyList(), "that boundary edge has no length")
+                    FacePatch(name, null, emptyList(), Msgs.refusalSectionThatBoundaryEdgeHasNo())
                 } else {
                     val u = d * (1.0 / len)
                     // the material is on the +axis side of the base plane and, in the plane, to the *left* of
@@ -627,15 +624,14 @@ object Section3 {
                     name,
                     null,
                     emptyList(),
-                    "that boundary edge is an ellipse, so the face it sweeps is an elliptic cylinder, which this " +
-                        "drawing has no name for — pick a straight edge",
+                    Msgs.refusalSectionThatBoundaryEdgeIsEllipse(),
                 )
             is ProfileElement.BezierE ->
                 FacePatch(
                     name,
                     null,
                     emptyList(),
-                    "that boundary edge is a spline, so the face it sweeps is ruled and not a plane — pick a straight edge",
+                    Msgs.refusalSectionThatBoundaryEdgeIsSpline(),
                 )
             // an extrude **carries** a function curve — the piece tessellates into the mesh like every other
             // — and the face it sweeps is a ruled surface this drawing has no name for, so the patch is
@@ -645,13 +641,12 @@ object Section3 {
                     name,
                     null,
                     emptyList(),
-                    "that boundary edge is a function curve, so the face it sweeps is ruled and not a plane — " +
-                        "pick a straight edge",
+                    Msgs.refusalSectionThatBoundaryEdgeIsFunction(),
                 )
         }
 
-    private const val CURVED_SIDE =
-        "that boundary edge is curved, so the face it sweeps is a cylinder and not a plane — pick a straight edge"
+    private val CURVED_SIDE =
+        Msgs.refusalSectionThatBoundaryEdgeIsCurved()
 
     /**
      * The **cylinder** an extrusion's arc or circle sweeps, in [Surface3]'s frame: the axis is the sweep
@@ -760,11 +755,10 @@ object Section3 {
      * an index into them would not survive a change of tolerance: refused by name, with the plane that does
      * work in the message.
      */
-    private fun loftFaces(f: Feature3.Loft): Pair<List<FacePatch>?, String?> {
+    private fun loftFaces(f: Feature3.Loft): Pair<List<FacePatch>?, Msg?> {
         if (f.approximated) {
             return null to
-                "this loft has a curved section or guide, so its ruled faces are sampled rather than named — " +
-                "put a datum plane where you want to sketch"
+                Msgs.refusalSectionThisLoftHasCurvedSection()
         }
         val (plan, why) = Geom3.loftPlan(f.sections, f.seams, f.guides)
         if (plan == null) return null to why
@@ -834,16 +828,16 @@ object Section3 {
         val q = if (useUpper) d else b
         val far = if (useUpper) (a + b) * 0.5 else (c + d) * 0.5
         val e0 = q - p
-        if (e0.length() <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), "that face's edge has no length")
+        if (e0.length() <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), Msgs.refusalSectionThatFaceEdgeHasNo())
         val along = e0.normalized()
         val out0 = lower.cross(d - a)
         val out1 = lower.cross(c - a)
         val out2 = upper.cross(a - c)
         val out =
             listOf(out0, out1, out2).maxByOrNull { it.length() }?.takeIf { it.length() >= DIR_EPS }?.normalized()
-                ?: return FacePatch(name, null, emptyList(), "that face is degenerate")
+                ?: return FacePatch(name, null, emptyList(), Msgs.refusalSectionThatFaceIsDegenerate())
         val across = (far - p).let { it - along * it.dot(along) }
-        if (across.length() < DIR_EPS) return FacePatch(name, null, emptyList(), "that face is degenerate")
+        if (across.length() < DIR_EPS) return FacePatch(name, null, emptyList(), Msgs.refusalSectionThatFaceIsDegenerate())
         // v points into the face from its reference edge; u is what right-handedness leaves (u × v = out)
         val v = across.normalized()
         val u = v.cross(out).normalized()
@@ -855,13 +849,11 @@ object Section3 {
                 name,
                 null,
                 emptyList(),
-                "that face is ruled rather than flat (its corners are ${kotlin.math.round(off * 1000.0) / 1000.0} mm " +
-                    "out of plane) — " +
-                    "put a datum plane where you want to sketch",
+                Msgs.refusalSectionThatFaceIsRuledRather(round = (kotlin.math.round(off * 1000.0) / 1000.0).toString()),
             )
         }
         val local = dedupe(ring.map { plane.toLocal(it) })
-        if (local.size < 3) return FacePatch(name, null, emptyList(), "that face encloses no area")
+        if (local.size < 3) return FacePatch(name, null, emptyList(), Msgs.refusalSectionThatFaceEnclosesNoArea())
         return FacePatch(name, plane, ringPieces(oriented(local)), null)
     }
 
@@ -917,9 +909,8 @@ object Section3 {
      * exactly as before — only the revolve's **bottom** cap block now comes out in profile order instead of
      * reversed, which is the bug this convention exists to remove.
      */
-    const val CAP_EDGE_CONVENTION =
-        "a cap edge is footprint boundary piece i, in Geom3.boundaryPieces order, as it lies on the cap face — " +
-            "in that face's own plane and coordinates"
+    val CAP_EDGE_CONVENTION =
+        Msgs.refusalSectionCapEdgeIsFootprintBoundary()
 
     /**
      * The half-open index ranges of [Geom3.boundaryPieces] that each **loop** of the footprint occupies:
@@ -961,7 +952,7 @@ object Section3 {
     }
 
     /** The edges of [feature] in provenance order, or null with the reason it has none that are constructed. */
-    fun edges(feature: Feature3): Pair<List<SolidEdge>?, String?> =
+    fun edges(feature: Feature3): Pair<List<SolidEdge>?, Msg?> =
         when (feature) {
             is Feature3.Extrusion -> extrusionEdges(feature) to null
             is Feature3.Loft -> loftEdges(feature)
@@ -1024,11 +1015,10 @@ object Section3 {
         return out
     }
 
-    private fun loftEdges(f: Feature3.Loft): Pair<List<SolidEdge>?, String?> {
+    private fun loftEdges(f: Feature3.Loft): Pair<List<SolidEdge>?, Msg?> {
         if (f.approximated) {
             return null to
-                "this loft has a curved section or guide, so its rails are sampled rather than named — " +
-                "put a datum plane where you want to sketch"
+                Msgs.refusalSectionThisLoftHasCurvedSection2()
         }
         val (plan, why) = Geom3.loftPlan(f.sections, f.seams, f.guides)
         if (plan == null) return null to why
@@ -1082,10 +1072,10 @@ object Section3 {
     fun edgesOfFace(
         feature: Feature3,
         face: FaceName,
-    ): Pair<List<SolidEdge>?, String?> {
+    ): Pair<List<SolidEdge>?, Msg?> {
         val (fs, whyFaces) = faces(feature)
         if (fs == null) return null to whyFaces
-        if (fs.none { it.name == face }) return null to "this solid has no ${face.label}"
+        if (fs.none { it.name == face }) return null to Msgs.refusalSectionThisSolidHasNo(name = face.label)
         val (es, whyEdges) = edges(feature)
         if (es == null) return null to whyEdges
         return es.filter { it.between.has(face) } to null
@@ -1103,20 +1093,19 @@ object Section3 {
         feature: Feature3,
         a: FaceName,
         b: FaceName,
-    ): Pair<SolidEdge?, String?> {
+    ): Pair<SolidEdge?, Msg?> {
         val (fs, whyFaces) = faces(feature)
         if (fs == null) return null to whyFaces
-        for (f in listOf(a, b)) if (fs.none { it.name == f }) return null to "this solid has no ${f.label}"
+        for (f in listOf(a, b)) if (fs.none { it.name == f }) return null to Msgs.refusalSectionThisSolidHasNo(name = f.label)
         val (es, whyEdges) = edges(feature)
         if (es == null) return null to whyEdges
         val hits = es.filter { it.between.sameAs(a, b) }
         return when (hits.size) {
-            0 -> null to "${a.label} and ${b.label} do not meet along an edge"
+            0 -> null to Msgs.refusalSectionDoNotMeetAlongEdge(name = a.label, name2 = b.label)
             1 -> hits[0] to null
             else ->
                 null to
-                    "${a.label} and ${b.label} meet along ${hits.size} separate edges, and one input is one edge — " +
-                    "name the edge itself"
+                    Msgs.refusalSectionMeetAlongSeparateEdgesOne(name = a.label, name2 = b.label, count = hits.size)
         }
     }
 
@@ -1140,9 +1129,8 @@ object Section3 {
      * projects to. Nothing a file stores changes meaning: every one of those indices was a **refusal** before
      * (`this solid has no boundary piece #k`), so no build could have written one.
      */
-    const val FACE_ADDRESS_CONVENTION =
-        "face address i < n is the face over footprint boundary piece i (Geom3.boundaryPieces order); " +
-            "i >= n is the (i − n)-th face standing over no footprint piece — the flat ends, in Section3.faces order"
+    val FACE_ADDRESS_CONVENTION =
+        Msgs.refusalSectionFaceAddressINIs()
 
     /**
      * The face of [feature] over **footprint boundary piece** [piece] — the pick a plan view can make (a side
@@ -1157,7 +1145,7 @@ object Section3 {
     fun facePatchOfFootprintPiece(
         feature: Feature3,
         piece: Int,
-    ): Pair<FacePatch?, String?> {
+    ): Pair<FacePatch?, Msg?> {
         // **A dressed part is sketched on exactly where its base was** (session 71, slice 3): the frame is
         // the base's — same plane, same origin, same u — because a stored `sketchspace el= piece=` must go on
         // meaning what it meant (OP-18), and a blend does not move a face, it trims it. What the face space
@@ -1197,8 +1185,7 @@ object Section3 {
         // address a click on it records ([FACE_ADDRESS_CONVENTION], and [Skin3.faces] for the order).
         if (feature is Feature3.Skin) {
             return null to
-                "a skin over drawn sections is not addressed by a footprint edge — click the face itself in the " +
-                "3D view, or click one of its end sections to sketch on it"
+                Msgs.refusalSectionSkinOverDrawnSectionsIs()
         }
         if (feature !is Feature3.Loft) {
             // The prism route is [Geom3.sideFace] verbatim — frame, anchor and refusals — because that frame
@@ -1211,14 +1198,14 @@ object Section3 {
         }
         val (addr, why2) = loftAddress(feature)
         if (addr == null) return null to why2
-        val rail = addr.plan.railOfPiece(addr.section, piece) ?: return null to "this solid has no boundary piece #${piece + 1}"
+        val rail = addr.plan.railOfPiece(addr.section, piece) ?: return null to Msgs.refusalSectionThisSolidHasNoBoundary(piece = piece + 1)
         if (rail >= addr.plan.railCount) {
-            return null to "this solid has no boundary piece #${piece + 1} (it has ${Geom3.boundaryPieces(feature).size})"
+            return null to Msgs.refusalSectionThisSolidHasNoBoundary2(piece = piece + 1, count = Geom3.boundaryPieces(feature).size)
         }
         // the picked footprint segment is section k's own ring edge — the band's lower edge unless the area
         // section is the *last* one, and the frame is built on it (OP-17's intrinsic rule)
         val patch = bandPatch(addr.plan, addr.band, rail, refUpper = addr.band != addr.section)
-        if (patch.plane == null) return null to (patch.reason ?: "that face is ruled rather than flat — put a datum plane where you want to sketch")
+        if (patch.plane == null) return null to (patch.reason ?: Msgs.refusalSectionThatFaceIsRuledRather2())
         return patch to null
     }
 
@@ -1234,15 +1221,15 @@ object Section3 {
     private fun endFacePatch(
         feature: Feature3,
         piece: Int,
-    ): Pair<FacePatch?, String?> {
+    ): Pair<FacePatch?, Msg?> {
         val (fs, why) = faces(feature)
         if (fs == null) return null to why
         val n = Geom3.boundaryPieces(feature).size
         val ends = endFaces(fs)
         val patch =
             ends.getOrNull(piece - n)
-                ?: return null to "this solid has no face #${piece + 1} (it has ${n + ends.size})"
-        if (patch.plane == null) return null to (patch.reason ?: "that face is not a plane — put a datum plane where you want to sketch")
+                ?: return null to Msgs.refusalSectionThisSolidHasNoFace(piece = piece + 1, count = n + ends.size)
+        if (patch.plane == null) return null to (patch.reason ?: Msgs.refusalSectionThatFaceIsNotPlane())
         return patch to null
     }
 
@@ -1274,16 +1261,16 @@ object Section3 {
      * Where a loft's `piece` addresses read from — one place, so [facePatchOfFootprintPiece] and
      * [addressOfFace] cannot drift on which band a footprint edge means.
      */
-    private fun loftAddress(f: Feature3.Loft): Pair<LoftAddress?, String?> {
+    private fun loftAddress(f: Feature3.Loft): Pair<LoftAddress?, Msg?> {
         val (plan, why) = Geom3.loftPlan(f.sections, f.seams, f.guides)
         if (plan == null) return null to why
         val whyFaces = faces(f).second
         if (whyFaces != null) return null to whyFaces
         val k = f.sections.indexOfFirst { it is LoftSection.Area }
-        if (k < 0) return null to "this loft has no area section to take a face from"
+        if (k < 0) return null to Msgs.refusalSectionThisLoftHasNoArea()
         val band = if (k < f.sections.size - 1) k else k - 1
         if (band < 0 || band + 1 >= plan.ringW.size) {
-            return null to "this solid has no boundary piece to name a face by (it has ${Geom3.boundaryPieces(f).size})"
+            return null to Msgs.refusalSectionThisSolidHasNoBoundary3(count = Geom3.boundaryPieces(f).size)
         }
         return LoftAddress(plan, k, band) to null
     }
@@ -1376,7 +1363,7 @@ object Section3 {
         at: Vec3,
         along: Vec3,
         tol: Double,
-    ): Pair<FacePick?, String?> {
+    ): Pair<FacePick?, Msg?> {
         val (fs, why) = faces(feature)
         if (fs == null) return null to why
         val dir = if (along.length() <= Vec3.EPS) null else along.normalized()
@@ -1402,7 +1389,7 @@ object Section3 {
                 bestFacing = facing
             }
         }
-        val pick = best ?: return null to "the ray met this body where no named face of it is"
+        val pick = best ?: return null to Msgs.refusalSectionRayMetThisBodyWhere()
         return pick to null
     }
 
@@ -1577,7 +1564,7 @@ object Section3 {
         val edges =
             pieces.mapIndexed { i, e ->
                 SectionEdge(
-                    "edge #${i + 1} of ${patch.name.label}",
+                    Msgs.nameSolidEdgeOfFace(i = i + 1, face = patch.name.label),
                     e.takeIf { it !is ProfileElement.BezierE },
                     if (e is ProfileElement.BezierE) GeomMath.tessellatePiece(e) else null,
                     null,
@@ -1585,7 +1572,7 @@ object Section3 {
             }
         val corners =
             pieces.mapIndexed { i, e ->
-                SectionCorner("corner #${i + 1} of ${patch.name.label}", GeomMath.startOf(e), null)
+                SectionCorner(Msgs.nameSolidCornerOfFace(i = i + 1, face = patch.name.label), GeomMath.startOf(e), null)
             }
         return PlaneSection(
             edges,
@@ -1636,15 +1623,14 @@ object Section3 {
     fun regionsOf(
         feature: Feature3,
         plane: Plane3,
-    ): Pair<List<Region>?, String?> {
+    ): Pair<List<Region>?, Msg?> {
         val fs = faces(feature).first ?: return null to structuralRefusal(feature)
         if (!facesAreWholeBoundary(feature)) return null to (structuralRefusal(feature) ?: MESH_ONLY)
         val section = structuralSection(feature, fs, plane)
-        if (section.isEmpty) return null to "the plane does not cut this solid"
+        if (section.isEmpty) return null to Msgs.refusalSectionPlaneDoesNotCutThis()
         val loops =
             chainLoops(section.drawn) ?: return null to
-                "the plane's section of this solid does not close into an area — one of the faces it crosses is " +
-                "cut in a way this drawing states only as curves; read the section on a working plane instead"
+                Msgs.refusalSectionPlaneSectionThisSolidDoes()
         return nest(loops) to null
     }
 
@@ -1686,9 +1672,8 @@ object Section3 {
     private const val CHAIN_TOL = 1e-6
 
     /** Why a face the plane crosses more than once names no single input — the section still draws both. */
-    private const val CUT_TWICE =
-        "the plane cuts that face into separate pieces, and one input is one curve — move the plane to where " +
-            "that face is crossed once"
+    private val CUT_TWICE =
+        Msgs.refusalSectionPlaneCutsThatFaceSeparate()
 
     /** The general case: cut every named face, cross every named edge. */
     private fun structuralSection(
@@ -1752,15 +1737,14 @@ object Section3 {
         if (patch.plane != null) {
             val pieces = cutPlanarFace(patch.plane, patch.outline, cut)
             return when (pieces.size) {
-                0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+                0 -> SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
                 1 -> SectionEdge(label, pieces[0], null, null) to emptyList()
                 else ->
                     SectionEdge(
                         label,
                         null,
                         null,
-                        "the plane cuts $label into ${pieces.size} separate pieces, and one input is one curve — " +
-                            "move the plane to where that face is crossed once",
+                        Msgs.refusalSectionPlaneCutsSeparatePiecesOne(label = label, count = pieces.size),
                         // a planar face's cut is exact whether or not one index can name it
                     ) to pieces.map { DrawnPiece(it, false) }
             }
@@ -1795,7 +1779,7 @@ object Section3 {
                     }
                 }
                 Blend3.cornerStrip(feature, n)?.let { return cutRuledStrip(label, it, cut) }
-                return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+                return SectionEdge(label, null, null, patch.reason ?: Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
             }
             if (n !is FaceName.BlendBand) return cutFace(feature.base, patch, cut)
             // a band about a circular edge is a surface of revolution and gets [Revolve3]'s whole table;
@@ -1815,7 +1799,7 @@ object Section3 {
             }
             val strip = Blend3.bandStrip(feature, n.edge, n.piece)
             if (strip != null) return cutRuledStrip(label, strip, cut)
-            return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+            return SectionEdge(label, null, null, patch.reason ?: Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
         }
         // **A shelled part cuts as its base plus its cavity** (session 75), which is slice 3's sentence with
         // one word changed. An outer face is the base's own surface, so the base's exact readings answer it
@@ -1828,9 +1812,9 @@ object Section3 {
             if (inner != null) {
                 val (cavity, cavPatch) = inner
                 val (edge, extra) = cutFace(cavity, cavPatch, cut)
-                return SectionEdge(label, edge.curve, edge.sampled, edge.reason?.replace(cavPatch.name.label, label)) to extra
+                return SectionEdge(label, edge.curve, edge.sampled, edge.reason?.substituting(cavPatch.name.label, label)) to extra
             }
-            return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+            return SectionEdge(label, null, null, patch.reason ?: Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
         }
         // a revolution's bands have their own dispatch, decided by the plane's relation to the axis before
         // any geometry is made (OP-17's item 4 — see [Revolve3.cutBand] for the table)
@@ -1849,7 +1833,7 @@ object Section3 {
         // in the sketch plane crosses the boundary piece — one upright per crossing, each derived from the
         // profile's own parameters, a line against an arc or a conic (OP-15)
         axisParallelSideCut(feature, patch.name, cut)?.let { return it }
-        val strip = ruledStrip(feature, patch.name) ?: return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+        val strip = ruledStrip(feature, patch.name) ?: return SectionEdge(label, null, null, patch.reason ?: Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
         return cutRuledStrip(label, strip, cut)
     }
 
@@ -1883,35 +1867,33 @@ object Section3 {
      * circular edge, which is the same table asked of the same frame ([Blend3.bandCut]).
      */
     private fun bandCutToEdge(
-        label: String,
+        label: Msg,
         band: Revolve3.BandCut,
     ): Pair<SectionEdge, List<DrawnPiece>> {
         val exact = band.exact
         if (exact != null) {
             return when (exact.size) {
-                0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+                0 -> SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
                 1 -> SectionEdge(label, exact[0], null, null) to emptyList()
                 else ->
                     SectionEdge(
                         label,
                         null,
                         null,
-                        "the plane cuts $label into ${exact.size} separate pieces, and one input is one curve — " +
-                            "move the plane to where that face is crossed once",
+                        Msgs.refusalSectionPlaneCutsSeparatePiecesOne(label = label, count = exact.size),
                     ) to exact.map { DrawnPiece(it, false) }
             }
         }
         val runs = band.runs.orEmpty().filter { it.size >= 2 }
         return when (runs.size) {
-            0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+            0 -> SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
             1 -> SectionEdge(label, null, runs[0], null) to emptyList()
             else ->
                 SectionEdge(
                     label,
                     null,
                     null,
-                    "the plane cuts $label into ${runs.size} separate pieces, and one input is one curve — " +
-                        "move the plane to where that face is crossed once",
+                    Msgs.refusalSectionPlaneCutsSeparatePiecesOne(label = label, count = runs.size),
                 ) to runs.flatMap { r -> polylinePieces(r).map { DrawnPiece(it, true) } }
         }
     }
@@ -1947,15 +1929,14 @@ object Section3 {
                 ProfileElement.Seg(Segment(cut.toLocal(w), cut.toLocal(w + axis)))
             }
         return when (uprights.size) {
-            0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+            0 -> SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
             1 -> SectionEdge(label, uprights[0], null, null) to emptyList()
             else ->
                 SectionEdge(
                     label,
                     null,
                     null,
-                    "the plane cuts $label into ${uprights.size} separate pieces, and one input is one curve — " +
-                        "move the plane to where that face is crossed once",
+                    Msgs.refusalSectionPlaneCutsSeparatePiecesOne(label = label, count = uprights.size),
                 ) to uprights.map { DrawnPiece(it, false) }
         }
     }
@@ -2259,7 +2240,7 @@ object Section3 {
      */
 
     private fun cutRuledStrip(
-        label: String,
+        label: Msg,
         strip: RuledStrip,
         cut: Plane3,
     ): Pair<SectionEdge, List<DrawnPiece>> {
@@ -2279,7 +2260,7 @@ object Section3 {
                 if (cur.isEmpty() || (cur.last() - hit).length() > Geom3.WELD_TOL) cur.add(hit)
             }
         }
-        if (runs.isEmpty()) return SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+        if (runs.isEmpty()) return SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
         if (strip.closed && runs.size == 1 && runs[0].size > 2) {
             val r = runs[0]
             if ((r.first() - r.last()).length() > Geom3.WELD_TOL) r.add(r.first())
@@ -2295,22 +2276,21 @@ object Section3 {
      * of exact points and neither may answer the *"one input is one curve"* question differently.
      */
     private fun runsToEdge(
-        label: String,
+        label: Msg,
         runs: List<List<Vec2>>,
     ): Pair<SectionEdge, List<DrawnPiece>> {
-        if (runs.isEmpty()) return SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+        if (runs.isEmpty()) return SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
         if (runs.size > 1) {
             return SectionEdge(
                 label,
                 null,
                 null,
-                "the plane cuts $label into ${runs.size} separate pieces, and one input is one curve — " +
-                    "move the plane to where that face is crossed once",
+                Msgs.refusalSectionPlaneCutsSeparatePiecesOne(label = label, count = runs.size),
                 // a ruled face's cut is chords between exact rulings, named or not (OP-15)
             ) to runs.flatMap { r -> polylinePieces(r).map { DrawnPiece(it, true) } }
         }
         val pts = runs[0]
-        if (pts.size < 2) return SectionEdge(label, null, null, "the plane only touches $label") to emptyList()
+        if (pts.size < 2) return SectionEdge(label, null, null, Msgs.refusalSectionPlaneOnlyTouches(label = label)) to emptyList()
         // a cut that comes out **straight** is a segment and is stated as one: a ruling of the cylinder (a plane
         // through its axis), and every cut of a strip whose two edges happen to be parallel
         if (pts.size == 2 || straightWithin(pts)) {
@@ -2347,7 +2327,7 @@ object Section3 {
     private fun cutEdge(
         geom: EdgeGeom,
         cut: Plane3,
-    ): Pair<Vec2?, String?> =
+    ): Pair<Vec2?, Msg?> =
         when (geom) {
             is EdgeGeom.Straight -> {
                 val d0 = cut.distanceTo(geom.a)
@@ -2357,25 +2337,25 @@ object Section3 {
                     // reaches it: that is what a revolution's pole is — the ring a corner on the axis traces,
                     // which has no length but is a corner of the section all the same (OP-17's item 4).
                     (geom.b - geom.a).length() <= Geom3.WELD_TOL ->
-                        if (abs(d0) <= ON_PLANE_TOL) cut.toLocal(geom.a) to null else null to "the plane does not cross that edge"
+                        if (abs(d0) <= ON_PLANE_TOL) cut.toLocal(geom.a) to null else null to Msgs.refusalSectionPlaneDoesNotCrossThat()
                     abs(d0) <= ON_PLANE_TOL && abs(d1) <= ON_PLANE_TOL ->
-                        null to "that edge lies in the plane, so it is a whole line there and not a corner"
+                        null to Msgs.refusalSectionThatEdgeLiesPlaneSo()
                     abs(d0) <= ON_PLANE_TOL -> cut.toLocal(geom.a) to null
                     abs(d1) <= ON_PLANE_TOL -> cut.toLocal(geom.b) to null
-                    d0 * d1 > 0.0 -> null to "the plane does not cross that edge"
+                    d0 * d1 > 0.0 -> null to Msgs.refusalSectionPlaneDoesNotCrossThat()
                     else -> cut.toLocal(geom.a + (geom.b - geom.a) * (d0 / (d0 - d1))) to null
                 }
             }
             is EdgeGeom.OnPlane -> {
                 val line = cutLineIn(geom.plane, cut)
                 if (line == null) {
-                    null to "the plane is parallel to the face that edge lies on"
+                    null to Msgs.refusalSectionPlaneIsParallelFaceThat()
                 } else {
                     val hits = crossingsOf(geom.piece, line)
                     when (hits.size) {
-                        0 -> null to "the plane does not cross that edge"
+                        0 -> null to Msgs.refusalSectionPlaneDoesNotCrossThat()
                         1 -> cut.toLocal(geom.plane.toWorld(hits[0])) to null
-                        else -> null to "the plane crosses that edge ${hits.size} times, and one input is one point"
+                        else -> null to Msgs.refusalSectionPlaneCrossesThatEdgeTimes(count = hits.size)
                     }
                 }
             }
@@ -2394,7 +2374,7 @@ object Section3 {
     private fun meshSection(
         mesh: Mesh3,
         plane: Plane3,
-        reason: String,
+        reason: Msg,
     ): PlaneSection {
         val out = ArrayList<DrawnPiece>()
         for (t in mesh.triangles) {

@@ -370,5 +370,5 @@ object Imports {
      * where a user meets the answer first, and because it is the pure function the flag is derived from —
      * asking it of a mesh and asking it of a body must never be two different questions.
      */
-    fun openShellDefect(mesh: Mesh3): String? = Watertight.defect(mesh)
+    fun openShellDefect(mesh: Mesh3): String? = Watertight.defect(mesh)?.render()
 }

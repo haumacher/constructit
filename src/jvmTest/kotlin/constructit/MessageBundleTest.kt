@@ -99,6 +99,33 @@ class MessageBundleTest {
             .toSet()
     }
 
+    /**
+     * **No brace survives rendering, in any language.**
+     *
+     * ICU's apostrophe rule is a trap laid for exactly this project: `'{n}'` does not put `{n}` in quotes,
+     * it *quotes the brace* — the message then renders the literal text `{n}` at the user and binds nothing.
+     * Slice 2 wrote 30 English patterns and DeepL wrote 11 German ones that way. The argument-set checks
+     * below catch most of them; this catches the rest, including a pattern that quotes one occurrence of a
+     * placeholder it also uses elsewhere, by rendering every message and looking for a brace that is left.
+     */
+    @Test
+    fun nothingRendersABraceAtTheUser() {
+        val left = ArrayList<String>()
+        for (locale in Messages.locales) {
+            for ((key, pattern) in bundle(locale)) {
+                val args = argumentsOf(pattern).associateWith { 1 as Any? }
+                val text =
+                    try {
+                        if (args.isEmpty()) pattern else formatMessage(locale, pattern, args)
+                    } catch (e: IllegalArgumentException) {
+                        throw AssertionError("$locale/$key does not render: $pattern", e)
+                    }
+                if ('{' in text || '}' in text) left.add("$locale/$key: $text")
+            }
+        }
+        assertEquals(emptyList(), left, "a brace reached the reader — an apostrophe quoted a placeholder out")
+    }
+
     @Test
     fun everyPatternInEveryLanguageIsValidIcu() {
         for (locale in Messages.locales) {

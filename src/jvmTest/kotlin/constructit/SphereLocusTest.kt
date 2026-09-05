@@ -21,6 +21,8 @@ import constructit.geom.SphereMeet
 import constructit.geom.Spheres3
 import constructit.geom.Trilateration
 import constructit.geom.Vec3
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.test.Test
@@ -324,7 +326,7 @@ class SphereLocusTest {
                 locus(cx, Vec3(100.0, 0.0, 0.0), 40.0),
             )
         assertEquals(emptyList(), Evaluator().point3Set(set).points, "three centres on a line meet in a circle, not a pair")
-        val picked = cx.selectPoint3(set, 1, "no point is at all three of those distances")
+        val picked = cx.selectPoint3(set, 1, Msg.text("no point is at all three of those distances"))
         assertTrue(!Evaluator().isValid(picked), "so there is no point to select")
         assertTrue(
             assertNotNull(reasonOf(Evaluator(), picked)).contains("three"),

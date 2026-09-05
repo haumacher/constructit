@@ -18,6 +18,9 @@ import constructit.geom.Justification
 import constructit.geom.MeshQuality
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.Messages
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.mm
@@ -39,7 +42,7 @@ private const val CLICK_SLOP_PX = 3.0
 private const val REPEAT_CLICK_PX = CLICK_SLOP_PX
 
 /** What the status line says when the active parameter is switched off (see [Editor.clickScalar]). */
-private const val NO_ACTIVE_PARAMETER = "no parameter active — tools use their defaults"
+private val NO_ACTIVE_PARAMETER = Msgs.statusGeneralNoParameterActiveToolsUse()
 
 /**
  * What a gesture in the 3D view says when its ray never reaches the working plane (see [Editor.enter]) —
@@ -49,9 +52,8 @@ private const val NO_ACTIVE_PARAMETER = "no parameter active — tools use their
  * "where did the user point" genuinely has no answer, and inventing one would place geometry nowhere
  * anybody pointed.
  */
-private const val OFF_PLANE_NOTE =
-    "Nothing to point at there: the cursor's ray misses the working plane (it is edge-on, or the plane " +
-        "is behind the view). Orbit until the plane faces you."
+private val OFF_PLANE_NOTE =
+    Msgs.statusGeneralNothingPointThereCursorRay()
 
 /** How many panel picks are remembered — no tool asks for more scalars than this. */
 private const val SCALAR_PICK_MEMORY = 4
@@ -69,7 +71,7 @@ private const val MAX_COUNT = 512
  * thing the user has to read off it is the same in all three: drawing stopped, and the next click starts
  * something new rather than continuing this (see [Editor.markTerminal]).
  */
-private const val RUN_FINISHED = " — the run is finished; click a point or leg to start the next one"
+private val RUN_FINISHED = Msgs.statusGeneralRunIsFinishedClickPoint()
 
 /**
  * Which button a pointer gesture uses. In SELECT mode they mean different things (OP-16): PRIMARY
@@ -154,19 +156,19 @@ class Editor(
         // ambiguous, and until now it was published into the document's one-shot note that only a *tool* run
         // reads — so it was overwritten by this very line. It stays until the next user action, like every
         // other status line.
-        statusHint = loadNote(fresh) ?: ""
+        statusMsg = loadNote(fresh)
         // a load is not an edit: what the file cannot build is stated, not announced as a transition
         rebaseValidity()
         onChange()
     }
 
     /** The loaded document's migration findings as one line — the first, and how many more (OP-18). */
-    private fun loadNote(fresh: Document): String? {
+    private fun loadNote(fresh: Document): Msg? {
         val notes = fresh.loadNotes
         fresh.takeNote() // it is being said here instead, so no later tool run repeats it
         if (notes.isEmpty()) return null
-        val more = if (notes.size == 1) "" else " (and ${notes.size - 1} more)"
-        return "Loaded with a note: ${notes.first()}$more"
+        val more = if (notes.size == 1) Msg.EMPTY else Msgs.statusGeneralMore(count = notes.size - 1)
+        return Msgs.statusGeneralLoadedNote(first = notes.first(), more = more)
     }
 
     /** Swap [fresh] in, resetting every transient reference into the old document (selection, picks). */
@@ -259,9 +261,9 @@ class Editor(
      * Returns the refusal to show, or null when the gesture stands.
      */
     private fun transacted(
-        what: String,
+        what: Msg,
         body: () -> Unit,
-    ): String? {
+    ): Msg? {
         val before = doc.elements.toHashSet()
         val failure =
             try {
@@ -272,14 +274,13 @@ class Editor(
                 doc.elements.filter { it !in before && doc.creatingStep(it) == null }
                     .takeIf { it.isNotEmpty() }
                     ?.let { orphans ->
-                        "built ${orphans.joinToString(", ") { doc.nameOf(it) }} without recording a step, " +
-                            "which no file could keep — so it was taken back"
+                        Msgs.statusUndoRedoBuiltWithoutRecordingStepWhich(name = orphans.joinToString(", ") { doc.nameOf(it) })
                     }
             } catch (t: Throwable) {
-                "could not be built: ${t.message ?: t.toString()}"
+                Msgs.statusUndoRedoCouldNotBeBuilt(theValue = t.message ?: t.toString())
             } ?: return null
         restore(lastCommitted)
-        return "$what $failure"
+        return Msgs.statusUndoRedoWhatFailure(what = what, failure = failure)
     }
 
     /**
@@ -323,7 +324,7 @@ class Editor(
             lastCommitted = undoStack.removeLast()
             restore(lastCommitted)
         }
-        statusHint = "Undone"
+        statusMsg = Msgs.statusUndoRedoUndone()
         changed()
         return true
     }
@@ -333,7 +334,7 @@ class Editor(
         undoStack.add(lastCommitted)
         lastCommitted = redoStack.removeLast()
         restore(lastCommitted)
-        statusHint = "Redone"
+        statusMsg = Msgs.statusUndoRedoRedone()
         changed()
         return true
     }
@@ -358,9 +359,8 @@ class Editor(
             // journal already supports it independently of its siblings (see [Document.dependentSteps]); what
             // is missing is only the route from a selection with no element to that step. Recorded as a cut.
             selectedJamb?.let {
-                statusHint =
-                    "Delete can't reach an opening yet: it has no element of its own. Delete the wall " +
-                    "(${doc.nameOf(it.path.footprint)}) to remove it with its openings."
+                statusMsg =
+                    Msgs.statusUndoRedoDeleteCanTReachOpening(name = doc.nameOf(it.path.footprint))
                 changed()
             }
             return false
@@ -375,7 +375,7 @@ class Editor(
         for (el in targets) {
             val root = doc.creatingStep(el)
             if (root == null) {
-                statusHint = "${doc.nameOf(el)} has no construction step to remove"
+                statusMsg = Msgs.statusUndoRedoHasNoConstructionStepRemove(name = doc.nameOf(el))
                 changed()
                 return false
             }
@@ -391,10 +391,8 @@ class Editor(
         val losses = doc.macroLosses(roots.toHashSet(), droppedSteps)
         if (losses.isNotEmpty()) {
             val (def, instances) = losses.first()
-            statusHint =
-                "Can't delete that: it defines tool ${def.name}, used by ${instances.size} instance " +
-                "element${if (instances.size == 1) "" else "s"} (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — " +
-                "delete the instances first"
+            statusMsg =
+                Msgs.statusUndoRedoCanTDeleteThatIt(name = def.name, count = instances.size, name2 = instances.take(4).joinToString(", ") { doc.nameOf(it) })
             changed()
             return false
         }
@@ -408,14 +406,14 @@ class Editor(
             } catch (e: Exception) {
                 doc.journal.clear()
                 doc.journal.addAll(journalBefore)
-                statusHint = "Delete failed: ${e.message}"
+                statusMsg = Msgs.statusUndoRedoDeleteFailed(message = e.message ?: "")
                 changed()
                 return false
             }
-        val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} elements"
+        val what = if (targets.size == 1) Msg.text(doc.nameOf(targets[0])) else Msgs.noteCountElements(count = targets.size)
         adopt(fresh)
         checkpoint()
-        statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
+        statusMsg = if (dependents == 0) Msgs.statusUndoRedoDeleted(what = what) else Msgs.statusUndoRedoDeletedDependent(what = what, dependents = dependents)
         changed()
         return true
     }
@@ -435,35 +433,33 @@ class Editor(
     private fun deleteDressingEntries(targets: List<Element>): Boolean {
         val others = targets.filter { it.kind != ElementKind.DRESSING }
         if (others.isNotEmpty()) {
-            statusHint =
-                "Delete: ${doc.nameOf(others.first())} is not a rounding — a rounding is removed from its " +
-                "body on its own, so select the roundings and the rest separately"
+            statusMsg =
+                Msgs.statusUndoRedoDeleteIsNotRoundingRounding(name = doc.nameOf(others.first()))
             changed()
             return false
         }
         for (el in targets) {
             val d = doc.dressingWith(el)
             if (d != null && d.standing.size == 1) {
-                statusHint =
-                    "Delete: ${doc.nameOf(el)} is the only rounding of ${doc.nameOf(d.body)} — that body *is* " +
-                    "that rounding, so delete ${doc.nameOf(d.body)} itself to take it off"
+                statusMsg =
+                    Msgs.statusUndoRedoDeleteIsOnlyRoundingThat(name = doc.nameOf(el), name2 = doc.nameOf(d.body))
                 changed()
                 return false
             }
         }
         doc.entriesEmptyingRefusal(targets)?.let {
-            statusHint = "Delete: $it"
+            statusMsg = Msgs.statusUndoRedoDelete(itWord = it)
             changed()
             return false
         }
-        val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} roundings"
+        val what = if (targets.size == 1) Msg.text(doc.nameOf(targets[0])) else Msgs.noteCountRoundings(count = targets.size)
         val before = DocumentFormat.save(doc)
         // **last rounding first**, so a bulk removal reads the standing count the way one gesture at a time
         // would (see [Document.removeDressingEntry])
         for (el in targets.sortedByDescending { doc.dressEntryIndex(it) }) {
             if (!doc.removeDressingEntry(el)) {
                 restore(before)
-                statusHint = "Delete: ${doc.nameOf(el)} has no construction step to remove"
+                statusMsg = Msgs.statusUndoRedoDeleteHasNoConstructionStep(name = doc.nameOf(el))
                 changed()
                 return false
             }
@@ -471,7 +467,7 @@ class Editor(
         // the rows are gone, so nothing may still point at them
         clearSelection()
         checkpoint()
-        statusHint = "Removed the rounding $what — the body is re-built with the rest of them in one pass"
+        statusMsg = Msgs.statusUndoRedoRemovedRoundingBodyIsRe(what = what)
         changed()
         return true
     }
@@ -491,7 +487,7 @@ class Editor(
     ): ImportResult {
         val result = Imports.import(doc, bytes, fileName)
         checkpoint()
-        statusHint = result.message
+        statusMsg = Msg.text(result.message)
         changed()
         return result
     }
@@ -529,7 +525,7 @@ class Editor(
     ): Boolean {
         val why = doc.gestureCountRefusal(g, n)
         if (why != null) {
-            statusHint = why
+            statusMsg = why
             changed()
             return false
         }
@@ -540,7 +536,7 @@ class Editor(
             try {
                 DocumentFormat.restampRide(DocumentFormat.save(doc), at, g.pattern.name, n)
             } catch (e: Exception) {
-                statusHint = "Re-stamp failed: ${e.message}"
+                statusMsg = Msgs.statusUndoRedoReStampFailed(message = e.message ?: "")
                 changed()
                 return false
             }
@@ -548,7 +544,7 @@ class Editor(
         adopt(fresh)
         checkpoint()
         val lost = if (notes.isEmpty()) "" else " — ${notes.first()}${if (notes.size == 1) "" else " (and ${notes.size - 1} more)"}"
-        statusHint = "$label on pattern ${g.pattern.name}: $was -> $n$lost"
+        statusMsg = Msgs.statusUndoRedoPattern(label = label, name = g.pattern.name, was = was, n = n, lost = lost)
         changed()
         return true
     }
@@ -568,7 +564,7 @@ class Editor(
     ): Boolean {
         val why = doc.restampRefusal(p, n)
         if (why != null) {
-            statusHint = why
+            statusMsg = why
             changed()
             return false
         }
@@ -578,7 +574,7 @@ class Editor(
             try {
                 DocumentFormat.restamp(DocumentFormat.save(doc), name, n)
             } catch (e: Exception) {
-                statusHint = "Re-stamp failed: ${e.message}"
+                statusMsg = Msgs.statusUndoRedoReStampFailed(message = e.message ?: "")
                 changed()
                 return false
             }
@@ -586,7 +582,7 @@ class Editor(
         adopt(fresh)
         checkpoint()
         val lost = if (notes.isEmpty()) "" else " — ${notes.first()}${if (notes.size == 1) "" else " (and ${notes.size - 1} more)"}"
-        statusHint = "Pattern $name: $was -> $n instances$lost"
+        statusMsg = Msgs.statusUndoRedoPatternInstances(name = name, was = was, n = n, lost = lost)
         changed()
         return true
     }
@@ -691,7 +687,7 @@ class Editor(
         val entry = activeScalar ?: return false
         activeScalar = null
         scalarPicks.removeAll { it === entry }
-        statusHint = NO_ACTIVE_PARAMETER
+        statusMsg = NO_ACTIVE_PARAMETER
         return true
     }
 
@@ -915,8 +911,16 @@ class Editor(
     /** The frame the selection addresses: a **placed** group selected as a whole (OP-16 step 2). */
     fun selectedFrame(): Group? = selectedGroup?.takeIf { it.placed }
 
-    var statusHint: String = ""
-        private set
+    var statusMsg: Msg? = null
+
+    /**
+     * [statusMsg] as a sentence in the **active language** (OP-29 slice 2), empty where there is nothing to say.
+     *
+     * The hint is a *value* everywhere it is produced and a *sentence* only here, where the shell paints it.
+     * A language switch therefore re-renders the line that is already standing, with no gesture repeated —
+     * which is what "rendered at the edge" buys, and what the German E2E asserts.
+     */
+    val statusHint: String get() = statusMsg?.render() ?: ""
 
     // ---- what cannot be built right now, and what just changed about that (OP-3, *refusals speak*) ----
     //
@@ -956,12 +960,15 @@ class Editor(
      * One line, however many elements flipped: the first by name with its reason, and a count of the rest.
      * A wall of text on a status line is not read, and the panel is where each of them is listed.
      */
-    var validityNote: String? = null
+    var validityMsg: Msg? = null
         private set
+
+    /** [validityMsg] as a sentence in the active language (OP-29 slice 2) — the shell's own reading of it. */
+    val validityNote: String? get() = validityMsg?.render()
 
     /** What the status bar shows: the operation's own note and the validity note, whichever there are. */
     val statusLine: String
-        get() = listOfNotNull(statusHint.ifEmpty { null }, validityNote).joinToString(" · ")
+        get() = Msg.joined(listOfNotNull(statusMsg, validityMsg)).render()
 
     /** Element name -> reason, as of the last recompute — the baseline the next one is compared against. */
     private var invalidBefore: Map<String, String> = emptyMap()
@@ -973,7 +980,7 @@ class Editor(
      * next pointer frame if it were regenerated like the rest. It therefore survives until the operation
      * *after* the one that healed it says something of its own, which is what the remembered hint detects.
      */
-    private var healingSpoken: Pair<String, String>? = null
+    private var healingSpoken: Pair<Msg, Msg?>? = null
 
     /**
      * Read the document's validity, say what **changed** about it, and keep saying what still stands (OP-3).
@@ -1002,22 +1009,26 @@ class Editor(
             // something is unbuildable: that is the news whether it just happened or has been true for a
             // while, and a heal in the same edit is not worth crowding it out
             healingSpoken = null
-            validityNote = standingNote(subjects, appeared.firstOrNull())
+            validityMsg = standingNote(subjects, appeared.firstOrNull())
             return
         }
         if (healed.isNotEmpty()) {
             val lead = healed.first()
             val rest = healed.size - 1
             val sentence =
-                "${doc.nameOf(lead)} is ${doc.kindWord(lead)} again" + if (rest > 0) " — and $rest more" else ""
-            healingSpoken = sentence to statusHint
-            validityNote = sentence
+                if (rest > 0) {
+                    Msgs.statusWhatCannotBeIsAgainAndMore(name = doc.nameOf(lead), kind = doc.kindWord(lead), rest = rest)
+                } else {
+                    Msgs.statusWhatCannotBeIsAgain(name = doc.nameOf(lead), kind = doc.kindWord(lead))
+                }
+            healingSpoken = sentence to statusMsg
+            validityMsg = sentence
             return
         }
         // nothing flipped: keep a heal that has not been talked over yet, and otherwise say nothing
         val spoken = healingSpoken
-        validityNote = if (spoken != null && spoken.second == statusHint) spoken.first else null
-        if (validityNote == null) healingSpoken = null
+        validityMsg = if (spoken != null && spoken.second == statusMsg) spoken.first else null
+        if (validityMsg == null) healingSpoken = null
     }
 
     /**
@@ -1032,10 +1043,14 @@ class Editor(
     private fun standingNote(
         subjects: List<Document.InvalidElement>,
         lead: Document.InvalidElement? = null,
-    ): String? {
+    ): Msg? {
         val first = lead ?: subjects.firstOrNull() ?: return null
         val rest = subjects.size - 1
-        return "${first.name} can't be built right now: ${first.reason}" + if (rest > 0) " — and $rest more" else ""
+        return if (rest > 0) {
+            Msgs.statusWhatCannotBeCanTBeBuiltRightAndMore(name = first.name, reason = first.why, rest = rest)
+        } else {
+            Msgs.statusWhatCannotBeCanTBeBuiltRight(name = first.name, reason = first.why)
+        }
     }
 
     /**
@@ -1063,7 +1078,7 @@ class Editor(
         invalidElements = now
         invalidBefore = now.associate { it.name to it.reason }
         healingSpoken = null
-        validityNote = standingNote(toName(now))
+        validityMsg = standingNote(toName(now))
     }
 
     /**
@@ -1139,15 +1154,14 @@ class Editor(
         val p = proj()
         val at = p.toPlane(screen)
         if (at == null) {
-            statusHint = OFF_PLANE_NOTE
+            statusMsg = OFF_PLANE_NOTE
             changed()
             return null
         }
         gestureAt = at
         if (p.scaleClampedAt(at)) {
-            statusHint =
-                "That part of ${doc.activeSpace.name} is too far away or too edge-on to point at precisely — " +
-                "the pick tolerance is capped at ${Format.num(pickToleranceAt(at))} mm. Orbit or zoom in."
+            statusMsg =
+                Msgs.statusWhatCannotBeThatPartIsTooFar(name = doc.activeSpace.name, num = Format.num(pickToleranceAt(at)))
         }
         return at
     }
@@ -1189,12 +1203,12 @@ class Editor(
     private fun refusal(
         vertex: PointRef,
         s: SnapResult,
-    ): String {
+    ): Msg {
         val el = doc.elementFor(vertex)
         val target = s.target
-        if (el == null || target == null) return "could not join here."
+        if (el == null || target == null) return Msgs.statusWhatCannotBeCouldNotJoinHere()
         val why = doc.connectRefusal(el, target)
-        return "can't join ${doc.nameOf(el)} onto ${doc.nameOf(target)}${if (why == null) "" else " — $why"}."
+        return Msgs.statusWhatCannotBeCanTJoinOnto(name = doc.nameOf(el), name2 = doc.nameOf(target), why = why?.let { Msgs.phraseDashReason(reason = it) } ?: Msg.EMPTY)
     }
 
     /**
@@ -1215,7 +1229,7 @@ class Editor(
                     doc.sectionInput(doc.activeSpace, Document.SectionInput.CORNER, s.sectionCorner, s.sectionSolid)?.ref as? PointRef
                 else -> null
             }
-        if (ref != null) statusHint = "Snapped to ${s.label}"
+        if (ref != null) statusMsg = Msgs.statusWhatCannotBeSnapped(name = s.label)
         return ref ?: doc.freePoint(s.pos.x.mm, s.pos.y.mm)
     }
 
@@ -1276,7 +1290,7 @@ class Editor(
     private var pendingPile: PickPile? = null // what the press found, for the release to apply
     private var pendingIndex = 0 // which of it this gesture will select
     private var pendingApplied = false // whether the press already selected it (the release then keeps its note)
-    private var pendingNote = "" // what the press said, so a first click's status survives the release
+    private var pendingNote: Msg = Msg.EMPTY // what the press said, so a first click's status survives the release
     private var cycleAt: Vec2? = null // where the click owning the live cycle landed, in screen pixels
     private var cycleWorld: Vec2? = null // …and in world coordinates, so Tab can re-pick there
     private var cycleIndex = 0 // which candidate that click selected
@@ -1323,7 +1337,7 @@ class Editor(
     val extendingWall: ThickNetwork? get() = extending
 
     /** Why the last pick was refused, when there is a better reason than "that click hit nothing". */
-    private var pickRefusal: String? = null
+    private var pickRefusal: Msg? = null
 
     // ortho-path (turtle) state — the path itself is retained in the document while being drawn
     private var activePath: OrthoPath? = null
@@ -1430,18 +1444,17 @@ class Editor(
         val rearming = id == toolId && !backToPlan && filledSlots > 0
         toolId = id
         if (!rearming) resetPicks()
-        statusHint =
+        statusMsg =
             if (backToPlan) {
-                "Plan view — Sketch on face picks a solid's footprint edge, which is drawn here; click the edge you want"
+                Msgs.statusPickCyclePlanViewSketchFacePicks()
             } else if (id == Tools.SKETCH_ON_FACE && through() != null) {
-                "3D view — Sketch on face takes the face you click on, wherever the camera stands; hold Ctrl to orbit"
+                Msgs.statusPickCycleDViewSketchFaceTakes()
             } else if (rearming) {
                 // …and it says where the gesture stands, because a click that deliberately does nothing must
                 // still answer "what happened?" — with the way to start over
-                "${doc.toolDef(id)?.label ?: id}: $filledSlots pick${if (filledSlots == 1) "" else "s"} so far — " +
-                    "press Escape to start over"
+                Msgs.statusPickCyclePickSoFarPressEscape(toolDef = doc.toolDef(id)?.label ?: id, filledSlots = filledSlots)
             } else {
-                ""
+                null
             }
         if (applyToSelection()) return // it ran, and said what happened
         changed()
@@ -1520,17 +1533,16 @@ class Editor(
         clearSelection()
         resetPicks()
         camera = spaceCameras[name] ?: cameraFor(target)
-        statusHint = spaceNote(target)
+        statusMsg = spaceNote(target)
         if (!spanning && tool != null && (keptSlots > 0 || keptTyped > 0)) {
             val what =
                 when {
-                    keptSlots == 0 -> "the number you typed was dropped"
-                    keptTyped == 0 -> "$keptSlots pick${if (keptSlots == 1) "" else "s"} dropped"
-                    else -> "$keptSlots pick${if (keptSlots == 1) "" else "s"} and the number you typed dropped"
+                    keptSlots == 0 -> Msgs.statusSketchSpacesNumberYouTypedWasDropped()
+                    keptTyped == 0 -> Msgs.statusSketchSpacesPickDropped(keptSlots = keptSlots)
+                    else -> Msgs.statusSketchSpacesPickNumberYouTypedDropped(keptSlots = keptSlots)
                 }
-            statusHint =
-                "${tool.label}: $what — its picks do not span planes, so the gesture starts over here. " +
-                spaceNote(target)
+            statusMsg =
+                Msgs.statusSketchSpacesItsPicksDoNotSpan2(name = tool.label, what = what, clause0 = spaceNote(target))
         }
         if (spanning) {
             pickedPoints.addAll(keptPoints)
@@ -1538,55 +1550,58 @@ class Editor(
             pickedClicks.addAll(keptClicks)
             pickedLandings.addAll(keptLandings)
             filledSlots = keptSlots
-            statusHint =
-                "${tool!!.label}: $keptSlots pick${if (keptSlots == 1) "" else "s"} kept across the switch to " +
-                "${doc.spaceLabel(target)} — carry on picking here. ${tool.help}"
+            statusMsg =
+                Msgs.statusSketchSpacesPickKeptAcrossSwitchCarry(name = tool!!.label, keptSlots = keptSlots, spaceLabel = doc.spaceLabel(target), help = tool.help)
         }
         changed()
         return true
     }
 
     /** How a space introduces itself — the frame's convention, said where the user is about to use it. */
-    private fun spaceNote(space: SketchSpace): String =
+    private fun spaceNote(space: SketchSpace): Msg =
         when {
-            space.isPlan -> "Plan view — the drawing's own space (world XY)."
+            space.isPlan -> Msgs.statusSketchSpacesPlanViewDrawingOwnSpace()
             // a station (OP-26, step 4): the run, how far along it, and the one number that moves it
             space.isStation ->
-                "Sketching on ${space.name}, a station across ${space.station?.let { doc.nameOf(it) }} " +
-                    "${Format.num(doc.spaceAlongMm(space))} mm along it (the run is " +
-                    "${Format.num(doc.stationRunMm(space, ev()))} mm long): the origin is on the curve, the normal " +
-                    "runs along it, and the axes are the moving frame's. Extrude builds along this plane's " +
-                    "normal, Cut the other way. Retype the distance to slide the station along the run with " +
-                    "everything on it." +
-                    (if (space.anchor == null) " Nothing here to cut into: this plane passes through no solid." else "") +
-                    sectionNote(space)
+                Msgs.statusSpaceStation(
+                    name = space.name,
+                    name2 = space.station?.let { doc.nameOf(it) } ?: "",
+                    num = Format.num(doc.spaceAlongMm(space)),
+                    num2 = Format.num(doc.stationRunMm(space, ev())),
+                    cut = if (space.anchor == null) Msgs.statusSketchSpacesNothingHereCutThisPlane() else Msg.EMPTY,
+                    section = sectionNote(space),
+                )
             // a plane at a height (GitHub #9): no hinge to name, so what it says is the height and what it cuts
             space.parallel ->
-                "Sketching on ${space.name}, a plane parallel to ${space.from}, " +
-                    "${Format.num(doc.spaceOffsetMm(space))} mm along its normal: the same u and v as ${space.from}, " +
-                    "moved. Extrude builds along this plane's normal, Cut the other way. Retype the height to slide " +
-                    "the plane and everything on it." +
-                    (if (space.anchor == null) " Nothing here to cut into: this plane passes through no solid." else "") +
-                    sectionNote(space)
+                Msgs.statusSpaceParallel(
+                    name = space.name,
+                    from = space.from,
+                    num = Format.num(doc.spaceOffsetMm(space)),
+                    cut = if (space.anchor == null) Msgs.statusSketchSpacesNothingHereCutThisPlane() else Msg.EMPTY,
+                    section = sectionNote(space),
+                )
             // a datum plane (GitHub #6): the hinge, the angle, and the one thing its sign decides
             space.isDatum ->
-                "Sketching on ${space.name}, a datum plane on ${space.hinge?.let { doc.nameOf(it) }} at " +
-                    "${Format.num(doc.spaceAngleDeg(space))}° from ${space.from}" +
-                    (space.offset?.let { ", offset ${Format.num(doc.spaceOffsetMm(space))} mm along its own normal" } ?: "") +
-                    ": u runs along that line, v rises out of " +
-                    "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
-                    "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
-                    facingNote(space) +
+                Msgs.statusSpaceDatum(
+                    name = space.name,
+                    name2 = space.hinge?.let { doc.nameOf(it) } ?: "",
+                    num = Format.num(doc.spaceAngleDeg(space)),
+                    from = space.from,
+                    offset = space.offset?.let { Msgs.statusSketchSpacesOffsetMmAlongItsOwn(num = Format.num(doc.spaceOffsetMm(space))) } ?: Msg.EMPTY,
+                    facing = facingNote(space),
                     // what it can *cut* and what it can be *anchored on* are two questions since GitHub #9: a
                     // hinge that belongs to no solid still has every ancestor it passes through as context
-                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "") +
-                    sectionNote(space)
+                    cut = if (space.anchor == null) Msgs.statusSketchSpacesNothingHereCutItsLine() else Msg.EMPTY,
+                    section = sectionNote(space),
+                )
             else ->
-                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: " +
-                    doc.faceFrameNote(space) +
-                    (space.originCorner?.let { " (moved onto section corner #${it + 1})" } ?: "") +
-                    ". Cut here drills into the material; Extrude builds outward, as a boss." +
-                    sectionNote(space)
+                Msgs.statusSpaceFace(
+                    name = space.name,
+                    name2 = space.anchor?.let { doc.nameOf(it) } ?: "",
+                    frame = doc.faceFrameNote(space),
+                    corner = space.originCorner?.let { Msgs.statusSketchSpacesMovedOntoSectionCorner(what = it + 1) } ?: Msg.EMPTY,
+                    section = sectionNote(space),
+                )
         }
 
     /**
@@ -1600,17 +1615,16 @@ class Editor(
      * names its normal against something visible: a face's front points out of the material, a station's runs
      * along its curve, a plane at a height inherits the one it is parallel to, and the plan's is up.
      */
-    private fun facingNote(space: SketchSpace): String {
-        val facing = doc.spaceFacing(space, ev()) ?: return ""
+    private fun facingNote(space: SketchSpace): Msg {
+        val facing = doc.spaceFacing(space, ev()) ?: return Msg.EMPTY
         val which =
-            facing.bearingDeg?.let { " Its front faces ${Format.num(it)}° in ${space.from}" }
+            facing.bearingDeg?.let { Msgs.statusSketchSpacesItsFrontFaces(num = Format.num(it), from = space.from) }
                 ?: if (facing.outward) {
-                    " It lies flat on ${space.from}, fronting the same way"
+                    Msgs.statusSketchSpacesItLiesFlatFrontingSame(from = space.from)
                 } else {
-                    " It lies flat on ${space.from}, fronting the opposite way"
+                    Msgs.statusSketchSpacesItLiesFlatFrontingOpposite(from = space.from)
                 }
-        return "$which — that is where a positive Extrude or Revolve builds, and the 3D view marks it with a " +
-            "tick standing out of the plane's origin."
+        return Msgs.statusSketchSpacesThatIsWherePositiveExtrude(which = which)
     }
 
     /**
@@ -1623,10 +1637,10 @@ class Editor(
      * Counted over **every ancestor solid the plane cuts** (GitHub #9), and it says how many solids those
      * are — the fact that made the plane useful without a pick, and the one a single count would hide.
      */
-    private fun sectionNote(space: SketchSpace): String {
+    private fun sectionNote(space: SketchSpace): Msg {
         val sections = doc.spaceSections(space, ev())
         if (sections.isEmpty()) {
-            return " This plane cuts nothing that was built before it, so there is no context to anchor on."
+            return Msgs.statusSketchSpacesThisPlaneCutsNothingThat()
         }
         val refused = sections.mapNotNull { it.second.inputsRefusal }
         var curves = 0
@@ -1639,23 +1653,24 @@ class Editor(
             sampled += s.edges.count { it.approximated }
         }
         if (curves == 0 && corners == 0) {
-            return refused.firstOrNull()?.let { " The section here draws but cannot be anchored on: $it." } ?: ""
+            return refused.firstOrNull()?.let { Msgs.statusSketchSpacesSectionHereDrawsButCannot(itWord = it) } ?: Msg.EMPTY
         }
         val exact =
             if (sampled == 0) {
-                "exact"
+                Msgs.wordExactnessExact()
             } else {
-                "$sampled of them approximated (a ruled face's cut has no name here; a cylinder's has, since conics)"
+                Msgs.statusSketchSpacesThemApproximatedRuledFaceCut(sampled = sampled)
             }
         val whose =
             if (sections.size == 1) {
-                "Its section is"
+                Msgs.statusSketchSpacesItsSectionIs()
             } else {
-                "It cuts ${sections.size} solids (${sections.joinToString(", ") { doc.nameOf(it.first) }}) — together"
+                Msgs.statusSketchSpacesItCutsSolidsTogether(count = sections.size, name = sections.joinToString(", ") { doc.nameOf(it.first) })
             }
-        return " $whose $curves curve${if (curves == 1) "" else "s"} and $corners corner" +
-            "${if (corners == 1) "" else "s"} ($exact) — click one while a tool is collecting to use it as an input." +
-            (if (refused.isEmpty()) "" else " One of them draws but cannot be anchored on: ${refused.first()}.")
+        return Msgs.statusSketchSpacesSectionSummary(
+            head = Msgs.statusSketchSpacesCurveCornerClickOneWhile(whose = whose, curves = curves, corners = corners, exact = exact),
+            refused = if (refused.isEmpty()) Msg.EMPTY else Msgs.statusSketchSpacesOneThemDrawsButCannot(first = refused.first()),
+        )
     }
 
     /**
@@ -1700,17 +1715,17 @@ class Editor(
         // the ray first where a 3D view is driving; the flat route is what the plan has and all it has
         val rayed = faceUnderRay(world)
         if (rayed != null && rayed.first == null) {
-            statusHint = "No sketch space there: ${rayed.second}"
+            statusMsg = Msgs.statusSketchSpacesNoSketchSpaceThere(second = rayed.second ?: Msg.EMPTY)
             changed()
             return
         }
         val hit = rayed?.first ?: doc.solidEdgeNear(world, tolWorld(), ev())
         if (hit == null) {
-            statusHint =
+            statusMsg =
                 if (through() != null) {
-                    "Click a face of a solid — the ray met nothing here"
+                    Msgs.statusSketchSpacesClickFaceSolidRayMet()
                 } else {
-                    "Click a solid's footprint edge — that edge is the side face, seen from above"
+                    Msgs.statusSketchSpacesClickSolidFootprintEdgeThat()
                 }
             changed()
             return
@@ -1723,14 +1738,14 @@ class Editor(
         val already = doc.spaces.firstOrNull { it.isFace && it.anchor === solid && it.piece == piece }
         if (already != null) {
             setActiveSpace(already.name)
-            statusHint = "${doc.nameOf(solid)} already has ${already.name} on that face — showing it. ${spaceNote(already)}"
+            statusMsg = Msgs.statusSketchSpacesAlreadyHasThatFaceShowing(name = doc.nameOf(solid), name2 = already.name, spaceNote = spaceNote(already))
             changed()
             return
         }
         val why = doc.faceRefusal(solid, piece)
         val space = if (why == null) doc.createFaceSpace(solid, piece) else null
         if (space == null) {
-            statusHint = "No sketch space on that edge of ${doc.nameOf(solid)}: ${why ?: "it has no planar side face there"}"
+            statusMsg = Msgs.statusSketchSpacesNoSketchSpaceThatEdge(name = doc.nameOf(solid), why = why ?: Msgs.statusSketchSpacesItHasNoPlanarSide())
         } else {
             // the document already made it active; the *view* follows it here
             spaceCameras[from] = camera
@@ -1740,7 +1755,12 @@ class Editor(
             // which face was chosen, in the drawing's own names — the 3D click has no edge on screen to look
             // at, so the face has to say what it is (OP-3's speaking rule)
             val named = doc.faceLabel(solid, piece, ev())
-            statusHint = (if (named == null) "" else "$named of ${doc.nameOf(solid)}. ") + spaceNote(space)
+            statusMsg =
+                if (named == null) {
+                    spaceNote(space)
+                } else {
+                    Msgs.statusGeneralNamedOfSolid(named = named, solid = doc.nameOf(solid), note = spaceNote(space))
+                }
         }
         changed()
     }
@@ -1819,11 +1839,11 @@ class Editor(
     }
 
     /** Short name for the selection, for the inspector header. */
-    fun selectionLabel(): String {
-        selectedJamb?.let { return "opening on leg ${it.interval.legIndex + 1} of ${doc.nameOf(it.path.footprint)}" }
-        selectedFrame()?.let { return "frame of ${it.name}" }
-        if (selected.size > 1) return "${selected.size} elements"
-        return elementLabel(selection ?: return "")
+    fun selectionLabel(): Msg {
+        selectedJamb?.let { return Msgs.statusSketchSpacesOpeningLeg(legIndex = it.interval.legIndex + 1, name = doc.nameOf(it.path.footprint)) }
+        selectedFrame()?.let { return Msgs.statusSketchSpacesFrame(name = it.name) }
+        if (selected.size > 1) return Msgs.noteSelectionSeveral(count = selected.size)
+        return Msg.text(elementLabel(selection ?: return Msg.EMPTY))
     }
 
     /**
@@ -1851,16 +1871,22 @@ class Editor(
      * construction" is a true sentence about a hidden circle and the wrong one to read, because what the user
      * has just found is something that is not in the drawing at all.
      */
-    private fun immovableNote(el: Element): String =
+    private fun immovableNote(el: Element): Msg =
         if (!el.visible) {
-            "${elementLabel(el)} selected — a ghost is not dragged"
+            Msgs.statusSketchSpacesSelectedGhostIsNotDragged(elementLabel = elementLabel(el))
         } else {
             // …and where what drives it is an **expression**, the refusal quotes it: "driven by the
             // construction" is true of a wired height (OP-25) and says nothing about which formula to go
             // and change (OP-7, session 71)
-            explainImmovable(el, doc.nameOf(el), doc.ownFields(el)) +
-                el.handle?.dragNodes.orEmpty().mapNotNull { doc.expressionDriving(it) }.distinct()
-                    .joinToString("") { " Here $it." }
+            Msgs.statusDragImmovableWithFormulas(
+                why = Msg.text(explainImmovable(el, doc.nameOf(el), doc.ownFields(el))),
+                formulas =
+                    Msg.joined(
+                        el.handle?.dragNodes.orEmpty().mapNotNull { doc.expressionDriving(it) }.distinct()
+                            .map { Msgs.statusDragHereFormula(formula = it) },
+                        "",
+                    ),
+            )
         }
 
     // ---- what the selection is built from, and what is built on it (see [Dependencies]) ----
@@ -1890,16 +1916,16 @@ class Editor(
         val was = doc.userNameOf(el)
         val now = doc.nameElement(el, name)
         if (now == null) {
-            statusHint = "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a name for it"
+            statusMsg = Msgs.statusWhatSelectionIsWasNotBuiltStepIts(name = doc.nameOf(el))
             changed()
             return null
         }
         if (now != (was ?: "")) {
             checkpoint()
-            statusHint =
+            statusMsg =
                 when {
-                    now.isEmpty() -> "${doc.nameOf(el)} is back to its script name"
-                    else -> "${doc.nameOf(el)} is now \"$now\""
+                    now.isEmpty() -> Msgs.statusWhatSelectionIsIsBackItsScriptName(name = doc.nameOf(el))
+                    else -> Msgs.statusWhatSelectionIsIsNow(name = doc.nameOf(el), now = now)
                 }
         }
         changed()
@@ -1918,22 +1944,27 @@ class Editor(
         val was = doc.assignedMaterial(el)
         val now = doc.setMaterial(el, material)
         if (now == null) {
-            statusHint =
+            statusMsg =
                 if (el.kind != ElementKind.SOLID) {
-                    "${doc.nameOf(el)} is not a solid — a material is what a solid is made to look like"
+                    Msgs.statusWhatSelectionIsIsNotSolidMaterialIs(name = doc.nameOf(el))
                 } else {
-                    "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a material for it"
+                    Msgs.statusWhatSelectionIsWasNotBuiltStepIts2(name = doc.nameOf(el))
                 }
             changed()
             return null
         }
         if (now != (was ?: Appearance.DEFAULT)) {
             checkpoint()
-            statusHint =
+            statusMsg =
                 if (material == null) {
-                    "${doc.nameOf(el)} is back to the default material"
+                    Msgs.statusWhatSelectionIsIsBackDefaultMaterial(name = doc.nameOf(el))
                 } else {
-                    "${doc.nameOf(el)}: ${now.color}, roughness ${Format.num(now.roughness)}, metallic ${Format.num(now.metallic)}"
+                    Msgs.statusWhatSelectionIsMaterialSetTo(
+                        name = doc.nameOf(el),
+                        color = now.color,
+                        roughness = Format.num(now.roughness),
+                        metallic = Format.num(now.metallic),
+                    )
                 }
         }
         changed()
@@ -1951,14 +1982,19 @@ class Editor(
         val was = g.name
         val now = doc.renameGroup(g, name)
         if (now == null) {
-            statusHint = "$was has no step of its own in the file, so renaming it could not be saved"
+            statusMsg = Msgs.statusWhatSelectionIsHasNoStepItsOwn(was = was)
             changed()
             return null
         }
         if (now != was) {
             checkpoint()
             val asked = name.trim()
-            statusHint = "Renamed group $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
+            statusMsg =
+                Msgs.statusWhatSelectionIsRenamedGroup2(
+                    was = was,
+                    now = now,
+                    clause0 = if (asked.isNotEmpty() && now != asked) Msgs.statusWhatSelectionIsWasTakenNotOneWord(asked = asked) else Msg.EMPTY,
+                )
         }
         changed()
         return now
@@ -1976,11 +2012,11 @@ class Editor(
         // …and a selection that contains nothing but things with nothing to hide says which and why, rather
         // than "Nothing to hide", which reads as a bug (OP-30: a rounding is structure, not a picture)
         val refused = selectedElements.firstNotNullOfOrNull { doc.hideRefusal(it) }
-        statusHint =
+        statusMsg =
             when {
-                n > 0 -> "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
+                n > 0 -> Msgs.statusWhatSelectionIsElement(ifWord = if (visible) "yes" else "other", n = n)
                 refused != null -> refused
-                else -> "Nothing to ${if (visible) "show" else "hide"}"
+                else -> Msgs.statusWhatSelectionIsNothing(ifWord = if (visible) "yes" else "other")
             }
         changed()
         return n
@@ -1997,19 +2033,19 @@ class Editor(
         commit: Boolean = true,
     ): Group? {
         if (selected.isEmpty()) {
-            statusHint = "Select the elements to group first (Shift+click to add, or drag a box)"
+            statusMsg = Msgs.statusFlatNamedGroupsSelectElementsGroupFirstShift()
             changed()
             return null
         }
         val clash = selected.firstNotNullOfOrNull { el -> doc.groupOf(el)?.let { el to it } }
         if (clash != null) {
-            statusHint = "${doc.nameOf(clash.first)} is already in group ${clash.second.name} — an element is in at most one group; ungroup it first"
+            statusMsg = Msgs.statusFlatNamedGroupsIsAlreadyGroupElementIs(name = doc.nameOf(clash.first), name2 = clash.second.name)
             changed()
             return null
         }
         val g = doc.createGroup(name, selectedElements)
         if (g == null) {
-            statusHint = "Could not group that selection"
+            statusMsg = Msgs.statusFlatNamedGroupsCouldNotGroupThatSelection()
             changed()
             return null
         }
@@ -2018,7 +2054,7 @@ class Editor(
         // (the create dialog's default): creating and placing are then one checkpoint, and one undo removes
         // both — see [confirmCreate].
         if (commit) checkpoint()
-        statusHint = "Grouped ${g.members.size} elements as ${g.name}"
+        statusMsg = Msgs.statusFlatNamedGroupsGroupedElements(count = g.members.size, name = g.name)
         changed()
         return g
     }
@@ -2040,7 +2076,7 @@ class Editor(
      */
     fun beginCreate(mode: CreateMode): CreateDialog? {
         if (selected.isEmpty()) {
-            statusHint = "Select the elements first (Shift+click to add, or drag a box)"
+            statusMsg = Msgs.statusSharedCreateDialogSelectElementsFirstShiftClick()
             changed()
             return null
         }
@@ -2055,14 +2091,14 @@ class Editor(
                 doc.elements.size,
             )
         createDialog = d
-        statusHint = d.help
+        statusMsg = d.help
         changed()
         return d
     }
 
     fun cancelCreate() {
         createDialog = null
-        statusHint = ""
+        statusMsg = null
         changed()
     }
 
@@ -2078,11 +2114,11 @@ class Editor(
         val d = createDialog ?: return false
         val n = d.closure.size
         if (!d.includeClosure()) {
-            statusHint = "Nothing more to include — this group already moves as one"
+            statusMsg = Msgs.statusSharedCreateDialogNothingMoreIncludeThisGroup()
             changed()
             return false
         }
-        statusHint = "Added $n element${if (n == 1) "" else "s"} the group is built on — ${d.members.size} in all, and it can be placed"
+        statusMsg = Msgs.statusSharedCreateDialogAddedElementGroupIsBuilt(n = n, count = d.members.size)
         changed()
         return true
     }
@@ -2096,7 +2132,7 @@ class Editor(
     fun confirmCreate(): Boolean {
         val d = createDialog ?: return false
         if (!d.ready) {
-            statusHint = d.blocker ?: "Nothing to create"
+            statusMsg = d.blocker ?: Msgs.statusSharedCreateDialogNothingCreate()
             changed()
             return false
         }
@@ -2113,7 +2149,7 @@ class Editor(
                 if (g != null) {
                     val n = doc.groupMembers(g).size
                     d.warnings = doc.placementWarnings(g)
-                    val made = "Grouped $n element${if (n == 1) "" else "s"} as ${g.name}"
+                    val made = Msgs.statusSharedCreateDialogGroupedElement(n = n, name = g.name)
                     // The frame is the default, so the everyday group is movable the moment it exists. A
                     // refusal is **not** a failure of the gesture: the group is created flat and the reason is
                     // shown, which is the same honest answer Place gives — and a flat group is a purpose of
@@ -2130,12 +2166,12 @@ class Editor(
                             placeGroup(g, commit = false)
                             statusHint
                         }
-                    statusHint =
+                    statusMsg =
                         when {
-                            refusal != null -> "$made — flat: $refusal"
-                            placeNote != null -> "$made. $placeNote"
-                            d.warnings.isEmpty() -> "$made — a named set, with no frame"
-                            else -> "$made, but " + d.warnings.joinToString("; ")
+                            refusal != null -> Msgs.statusSharedCreateDialogFlat(made = made, refusal = refusal)
+                            placeNote != null -> Msgs.statusGeneralMadeAndPlaceNote(made = made, note = placeNote)
+                            d.warnings.isEmpty() -> Msgs.statusSharedCreateDialogNamedSetNoFrame(made = made)
+                            else -> Msgs.statusSharedCreateDialogBut2(made = made, clause0 = d.warnings.joinToString("; "))
                         }
                     checkpoint() // the whole operation: the group, and the frame it was born with
                 }
@@ -2160,16 +2196,15 @@ class Editor(
     ): Boolean {
         val def = doc.defineMacro(name, members, pointInputs, scalarInputs)
         if (def == null) {
-            statusHint = "Could not make a tool from that selection"
+            statusMsg = Msgs.statusSharedCreateDialogCouldNotMakeToolThat()
             changed()
             return false
         }
         checkpoint()
         setTool(def.toolId)
-        val scalarNote = if (scalarInputs.isEmpty()) "" else " and ${scalarInputs.joinToString(", ") { it.name }} from the panel"
-        statusHint =
-            "Tool ${def.name}: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}$scalarNote " +
-            "to place an instance — editing the original updates every instance"
+        val scalarNote = if (scalarInputs.isEmpty()) Msg.EMPTY else Msgs.statusSharedCreateDialogPanel(list = scalarInputs.joinToString(", ") { it.name })
+        statusMsg =
+            Msgs.statusSharedCreateDialogToolClickPointPlaceInstance(name = def.name, count = pointInputs.size, scalarNote = scalarNote)
         changed()
         return true
     }
@@ -2182,16 +2217,15 @@ class Editor(
     fun deleteMacro(def: MacroDef): Boolean {
         val instances = doc.instancesOf(def).flatMap { it.elements }
         if (instances.isNotEmpty()) {
-            statusHint =
-                "Can't remove tool ${def.name}: ${instances.size} instance element${if (instances.size == 1) "" else "s"} " +
-                "still use it (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — delete the instances first"
+            statusMsg =
+                Msgs.statusSharedCreateDialogCanTRemoveToolInstance(name = def.name, count = instances.size, name2 = instances.take(4).joinToString(", ") { doc.nameOf(it) })
             changed()
             return false
         }
         if (!doc.removeMacro(def)) return false
         if (toolId == def.toolId) setTool(Tools.SELECT)
         checkpoint()
-        statusHint = "Removed tool ${def.name} — the construction it was made from stays"
+        statusMsg = Msgs.statusSharedCreateDialogRemovedToolConstructionItWas(name = def.name)
         changed()
         return true
     }
@@ -2202,8 +2236,8 @@ class Editor(
         val wasPlaced = g.placed
         if (!doc.ungroup(g)) return false
         checkpoint()
-        val note = if (wasPlaced) " (its frame went with it)" else ""
-        statusHint = "Ungrouped ${g.name}$note — its $n element${if (n == 1) "" else "s"} stay"
+        val note = if (wasPlaced) Msgs.statusSharedCreateDialogItsFrameWentIt() else Msg.EMPTY
+        statusMsg = Msgs.statusSharedCreateDialogUngroupedItsElementStay(name = g.name, note = note, n = n)
         changed()
         return true
     }
@@ -2229,22 +2263,22 @@ class Editor(
     fun placementRefusal(
         g: Group,
         analysis: Placement = doc.analysePlacement(g),
-    ): String? {
+    ): Msg? {
         if (analysis.conflicts.isNotEmpty()) {
             val points = analysis.conflicts.map { it.point }.distinct()
             val consumers = analysis.conflicts.map { doc.nameOf(it.consumer) }.distinct()
             val verb = if (points.size == 1) "is" else "are"
-            return "${summarizeNames(points, POINTS_NAMED)} $verb also used by " +
-                "${summarizeNames(consumers, CONSUMERS_NAMED, "more of the drawing")} outside it, " +
-                "so this group cannot move independently — tick \"$INCLUDE_CLOSURE_LABEL\" in the Group " +
-                "dialog to take ${if (points.size == 1) "what it carries" else "what they carry"} in with it, or leave it flat"
+            return Msgs.statusPlacedGroupsAlsoUsedOutsideItSo(summarizeNames = summarizeNames(points, POINTS_NAMED), verb = verb, summarizeNames2 = summarizeNames(consumers.map { Msg.text(it) }, CONSUMERS_NAMED, Msgs.statusPlacedGroupsMoreDrawing()), INCLUDE_CLOSURE_LABEL = INCLUDE_CLOSURE_LABEL, ifWord = if (points.size == 1) Msgs.statusPlacedGroupsWhatItCarries() else Msgs.statusPlacedGroupsWhatTheyCarry())
         }
         // the refusal survives only for a group that owns no freedom **at all** — of any kind: ortho paths and
         // the walls riding them are carried (OP-16's ortho-path bonus), and so are riders, polar offsets and
         // on-circle angles (see [Document.analysePlacement]), so owning no free *point* is not a reason
         if (!analysis.carriesSomething) {
-            return "it owns no degree of freedom, so a frame would have nothing to move" +
-                if (analysis.uncapturable.isEmpty()) "" else " (${analysis.uncapturable.joinToString("; ")})"
+            return if (analysis.uncapturable.isEmpty()) {
+                Msgs.statusPlacedGroupsItOwnsNoDegreeFreedom()
+            } else {
+                Msgs.statusPlacedGroupsOwnsNoFreedomBecause(list = Msg.joined(analysis.uncapturable, "; "))
+            }
         }
         return null
     }
@@ -2262,19 +2296,19 @@ class Editor(
         commit: Boolean = true,
     ): Boolean {
         if (g.placed) {
-            statusHint = "${g.name} is already placed — drag any member to move it, or Unplace it first"
+            statusMsg = Msgs.statusPlacedGroupsIsAlreadyPlacedDragAny(name = g.name)
             changed()
             return false
         }
         val analysis = doc.analysePlacement(g)
         placementRefusal(g, analysis)?.let {
-            statusHint = "Can't place ${g.name}: $it"
+            statusMsg = Msgs.statusPlacedGroupsCanTPlace(name = g.name, itWord = it)
             changed()
             return false
         }
         val result = doc.placeGroup(g)
         if (result == null) {
-            statusHint = "Could not place ${g.name}"
+            statusMsg = Msgs.statusPlacedGroupsCouldNotPlace(name = g.name)
             changed()
             return false
         }
@@ -2284,29 +2318,28 @@ class Editor(
         // members are driven from outside the group and the frame does not move them (OP-16)
         val deforms =
             if (result.unfollowed.isEmpty()) {
-                ""
+                Msg.EMPTY
             } else {
-                " — ${result.unfollowed.joinToString(", ") { doc.nameOf(it) }} " +
-                    "${if (result.unfollowed.size == 1) "is" else "are"} driven from outside and will not follow it"
+                Msgs.statusPlacedGroupsDrivenOutsideWillNotFollow(name = result.unfollowed.joinToString(", ") { doc.nameOf(it) }, ifWord = if (result.unfollowed.size == 1) "one" else "other")
             }
         val carried =
             listOfNotNull(
-                "${result.captured} point${if (result.captured == 1) "" else "s"}".takeIf { result.captured > 0 },
-                "${result.capturedPaths} path${if (result.capturedPaths == 1) "" else "s"}".takeIf { result.capturedPaths > 0 },
+                Msgs.statusPlacedGroupsCarriedPoints(count = result.captured).takeIf { result.captured > 0 },
+                Msgs.statusPlacedGroupsCarriedPaths(count = result.capturedPaths).takeIf { result.capturedPaths > 0 },
                 // a rider is carried by being measured from its own carrier instead of from the world, which is
                 // a change of *anchor* rather than of coordinates — so it is named as such (OP-4 case b)
-                "${result.capturedRiders} rider${if (result.capturedRiders == 1) "" else "s"} re-anchored to their carrier"
+                Msgs.statusPlacedGroupsRiderReAnchoredTheirCarrier(capturedRiders = result.capturedRiders)
                     .takeIf { result.capturedRiders > 0 },
                 // a junction is a connection's own freedom, carried the same way and worth naming for the
                 // same reason: what moved is the *anchor*, not a coordinate (OP-16 × OP-20)
-                "${result.capturedJunctions} connection${if (result.capturedJunctions == 1) "" else "s"} re-anchored to the wall they meet"
+                Msgs.statusPlacedGroupsConnectionReAnchoredWallThey(capturedJunctions = result.capturedJunctions)
                     .takeIf { result.capturedJunctions > 0 },
-            ).joinToString(" and ")
+            ).let { Msg.joined(it, " and ") }
         // the other honest boundary, stated where it is decided: a group whose runs follow the frame through
         // their connections moves rigidly but cannot be *turned* (OP-16 × OP-20), and that is invisible until
         // someone types an angle
-        val turn = doc.turnRefusal(g)?.let { " — it moves as one, but cannot be turned (${it.substringAfter("cannot be turned: ")})" } ?: ""
-        statusHint = "Placed ${g.name}: ${carried.ifEmpty { "its own freedom" }} now frame-relative$deforms$turn"
+        val turn = doc.turnRefusal(g)?.let { Msgs.statusPlacedGroupsItMovesOneButCannot(substringAfter = it.render().substringAfter(Messages.statusPlacedGroupsCannotBeTurned())) } ?: Msg.EMPTY
+        statusMsg = Msgs.statusPlacedGroupsPlacedNowFrameRelative(name = g.name, ifEmpty = if (carried == Msg.EMPTY) Msgs.statusPlacedGroupsItsOwnFreedom() else carried, deforms = deforms, turn = turn)
         changed()
         return true
     }
@@ -2322,16 +2355,16 @@ class Editor(
     fun unplaceGroup(g: Group): Boolean {
         val unturns = doc.unturnsGroup(g)
         if (!doc.unplaceGroup(g)) {
-            statusHint = "${g.name} is not placed"
+            statusMsg = Msgs.statusPlacedGroupsIsNotPlaced(name = g.name)
             changed()
             return false
         }
         checkpoint()
-        statusHint =
+        statusMsg =
             if (unturns) {
-                "Unplaced ${g.name} — it is unturned again, exactly as the frame took it (only a frame can hold a group turned)"
+                Msgs.statusPlacedGroupsUnplacedItIsUnturnedAgain(name = g.name)
             } else {
-                "Unplaced ${g.name} — its points are free again, exactly where they were"
+                Msgs.statusPlacedGroupsUnplacedItsPointsAreFree(name = g.name)
             }
         changed()
         return true
@@ -2353,14 +2386,14 @@ class Editor(
         select(listOf(el), el)
         resetCycle() // the tree picked this, not a click on the canvas
         val space = doc.spaceOf(el)
-        statusHint =
+        statusMsg =
             // …and "another space" is asked as the panel asks it (OP-17, issue #2): a solid is listed in every
             // space because it is in none, so telling the user to switch spaces to see one would be wrong —
             // the 3D viewport is already showing it
             if (doc.listedIn(el)) {
-                "${selectionLabel()} selected"
+                Msgs.statusOnePickCycleSelectedSuffix(label = selectionLabel())
             } else {
-                "${selectionLabel()} selected — it is drawn in ${space.name}, so switch the space to see it"
+                Msgs.statusPlacedGroupsSelectedItIsDrawnSo(selectionLabel = selectionLabel(), name = space.name)
             }
         changed()
     }
@@ -2388,12 +2421,11 @@ class Editor(
         tool: ToolDef,
         g: Group,
         members: Int,
-    ): String? {
+    ): Msg? {
         val instances = toolCount(tool)
         val copies = members * (instances - 1)
         if (instances < 2 || copies <= MAX_COUNT) return null
-        return "Group ${g.name} has $members elements, so $instances instances would build $copies copies — " +
-            "more than $MAX_COUNT; lower the count, or array fewer elements"
+        return Msgs.statusPlacedGroupsGroupHasElementsSoInstances(name = g.name, members = members, instances = instances, copies = copies, MAX_COUNT = MAX_COUNT.toString())
     }
 
     /**
@@ -2418,7 +2450,7 @@ class Editor(
         // a refusal still *consumes* the click: falling through to selecting the group would replace the
         // reason with a selection note, and the row would look as if it had done nothing
         groupFanRefusal(tool, g, members.size)?.let {
-            statusHint = it
+            statusMsg = it
             changed()
             return true
         }
@@ -2427,18 +2459,18 @@ class Editor(
         filledSlots++
         pickedClicks.add(at)
         if (filledSlots >= tool.slotCount(doc, pickedElements)) {
-            if (!maybeCompleteTool(at)) statusHint = scalarPrompt(tool)
+            if (!maybeCompleteTool(at)) statusMsg = scalarPrompt(tool)
         } else {
-            statusHint = "${groupFedNote(g)} ${tool.help} (${stillNeeded(tool)} more)"
+            statusMsg = Msgs.statusPlacedGroupsMore(groupFedNote = groupFedNote(g), help = tool.help, stillNeeded = stillNeeded(tool))
         }
         changed()
         return true
     }
 
     /** How the status line says a whole group filled a geometry slot — one wording for both routes. */
-    private fun groupFedNote(g: Group): String {
+    private fun groupFedNote(g: Group): Msg {
         val n = doc.groupMembers(g).size
-        return "Group ${g.name} ($n element${if (n == 1) "" else "s"}) is the geometry — every member is copied."
+        return Msgs.statusPlacedGroupsGroupElementIsGeometryEvery(name = g.name, n = n)
     }
 
     /** Select every member of [g] — what clicking a member on the canvas does. */
@@ -2447,8 +2479,8 @@ class Editor(
         select(members, members.firstOrNull())
         selectedGroup = g
         resetCycle() // the panel picked this, not a click on the canvas
-        val what = if (g.placed) " (placed — the panel shows its frame)" else ""
-        statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected$what"
+        val what = if (g.placed) Msgs.statusPlacedGroupsPlacedPanelShowsItsFrame() else Msg.EMPTY
+        statusMsg = Msgs.statusPlacedGroupsGroupElementSelected(name = g.name, count = members.size, what = what)
         changed()
     }
 
@@ -2465,7 +2497,7 @@ class Editor(
         visible: Boolean,
     ) {
         if (doc.setElementsVisible(doc.groupMembers(g), visible) > 0) checkpoint()
-        statusHint = "Group ${g.name} ${if (visible) "shown" else "hidden"}"
+        statusMsg = Msgs.statusPlacedGroupsGroup(name = g.name, ifWord = if (visible) "yes" else "other")
         changed()
     }
 
@@ -2487,7 +2519,7 @@ class Editor(
             // be turned is the one refusal a *frame* field has, and it is invisible on canvas
             selectedFrame()?.let { g ->
                 doc.turnRefusal(g)?.let {
-                    statusHint = "Can't turn: $it"
+                    statusMsg = Msgs.statusPlacedGroupsCanTTurn(itWord = it)
                     changed()
                 }
             }
@@ -2497,7 +2529,7 @@ class Editor(
         checkpoint()
         // a write the geometry **bounded** has something to say — an opening clamped to its leg (OP-21) — and
         // it is the same note the drag reports, since typing and dragging are one operation (OP-13)
-        doc.takeNote()?.let { statusHint = it }
+        doc.takeNoteMsg()?.let { statusMsg = it }
         changed()
         return true
     }
@@ -2541,9 +2573,9 @@ class Editor(
             // a derived value refuses the write **in the wired height's own words** (OP-25): the refusal
             // names what drives it, which for an expression is the expression
             if (e.editable) {
-                statusHint =
-                    doc.expressionOf(e)?.let { "${e.name} is derived: ${e.name} = $it — change what it reads, or clear the formula" }
-                        ?: "${e.name} follows ${doc.boundEntry(e)?.name ?: "another value"} — free it first to type a number of its own"
+                statusMsg =
+                    doc.expressionOf(e)?.let { Msgs.statusPanelParameterEditsIsDerivedChangeWhatIt(name = e.name, itWord = it) }
+                        ?: Msgs.statusPanelParameterEditsFollowsFreeItFirstType(name = e.name, boundEntry = doc.boundEntry(e)?.name?.let { Msg.text(it) } ?: Msgs.statusPanelParameterEditsAnotherValue())
                 changed()
             }
             return false
@@ -2577,7 +2609,7 @@ class Editor(
     ): Boolean {
         val t = text.trim()
         if (!e.editable) {
-            statusHint = "${e.name} is measured by the construction (OP-4), so it has no formula of its own"
+            statusMsg = Msgs.statusPanelParameterEditsIsMeasuredConstructionOpSo(name = e.name)
             changed()
             return false
         }
@@ -2586,7 +2618,7 @@ class Editor(
             val was = doc.expressionOf(e) ?: doc.boundEntry(e)?.name
             doc.unwireParameter(e)
             checkpoint()
-            statusHint = "${e.name} is a free value again, where it stands" + (was?.let { " — it no longer follows $it" } ?: "")
+            statusMsg = Msgs.statusPanelParameterEditsIsFreeValueAgainWhere2(name = e.name, clause0 = (was?.let { Msgs.statusPanelParameterEditsItNoLongerFollows(itWord = it) } ?: Msg.EMPTY))
             changed()
             return true
         }
@@ -2596,7 +2628,7 @@ class Editor(
             // field does with it; a unit written out is taken at its word, and must be this parameter's
             val q = if (lit.hadUnit) lit.q else quantityOf(dim, lit.q.value)
             if (q.dim != dim) {
-                statusHint = "${e.name} is $dim, and $t is ${q.dim} — a plain number here is read in ${displayUnitName(dim)}"
+                statusMsg = Msgs.statusPanelParameterEditsIsIsPlainNumberHere(name = e.name, dim = dim.toString(), t = t, dim2 = q.dim.toString(), displayUnitName = displayUnitName(dim))
                 changed()
                 return false
             }
@@ -2609,14 +2641,19 @@ class Editor(
             return true
         }
         if (!doc.bindParameter(e, t)) {
-            statusHint = doc.takeNote() ?: "Can't bind ${e.name} to '$t'"
+            statusMsg = doc.takeNoteMsg() ?: Msgs.statusPanelParameterEditsCanTBind(name = e.name, t = t)
             changed()
             return false
         }
         checkpoint()
         // a binding whose *values* do not agree is legal and invalid, not refused (OP-3): it says so and heals
         val why = (Evaluator().eval(e.ref.node) as? EvalResult.Invalid)?.reason
-        statusHint = "${e.name} = ${doc.expressionOf(e) ?: t}" + (why?.let { " — but $it" } ?: "")
+        statusMsg =
+            Msgs.statusGeneralParameterSetTo(
+                name = e.name,
+                value = doc.expressionOf(e) ?: t,
+                why = why?.let { Msgs.statusGeneralButWhy(why = it) } ?: Msg.EMPTY,
+            )
         changed()
         return true
     }
@@ -2654,9 +2691,9 @@ class Editor(
         if (one != null && one.kind == ElementKind.SOLID) {
             val name = doc.nameOf(one)
             val script = doc.sweepLawRestated(one, wanted)
-            val said = doc.takeNote() // read before the adopt below replaces the document that said it
+            val said = doc.takeNoteMsg() // read before the adopt below replaces the document that said it
             if (script == null) {
-                statusHint = said ?: "Can't state a size law on $name"
+                statusMsg = said ?: Msgs.statusVariableSectionSweepCanTStateSizeLaw(name = name)
                 changed()
                 return false
             }
@@ -2664,7 +2701,7 @@ class Editor(
                 try {
                     DocumentFormat.load(script)
                 } catch (e: Exception) {
-                    statusHint = "Stating a size law on $name failed: ${e.message}"
+                    statusMsg = Msgs.statusVariableSectionSweepStatingSizeLawFailed(name = name, message = e.message ?: "")
                     changed()
                     return false
                 }
@@ -2673,19 +2710,20 @@ class Editor(
             // a law whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
             val el = doc.elements.firstOrNull { doc.nameOf(it) == name }
             val why = el?.let { (Evaluator().eval(it.ref.node) as? EvalResult.Invalid)?.reason }
-            statusHint =
-                (if (wanted.isEmpty()) "$name is a section of one size again" else "$name: ${doc.sweepLawParam} -> $wanted") +
-                (why?.let { " — but $it" } ?: "")
+            statusMsg =
+                Msgs.statusGeneralWhyThen(
+                    what = if (wanted.isEmpty()) Msgs.statusVariableSectionSweepIsSectionOneSizeAgain(name = name) else Msgs.statusGeneralLawSetTo(name = name, param = doc.sweepLawParam, law = wanted),
+                    why = why?.let { Msgs.statusGeneralButWhy(why = it) } ?: Msg.EMPTY,
+                )
             changed()
             return true
         }
         armedLaw = wanted.ifEmpty { null }
-        statusHint =
+        statusMsg =
             if (armedLaw == null) {
-                "No size law armed — the next tube or sweep carries a section of one size"
+                Msgs.statusVariableSectionSweepNoSizeLawArmedNext()
             } else {
-                "Armed: the next tube or sweep scales its section by $wanted, with ${doc.sweepLawParam} from 0 at " +
-                    "the start of the run to 1 at its end (a tube reads it as the radius itself)"
+                Msgs.statusVariableSectionSweepArmedNextTubeSweepScales(wanted = wanted, sweepLawParam = doc.sweepLawParam)
             }
         changed()
         return true
@@ -2761,9 +2799,9 @@ class Editor(
             if (wanted.isEmpty()) now.remove(name) else now[name] = wanted
             val composed = now.entries.joinToString("; ") { "${it.key} = ${it.value}" }
             val script = doc.sweepFamilyRestated(one, composed)
-            val said = doc.takeNote()
+            val said = doc.takeNoteMsg()
             if (script == null) {
-                statusHint = said ?: "Can't state a law on $label"
+                statusMsg = said ?: Msgs.statusFunctionFamilySectionCanTStateLaw(label = label)
                 changed()
                 return false
             }
@@ -2771,7 +2809,7 @@ class Editor(
                 try {
                     DocumentFormat.load(script)
                 } catch (e: Exception) {
-                    statusHint = "Stating a law on $label failed: ${e.message}"
+                    statusMsg = Msgs.statusFunctionFamilySectionStatingLawFailed(label = label, message = e.message ?: "")
                     changed()
                     return false
                 }
@@ -2780,27 +2818,27 @@ class Editor(
             // a law whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
             val el = doc.elements.firstOrNull { doc.nameOf(it) == label }
             val why = el?.let { (Evaluator().eval(it.ref.node) as? EvalResult.Invalid)?.reason }
-            statusHint =
-                (
-                    if (composed.isEmpty()) {
-                        "$label reads its section as it is drawn again"
-                    } else if (wanted.isEmpty()) {
-                        "$label: '$name' is constant again — $composed"
-                    } else {
-                        "$label: $name(${doc.sweepLawParam}) = $wanted"
-                    }
-                ) + (why?.let { " — but $it" } ?: "")
+            statusMsg =
+                Msgs.statusGeneralWhyThen(
+                    what =
+                        if (composed.isEmpty()) {
+                            Msgs.statusFunctionFamilySectionReadsItsSectionItIs(label = label)
+                        } else if (wanted.isEmpty()) {
+                            Msgs.statusFunctionFamilySectionIsConstantAgain(label = label, name = name, composed = composed)
+                        } else {
+                            Msgs.statusFunctionFamilySectionFamilyLawSetTo(label = label, name = name, param = doc.sweepLawParam, law = wanted)
+                        },
+                    why = why?.let { Msgs.statusGeneralButWhy(why = it) } ?: Msg.EMPTY,
+                )
             changed()
             return true
         }
         if (wanted.isEmpty()) armedFamilyLaws.remove(name) else armedFamilyLaws[name] = wanted
-        statusHint =
+        statusMsg =
             if (armedFamilyLaws.isEmpty()) {
-                "No family laws armed — the next sweep reads its section once, as it is drawn"
+                Msgs.statusFunctionFamilySectionNoFamilyLawsArmedNext()
             } else {
-                "Armed for the next *Sweep*: " +
-                    armedFamilyLaws.entries.joinToString("; ") { "${it.key}(${doc.sweepLawParam}) = ${it.value}" } +
-                    ", with ${doc.sweepLawParam} from 0 at the start of the run to 1 at its end"
+                Msgs.statusFunctionFamilySectionArmedNextSweepStartRun(clause0 = armedFamilyLaws.entries.joinToString("; ") { "${it.key}(${doc.sweepLawParam}) = ${it.value}" }, sweepLawParam = doc.sweepLawParam)
             }
         changed()
         return true
@@ -2878,7 +2916,7 @@ class Editor(
         domain: String,
     ): Element? {
         if (el == null) {
-            statusHint = doc.takeNote() ?: "Can't build a function curve from '$xText' and '$yText'"
+            statusMsg = doc.takeNoteMsg() ?: Msgs.statusFunctionFamilySectionCanTBuildFunctionCurve(xText = xText, yText = yText)
             changed()
             return null
         }
@@ -2886,8 +2924,7 @@ class Editor(
         // a curve whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
         // — a domain that is not a pair of plain numbers is exactly such a case, and it names both dimensions
         val why = (Evaluator().eval(el.ref.node) as? EvalResult.Invalid)?.reason
-        statusHint = "${doc.nameOf(el)}: x(t) = ${xText.trim()}, y(t) = ${yText.trim()} over $domain" +
-            (why?.let { " — but $it" } ?: "")
+        statusMsg = Msgs.statusFunctionFamilySectionXTYTOver2(name = doc.nameOf(el), text = xText.trim(), text2 = yText.trim(), domain = domain, clause0 = (why?.let { Msgs.statusGeneralButWhy(why = it) } ?: Msg.EMPTY))
         changed()
         return el
     }
@@ -2909,11 +2946,11 @@ class Editor(
         return Expr.Lit(-neg.q, neg.hadUnit)
     }
 
-    private fun displayUnitName(dim: Dimension): String =
+    private fun displayUnitName(dim: Dimension): Msg =
         when (dim) {
-            Dimension.ANGLE -> "degrees"
-            Dimension.LENGTH -> "millimetres"
-            else -> "plain numbers"
+            Dimension.ANGLE -> Msgs.wordUnitDegrees()
+            Dimension.LENGTH -> Msgs.wordUnitMillimetres()
+            else -> Msgs.statusFunctionFamilySectionPlainNumbers()
         }
 
     /**
@@ -2928,12 +2965,11 @@ class Editor(
         val was = e.name
         val now = doc.renameParameter(e, name)
         if (now == null) {
-            statusHint =
+            statusMsg =
                 if (!e.editable) {
-                    "${e.name} is a measurement — its name comes from the step that measures it, so it cannot be renamed"
+                    Msgs.statusFunctionFamilySectionIsMeasurementItsNameComes(name = e.name)
                 } else {
-                    "${e.name} belongs to the step that created it, which has no place for a name in the file — " +
-                        "so renaming it could not be saved"
+                    Msgs.statusFunctionFamilySectionBelongsStepThatCreatedIt(name = e.name)
                 }
             changed()
             return null
@@ -2941,22 +2977,22 @@ class Editor(
         if (now != was) {
             checkpoint()
             val asked = name.trim()
-            statusHint = "Renamed $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
+            statusMsg = Msgs.statusFunctionFamilySectionRenamed2(was = was, now = now, clause0 = if (asked.isNotEmpty() && now != asked) Msgs.statusFunctionFamilySectionWasTakenNotOneWord(asked = asked) else Msg.EMPTY)
         }
         changed()
         return now
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
-    fun note(message: String) {
-        statusHint = message
+    fun note(message: Msg) {
+        statusMsg = message
     }
 
     /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
-    fun currentHelp(): String {
-        snapHint?.let { if (it.linked) return "Snap: ${it.label} — Alt to place freely" }
-        if (toolId == Tools.SELECT) return Tools.SELECT_HELP
-        val tool = doc.toolDef(toolId) ?: return ""
+    fun currentHelp(): Msg {
+        snapHint?.let { if (it.linked) return Msgs.statusFunctionFamilySectionSnapAltPlaceFreely(name = it.label) }
+        if (toolId == Tools.SELECT) return Msg.text(Tools.SELECT_HELP)
+        val tool = doc.toolDef(toolId) ?: return Msg.EMPTY
         // the panel and the keyboard are as much an input as the canvas (OP-13), so a tool still waiting
         // for a scalar says which one it wants next rather than describing clicks it cannot use yet
         if (toolScalars(tool) == null) return scalarPrompt(tool)
@@ -2985,9 +3021,9 @@ class Editor(
                     }.joinToString(", ") +
                     // …and the whole contract for stating another, because "type a number" left out the half
                     // that finishes the gesture: a click uses what is typed (see [pointerDown])
-                    " — to use another, type it and click (or press Enter)."
+                    Msgs.statusFunctionFamilySectionUseAnotherTypeItClick()
             }
-        return (if (n == 0) tool.help else "${tool.help} (count $n)") + using
+        return Msg.text((if (n == 0) tool.help else "${tool.help} (count $n)") + using)
     }
 
     fun render(target: DrawTarget) {
@@ -3124,7 +3160,7 @@ class Editor(
             pendingPile = if (additive) null else pile
             pendingIndex = if (standing == null) 0 else (standing + 1) % pile.candidates.size
             pendingApplied = false
-            pendingNote = ""
+            pendingNote = Msg.EMPTY
             if (additive) resetCycle()
             // **Selection primes the drag.** A press that continues the cycle drags what the cycle selected,
             // overriding the ranking — which is what makes cycling worth having: step to the thing you want,
@@ -3163,7 +3199,7 @@ class Editor(
                 pendingNote = describeJamb(jamb)
                 // where in the pile this jamb stands: the first candidate on a fresh press, and the one the
                 // cycle is standing on when the press was primed by it
-                statusHint = cycleNote(pendingNote, pile, standing ?: 0)
+                statusMsg = cycleNote(pendingNote, pile, standing ?: 0)
                 changed()
                 return
             }
@@ -3193,7 +3229,7 @@ class Editor(
             //   drag leaves the member it moved selected. Both are click-vs-drag semantics, and only the
             //   release knows which of the two the gesture was (CLICK_SLOP_PX).
             val placedGroup = if (additive) null else doc.placedGroupOf(hit)
-            var note = ""
+            var note: Msg = Msg.EMPTY
             when {
                 additive -> pendingToggle = hit
                 // primed: what the press found is what the drag will move, so the press leaves it alone (the
@@ -3216,7 +3252,7 @@ class Editor(
                 dragFrame = frameGroup
                 grabOffset = world - anchor
                 dragStart = anchor
-                statusHint = note
+                statusMsg = note
                 pendingNote = note
                 changed()
                 return
@@ -3225,8 +3261,8 @@ class Editor(
             // why it cannot — and either way nothing else is grabbed instead
             if (primedElement != null) {
                 if (!primedElement.hasFreeDof || !primedElement.visible) {
-                    statusHint = immovableNote(primedElement)
-                    pendingNote = statusHint
+                    statusMsg = immovableNote(primedElement)
+                    pendingNote = statusMsg ?: Msg.EMPTY
                     changed()
                     return
                 }
@@ -3236,8 +3272,8 @@ class Editor(
                 dragHold = primedElement.handle?.grabHold(world, proj(), ev()) ?: 0.0
                 dragStart = anchor
                 dragRiders = doc.riderAnchors()
-                pendingNote = "Dragging ${elementLabel(primedElement)} — what is selected takes the grab"
-                statusHint = cycleNote(pendingNote, pile, standing ?: 0)
+                pendingNote = Msgs.statusFunctionFamilySectionDraggingWhatIsSelectedTakes(elementLabel = elementLabel(primedElement))
+                statusMsg = cycleNote(pendingNote, pile, standing ?: 0)
                 changed()
                 return
             }
@@ -3247,8 +3283,7 @@ class Editor(
                 // way to get the frame instead (OP-16)
                 if (placedGroup != null && (selected.size != 1 || selection !== hit)) {
                     note =
-                        "Dragging ${doc.nameOf(hit)} alone — group ${placedGroup.name} is not selected as a whole; " +
-                        "click without moving to select it, then drag to move the frame"
+                        Msgs.statusFunctionFamilySectionDraggingAloneGroupIsNot(name = doc.nameOf(hit), name2 = placedGroup.name)
                 }
                 dragTarget = movable
                 // drag by the *offset* from where the grab landed, not to the cursor outright:
@@ -3261,21 +3296,21 @@ class Editor(
                 // …and where everything riding a host stands right now, for the same reason: the drag may turn
                 // a host, and a rider measured along that host has to be re-solved against where it *was*
                 dragRiders = doc.riderAnchors()
-                statusHint = note
+                statusMsg = note
             } else {
-                statusHint = immovableNote(hit)
+                statusMsg = immovableNote(hit)
             }
             // …and what the press said is kept for the release: a first click must read exactly as it always
             // did (the reason an immovable element cannot be dragged included), with only the pile's position
             // appended when there is more than one thing here
-            pendingNote = statusHint
-            if (pendingApplied) statusHint = cycleNote(statusHint, pile, 0)
+            pendingNote = statusMsg ?: Msg.EMPTY
+            if (pendingApplied) statusMsg = cycleNote(statusMsg ?: Msg.EMPTY, pile, 0)
             changed()
             return
         }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
             if (toolId == Tools.WALL && activePath == null && activeScalar == null) {
-                statusHint = "Wall: type a thickness (or click a parameter in the panel) first"
+                statusMsg = Msgs.statusFunctionFamilySectionWallTypeThicknessClickParameter()
                 changed()
                 return
             }
@@ -3314,19 +3349,19 @@ class Editor(
     private fun breakClick(world: Vec2) {
         val tol = tolWorld()
         val hit = HitTest.nearest(doc, ev(), world, tol) { doc.legOf(it) != null || breakableKind(it) }
-        statusHint =
+        statusMsg =
             when {
-                hit == null -> "Click a segment, an arc or a Bézier to split it there (or a leg of an ortho path)"
+                hit == null -> Msgs.statusFunctionFamilySectionClickSegmentArcBZier()
                 doc.legOf(hit) != null ->
                     if (doc.breakOrthoLegNear(world, tol)) {
-                        "Segment broken — drag either half to open the corner"
+                        Msgs.statusFunctionFamilySectionSegmentBrokenDragEitherHalf()
                     } else {
                         // a break *replaces* the leg, so it is refused on a leg a tool is defined from
                         // (OP-6) — say which, since "click a segment" would be a lie there
                         if (doc.definesAMacro(listOf(hit))) {
-                            "${doc.nameOf(hit)} is part of a tool's definition — breaking it would replace it; retire the tool first"
+                            Msgs.statusFunctionFamilySectionIsPartToolDefinitionBreaking(name = doc.nameOf(hit))
                         } else {
-                            "${doc.nameOf(hit)} can't be broken there"
+                            Msgs.statusFunctionFamilySectionCanTBeBrokenThere(name = doc.nameOf(hit))
                         }
                     }
                 else -> breakCurveAt(hit, world)
@@ -3347,11 +3382,11 @@ class Editor(
     private fun breakCurveAt(
         el: Element,
         world: Vec2,
-    ): String {
-        val res = doc.breakCurve(el, world) ?: return doc.takeNote() ?: "${doc.nameOf(el)} can't be broken there"
+    ): Msg {
+        val res = doc.breakCurve(el, world) ?: return (doc.takeNoteMsg() ?: Msgs.statusFunctionFamilySectionCanTBeBrokenThere(name = doc.nameOf(el)))
         val note = doc.takeNote() ?: ""
-        if (!res.replacesOriginal) return note
-        val root = doc.creatingStep(el) ?: return note
+        if (!res.replacesOriginal) return Msg.text(note)
+        val root = doc.creatingStep(el) ?: return Msg.text(note)
         val journalBefore = doc.journal.toList()
         doc.journal.removeAll(doc.dependentSteps(setOf(root)))
         val fresh =
@@ -3362,10 +3397,10 @@ class Editor(
                 // than leaving a document that cannot be saved
                 doc.journal.clear()
                 doc.journal.addAll(journalBefore)
-                return "Break failed: ${e.message}"
+                return Msgs.statusFunctionFamilySectionBreakFailed(message = e.message ?: "")
             }
         adopt(fresh)
-        return note
+        return Msg.text(note)
     }
 
     /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */
@@ -3373,7 +3408,7 @@ class Editor(
         val path = activePath
         val s = pathSnap(raw)
         val world = s.pos
-        val what = if (toolId == Tools.WALL) "Wall" else "Ortho path"
+        val what = if (toolId == Tools.WALL) Msgs.wordToolWall() else Msgs.statusFunctionFamilySectionOrthoPath()
         if (path == null) {
             // clicking an open end of an existing path *continues* that path. Starting a separate path
             // welded there instead left a phantom corner: two paths cannot coalesce a straight-on step,
@@ -3384,7 +3419,7 @@ class Editor(
                 activePath = doc.resumeOrthoPath(existing, atEnd)
                 pathAtEnd = atEnd
                 if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
-                statusHint = "$what: extending this path — a step straight on lengthens the last segment"
+                statusMsg = Msgs.statusFunctionFamilySectionExtendingThisPathStepStraight(what = what)
             } else {
                 val started = doc.startOrthoPath(world)
                 activePath = started
@@ -3397,18 +3432,17 @@ class Editor(
                 // ones, so this click starts a new run joined to it — said out loud, since the same click
                 // continues an unplaced path
                 val placedEnd = s.target?.let { t -> (t.handle as? OrthoCornerHandle)?.let { doc.pathFrameOf(it) != null } } == true
-                statusHint =
+                statusMsg =
                     if (linked && placedEnd) {
-                        "$what starts on ${s.target?.let { doc.nameOf(it) }} — a placed path is not extended in place; " +
-                            "this is a new run joined to it (unplace its group to extend it)"
+                        Msgs.statusFunctionFamilySectionStartsPlacedPathIsNot(what = what, name = s.target?.let { doc.nameOf(it) } ?: "")
                     } else if (linked) {
-                        "$what starts on ${s.target?.let { doc.nameOf(it) }} (${s.label}); click the next point"
+                        Msgs.statusFunctionFamilySectionStartsClickNextPoint(what = what, name = s.target?.let { doc.nameOf(it) } ?: "", name2 = s.label)
                     } else if (s.linked) {
                         // the click landed on geometry and the link was refused: say why here too, or the
                         // run would start looking joined and only come apart when something else moved
-                        "$what: ${refusal(started.vertices.first().ref, s)} The run starts here unjoined; click the next point."
+                        Msgs.statusFunctionFamilySectionRunStartsHereUnjoinedClick(what = what, refusal = refusal(started.vertices.first().ref, s))
                     } else {
-                        "$what: click the next point; click the start to close (Esc/double-click to finish)"
+                        Msgs.statusFunctionFamilySectionClickNextPointClickStart(what = what)
                     }
             }
         } else {
@@ -3436,7 +3470,7 @@ class Editor(
                     snapHint = null
                     finishPath() // which marks the terminus and says the run is over — see [markTerminal]
                     // the same sentence, naming what was reached rather than the vertex that reached it
-                    statusHint = "$what ends on ${s.target?.let { doc.nameOf(it) }} (${s.label})$RUN_FINISHED"
+                    statusMsg = Msgs.statusFunctionFamilySectionEnds(what = what, name = s.target?.let { doc.nameOf(it) } ?: "", name2 = s.label, RUN_FINISHED = RUN_FINISHED)
                     changed()
                     return
                 }
@@ -3444,7 +3478,7 @@ class Editor(
                 // end of a run, so refusing in silence left a leg placed, unjoined and still growing —
                 // "the ending did not snap and did not finish the path". The rubber band is the honest
                 // cue that drawing continues, and it is still there, so the sentence explains why.
-                statusHint = "$what: ${refusal(v.ref, s)} The leg is placed but not joined; the run continues (Esc to finish)."
+                statusMsg = Msgs.statusFunctionFamilySectionLegIsPlacedButNot(what = what, refusal = refusal(v.ref, s))
                 hoverWorld = world
                 previewSeg = null
                 snapHint = null
@@ -3480,7 +3514,7 @@ class Editor(
             // (OP-13), so no tool has to know that its value can be typed
             digit && typedScalarSlot() != null -> {
                 numericEntry += key
-                statusHint = typedScalarPrompt()
+                statusMsg = typedScalarPrompt()
                 // the number is already in effect as far as the *picture* is concerned: the preview redraws
                 // with it and the entry is echoed at the cursor, so what the next click will build is visible
                 // where the user is looking rather than only in the status bar (OP-13)
@@ -3499,7 +3533,7 @@ class Editor(
             // (an extrude depth, a radius) is still the node's refusal, in the node's own words (OP-3).
             sign && typedScalarSlot() != null -> {
                 numericEntry = if (numericEntry.startsWith("-")) numericEntry.drop(1) else "-$numericEntry"
-                statusHint = typedScalarPrompt()
+                statusMsg = typedScalarPrompt()
                 refreshToolPreviewAtHover()
                 changed()
                 true
@@ -3509,7 +3543,7 @@ class Editor(
             // negative length would contradict the very gesture that places it (the leg rule OP-13 states —
             // see [commitTypedLeg], deliberately untouched since session 55).
             pathActive && sign -> {
-                statusHint = "A leg's length has no sign — point the way the leg is to go, and type how long it is"
+                statusMsg = Msgs.statusFunctionFamilySectionLegLengthHasNoSign()
                 changed()
                 true
             }
@@ -3518,7 +3552,7 @@ class Editor(
                 if (pathActive) {
                     refreshPreview()
                 } else {
-                    statusHint = typedScalarPrompt()
+                    statusMsg = typedScalarPrompt()
                     refreshToolPreviewAtHover()
                 }
                 changed()
@@ -3529,7 +3563,7 @@ class Editor(
                 if (pathActive) {
                     refreshPreview()
                 } else {
-                    statusHint = ""
+                    statusMsg = null
                     refreshToolPreviewAtHover()
                 }
                 changed()
@@ -3542,7 +3576,7 @@ class Editor(
             // which [resetPicks] retracts, so cancelling leaves nothing behind (see [checkpoint])
             key == "Escape" && !pathActive && (filledSlots > 0 || pendingTypedParams.isNotEmpty()) -> {
                 resetPicks()
-                statusHint = ""
+                statusMsg = null
                 changed()
                 true
             }
@@ -3553,10 +3587,10 @@ class Editor(
                 val had = selected.isNotEmpty()
                 val dropped = clearActiveScalar()
                 if (had) clearSelection()
-                statusHint =
+                statusMsg =
                     when {
-                        had && dropped -> "Selection cleared, and $NO_ACTIVE_PARAMETER"
-                        had -> "Selection cleared"
+                        had && dropped -> Msgs.statusFunctionFamilySectionSelectionCleared(NO_ACTIVE_PARAMETER = NO_ACTIVE_PARAMETER)
+                        had -> Msgs.statusFunctionFamilySectionSelectionCleared2()
                         else -> NO_ACTIVE_PARAMETER
                     }
                 changed()
@@ -3574,7 +3608,7 @@ class Editor(
             key.length == 1 && key[0].isLetter() -> {
                 val id = Tools.byShortcut(key[0]) ?: return false
                 if (id != toolId) setTool(id)
-                statusHint = currentHelp()
+                statusMsg = currentHelp()
                 changed()
                 true
             }
@@ -3603,16 +3637,16 @@ class Editor(
      * and that the next click uses it (see [pointerDown]). "Enter to use it" was the whole sentence before,
      * which made a click read as *nothing happened* the one time it mattered.
      */
-    private fun typedScalarPrompt(): String {
-        val slot = typedScalarSlot() ?: return ""
+    private fun typedScalarPrompt(): Msg {
+        val slot = typedScalarSlot() ?: return Msg.EMPTY
         if (numericEntry.isEmpty()) return currentHelp()
         // a sign on its own is not a value yet: say what *has* been stated instead of printing "= - mm"
-        if (numericEntry == "-") return "${slot.name}: negative — now the digits (Esc to cancel, - again for positive)"
+        if (numericEntry == "-") return Msgs.statusFunctionFamilySectionNegativeNowDigitsEscCancel(name = slot.name)
         // …and the sign is **named where it becomes relevant**, which is with a number already in the entry: a
         // route nobody is told about is a route that does not exist (the session-55 rule), and the arming line
         // is not the place — every tool would carry the clause whether a sign means anything for it or not
-        val negate = if (numericEntry.startsWith("-")) "- again for positive" else "- for negative"
-        return "${slot.name} = ${entryText(slot)} — click to use it (or press Enter), $negate, Esc to cancel"
+        val negate = if (numericEntry.startsWith("-")) Msgs.statusFunctionFamilySectionAgainPositive() else Msgs.statusFunctionFamilySectionNegative()
+        return Msgs.statusFunctionFamilySectionClickUseItPressEnter(name = slot.name, entryText = entryText(slot), negate = negate)
     }
 
     /** The pending entry as the status line and the canvas both say it: `20 mm`, `30°`, a bare `3`. */
@@ -3633,11 +3667,12 @@ class Editor(
         return at to "${slot.name} = ${entryText(slot)}"
     }
 
-    private fun unitWord(dim: Dimension): String =
+    private fun unitWord(dim: Dimension): Msg =
         when (dim) {
-            Dimension.LENGTH -> "mm"
-            Dimension.ANGLE -> "°"
-            else -> ""
+            // the unit *symbols* stay as they are: number and unit formatting is OP-29's slice 3
+            Dimension.LENGTH -> Msg.text("mm")
+            Dimension.ANGLE -> Msg.text("°")
+            else -> Msg.EMPTY
         }
 
     /**
@@ -3655,7 +3690,7 @@ class Editor(
         val value = numericEntry.toDoubleOrNull()
         numericEntry = ""
         if (value == null) {
-            statusHint = "That is not a number"
+            statusMsg = Msgs.statusFunctionFamilySectionThatIsNotNumber()
             changed()
             return true
         }
@@ -3675,7 +3710,7 @@ class Editor(
         // still pending means the tool has not consumed it yet, so say the value is in; a tool that
         // completed on the spot has already said its own thing
         if (pendingTypedParams.any { it === entry }) {
-            statusHint = "${slot.name} = $value ${unitWord(slot.dim)} (parameter ${entry.name}) — edit it in the panel any time"
+            statusMsg = Msgs.statusFunctionFamilySectionParameterEditItPanelAny(name = slot.name, theValue = value, unitWord = unitWord(slot.dim), name2 = entry.name)
         }
         changed()
         return true
@@ -3691,7 +3726,7 @@ class Editor(
         numericEntry = ""
         val placed = doc.addOrthoVertex(path, end) != null
         refreshPreview()
-        statusHint = if (placed) "" else "That length would make a zero-length leg"
+        statusMsg = if (placed) Msg.EMPTY else Msgs.statusFunctionFamilySectionThatLengthWouldMakeZero()
         changed()
         return true
     }
@@ -3795,7 +3830,7 @@ class Editor(
         if (path.vertices.size >= 3 && HitTest.nearest(doc, ev(), hover, tolWorld() * 2) { it.ref === far } != null) {
             closePreview = doc.orthoClosePreview(path)
             previewSeg = null
-            if (closePreview.isNotEmpty()) statusHint = "Click to close the loop — the last corner moves into line with the start"
+            if (closePreview.isNotEmpty()) statusMsg = Msgs.statusFunctionFamilySectionClickCloseLoopLastCorner()
             return
         }
         closePreview = emptyList()
@@ -3810,7 +3845,7 @@ class Editor(
                 val sign = if ((if (horizontal) to.x - from.x else to.y - from.y) < 0) -1.0 else 1.0
                 from to if (horizontal) Vec2(from.x + sign * typed, from.y) else Vec2(from.x, from.y + sign * typed)
             }
-        if (numericEntry.isNotEmpty()) statusHint = "Leg length $numericEntry mm — Enter to place, Esc to cancel"
+        if (numericEntry.isNotEmpty()) statusMsg = Msgs.statusFunctionFamilySectionLegLengthMmEnterPlace(numericEntry = numericEntry)
     }
 
     /**
@@ -3820,11 +3855,11 @@ class Editor(
     private fun openingClick(world: Vec2) {
         val w = activeScalar
         if (w == null) {
-            statusHint = "Opening: type a width (or click a parameter in the panel) first"
+            statusMsg = Msgs.statusFunctionFamilySectionOpeningTypeWidthClickParameter()
             changed()
             return
         }
-        statusHint = if (doc.addIntervalAt(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
+        statusMsg = if (doc.addIntervalAt(world, w.ref, tolWorld() * 2)) Msgs.statusFunctionFamilySectionOpeningAdded() else Msgs.statusFunctionFamilySectionClickWallPlaceOpening()
         checkpoint()
         changed()
     }
@@ -3844,7 +3879,7 @@ class Editor(
         closePreview = emptyList()
         pathThickness = null
         checkpoint() // the whole path — start, legs, close, footprint — commits as one operation
-        statusHint = ended ?: ""
+        statusMsg = ended
         changed()
     }
 
@@ -3862,17 +3897,17 @@ class Editor(
      * Returns the status line for that ending, or null when the run merely stopped in the air (Esc,
      * double-click, tool switch), which needs no mark: nothing was reached.
      */
-    private fun markTerminal(path: OrthoPath): String? {
+    private fun markTerminal(path: OrthoPath): Msg? {
         terminalHint = null
         if (path.vertices.size < 2) return null
-        val what = if (toolId == Tools.WALL) "Wall" else "Ortho path"
+        val what = if (toolId == Tools.WALL) Msgs.wordToolWall() else Msgs.statusFunctionFamilySectionOrthoPath()
         val closed = pathClosed
         val v = if (closed || !pathAtEnd) path.vertices.first() else path.vertices.last()
         val el = doc.elementFor(v.ref) ?: return null
         // a still-dangling end is not a terminus — it is exactly the end a later click may continue
         if (!closed && doc.orthoEndpoint(el) != null) return null
         terminalHint = (ev().valueOf(v.ref) as? PointValue)?.p
-        return "$what ${if (closed) "closed on" else "ends on"} ${doc.nameOf(el)}$RUN_FINISHED"
+        return Msgs.statusFunctionFamilySectionPathTerminal(what = what, closed = if (closed) "yes" else "no", name = doc.nameOf(el), finished = RUN_FINISHED)
     }
 
     // ---- the one pick cycle (OP-16 / OP-13 / OP-21) ----
@@ -4014,25 +4049,25 @@ class Editor(
      * click selects" — the group/member reach and the jamb-vs-leg alternative are entries in one list rather
      * than two remembered states (OP-16, OP-21).
      */
-    private fun selectPick(c: Candidate): String =
+    private fun selectPick(c: Candidate): Msg =
         when (c) {
             is Candidate.Whole -> {
                 val members = doc.groupMembers(c.group)
                 select(members, c.primary)
                 selectedGroup = c.group
                 if (c.group.placed) {
-                    "Group ${c.group.name} is placed: dragging moves its frame (x / y / angle in the panel)"
+                    Msgs.statusOnePickCycleGroupIsPlacedDraggingMoves(name = c.group.name)
                 } else {
-                    "Group ${c.group.name}: ${members.size} element${if (members.size == 1) "" else "s"}"
+                    Msgs.statusOnePickCycleGroupSelected(name = c.group.name, count = members.size)
                 }
             }
             is Candidate.One -> {
                 select(listOf(c.element), c.element)
                 val g = doc.groupOf(c.element)
                 when {
-                    g == null -> ""
-                    g.placed -> "${doc.nameOf(c.element)} alone (of group ${g.name}) — dragging it moves it inside the frame"
-                    else -> "${doc.nameOf(c.element)} alone (of group ${g.name})"
+                    g == null -> Msg.EMPTY
+                    g.placed -> Msgs.statusOnePickCycleAloneGroupDraggingItMoves(name = doc.nameOf(c.element), name2 = g.name)
+                    else -> Msgs.statusOnePickCycleAloneGroup(name = doc.nameOf(c.element), name2 = g.name)
                 }
             }
             is Candidate.Opening -> {
@@ -4046,22 +4081,22 @@ class Editor(
      * the next)`. A lone candidate gets nothing appended, so the everyday click reads exactly as before.
      */
     private fun cycleNote(
-        base: String,
+        base: Msg,
         pile: PickPile,
         i: Int,
-    ): String {
+    ): Msg {
         val n = pile.candidates.size
         if (n <= 1) return base
-        val head = base.ifEmpty { pickLabel(pile.candidates[i]) }
-        return "$head (${i + 1} of $n here — click again for the next)"
+        val head = if (base == Msg.EMPTY) pickLabel(pile.candidates[i]) else base
+        return Msgs.statusOnePickCycleHereClickAgainNext(head = head, i = i + 1, n = n)
     }
 
     /** What one candidate is called, for the cycle's own note. */
-    private fun pickLabel(c: Candidate): String =
+    private fun pickLabel(c: Candidate): Msg =
         when (c) {
-            is Candidate.Whole -> "group ${c.group.name}"
-            is Candidate.One -> elementLabel(c.element)
-            is Candidate.Opening -> "opening on leg ${c.jamb.interval.legIndex + 1} of ${doc.nameOf(c.jamb.path.footprint)}"
+            is Candidate.Whole -> Msgs.notePickGroup(name = c.group.name)
+            is Candidate.One -> Msg.text(elementLabel(c.element))
+            is Candidate.Opening -> Msgs.statusOnePickCycleOpeningLeg(legIndex = c.jamb.interval.legIndex + 1, name = doc.nameOf(c.jamb.path.footprint))
         }
 
     /** Step the cycle on, from wherever the last click left it. */
@@ -4075,7 +4110,7 @@ class Editor(
             } else {
                 0
             }
-        statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
+        statusMsg = cycleNote(selectPick(pile.candidates[i]), pile, i)
         cycleIndex = i
         cycleCount = pile.candidates.size
         changed()
@@ -4104,11 +4139,11 @@ class Editor(
         val hits = HitTest.within(doc, ev(), from, to, proj(), ghostElements())
         val kept = if (marqueeAdds) selectedElements else emptyList()
         select(kept + hits.filter { it !in kept }, hits.lastOrNull() ?: selection)
-        statusHint =
+        statusMsg =
             when {
-                selected.isEmpty() -> "Nothing in the box"
-                selected.size == 1 -> selectionLabel() + " selected"
-                else -> "${selected.size} elements selected"
+                selected.isEmpty() -> Msgs.statusOnePickCycleNothingBox()
+                selected.size == 1 -> Msgs.statusOnePickCycleSelectedSuffix(label = selectionLabel())
+                else -> Msgs.statusOnePickCycleElementsSelected(count = selected.size)
             }
     }
 
@@ -4130,7 +4165,7 @@ class Editor(
             val s = pathSnap(world)
             snapHint = s.takeIf { it.linked }
             // a lingering note would otherwise outrank the snap label, which is about the *next* click
-            if (snapHint != null) statusHint = ""
+            if (snapHint != null) statusMsg = null
             hoverWorld = snapHint?.pos ?: world
             refreshPreview()
             changed()
@@ -4138,7 +4173,7 @@ class Editor(
         }
         if (placesAPoint()) {
             snapHint = snap(world).takeIf { it.linked }
-            if (snapHint != null) statusHint = ""
+            if (snapHint != null) statusMsg = null
             // the click will land on the snap, so that is where the preview is drawn from
             refreshToolPreview(snapHint?.pos ?: world)
             changed()
@@ -4167,7 +4202,7 @@ class Editor(
                 j.handle(doc).drag(world - grabOffset, ev())
                 // the clamp is the document's to explain, and it appears and disappears as the drag crosses
                 // the leg's end rather than lingering afterwards
-                statusHint = doc.takeNote() ?: describeJamb(j)
+                statusMsg = doc.takeNoteMsg() ?: describeJamb(j)
                 changed()
             }
             dragTarget != null -> {
@@ -4188,7 +4223,7 @@ class Editor(
                 joinHints = flattened.mapNotNull { (path, i) -> legPoint(path.legs[i]) }
                 if (flattened.isNotEmpty()) {
                     val n = flattened.size
-                    statusHint = "Release to join — ${if (n == 1) "the flattened corner" else "$n flattened corners"} will be removed (Alt to keep)"
+                    statusMsg = Msgs.statusOnePickCycleReleaseJoinWillBeRemoved(ifWord = if (n == 1) Msgs.statusOnePickCycleFlattenedCorner() else Msgs.statusOnePickCycleFlattenedCorners(n = n))
                 }
                 changed()
             }
@@ -4252,7 +4287,7 @@ class Editor(
                 selected.add(toggle)
                 selection = toggle
             }
-            statusHint = if (selected.isEmpty()) "Nothing selected" else "${selected.size} element${if (selected.size == 1) "" else "s"} selected"
+            statusMsg = if (selected.isEmpty()) Msgs.statusOnePickCycleNothingSelected() else Msgs.statusOnePickCycleElementSelected(count = selected.size)
             changed() // a release otherwise repaints only when the drag changed the model
         }
         // The click half of the pick: this is where the cycle steps (and where a placed group's deferred pick
@@ -4264,7 +4299,7 @@ class Editor(
             // specific than any label here (why an element cannot be dragged, for one) — so a first click's
             // note is kept and only the deferred pick and the cycle's steps produce a new one.
             if (deferred || i != 0) {
-                statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
+                statusMsg = cycleNote(selectPick(pile.candidates[i]), pile, i)
                 changed()
             }
             cycleAt = screen
@@ -4289,12 +4324,12 @@ class Editor(
                 // three outcomes — the reason is the document's, and the same one a path click reports
                 // the document's own sentence when it has one (it does since the weld speaks for the *tool*
                 // too), so the note is consumed here rather than surfacing on the next unrelated operation
-                statusHint =
-                    if (ok) doc.takeNote() ?: "Joined ${doc.nameOf(dragged)} onto ${doc.nameOf(weld)}" else joinRefused(dragged, weld)
+                statusMsg =
+                    if (ok) doc.takeNoteMsg() ?: Msgs.statusOnePickCycleJoinedOnto(name = doc.nameOf(dragged), name2 = doc.nameOf(weld)) else joinRefused(dragged, weld)
                 changed()
             } else if (attach != null) {
                 val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
-                statusHint = if (ok) "Attached ${doc.nameOf(dragged)} to ${doc.nameOf(attach)}" else joinRefused(dragged, attach)
+                statusMsg = if (ok) Msgs.statusOnePickCycleAttached(name = doc.nameOf(dragged), name2 = doc.nameOf(attach)) else joinRefused(dragged, attach)
                 changed()
             }
         }
@@ -4306,7 +4341,7 @@ class Editor(
             select(members, members.firstOrNull())
             selectedGroup = movedFrame
             checkpoint()
-            statusHint = "Moved ${movedFrame.name}"
+            statusMsg = Msgs.statusOnePickCycleMoved(name = movedFrame.name)
             changed()
         }
         // an opening's slide commits like every other drag: one operation, one undo step. What the status
@@ -4319,7 +4354,7 @@ class Editor(
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
                 select(listOf(it), it)
-                statusHint = "Joined into ${doc.nameOf(it)} — the flattened corner is gone"
+                statusMsg = Msgs.statusOnePickCycleJoinedFlattenedCornerIsGone(name = doc.nameOf(it))
                 changed()
             }
             // the release is where a drag commits — moves, welds, attaches and joins are one operation
@@ -4331,9 +4366,9 @@ class Editor(
     private fun joinRefused(
         dragged: Element,
         target: Element,
-    ): String {
+    ): Msg {
         val why = doc.connectRefusal(dragged, target)
-        return "Can't join ${doc.nameOf(dragged)} onto ${doc.nameOf(target)}${if (why == null) "" else ": $why"}"
+        return Msgs.statusOnePickCycleCanTJoinOnto(name = doc.nameOf(dragged), name2 = doc.nameOf(target), why = why?.let { Msgs.statusGeneralColonReason(reason = it) } ?: Msg.EMPTY)
     }
 
     /** Whether the pointer travelled far enough since the press for the gesture to count as a drag. */
@@ -4426,12 +4461,11 @@ class Editor(
     ) {
         val h = el.handle as? HeightPointHandle ?: return
         val ev = ev()
-        statusHint =
+        statusMsg =
             if (h.liftFrom(at, proj(), ev) == null) {
-                "${doc.nameOf(el)}: the view looks along its height line, so the height cannot be read here " +
-                    "(it is held). Orbit a little and drag again."
+                Msgs.statusOnePickCycleViewLooksAlongItsHeight(name = doc.nameOf(el))
             } else {
-                "${doc.nameOf(el)} height ${Format.num(h.fields().firstOrNull()?.read(ev)?.mm ?: 0.0)} mm"
+                Msgs.statusOnePickCycleHeightMm(name = doc.nameOf(el), num = Format.num(h.fields().firstOrNull()?.read(ev)?.mm ?: 0.0))
             }
     }
 
@@ -4467,17 +4501,17 @@ class Editor(
     }
 
     /** What an opening reads as in the status bar: its two leg-relative values, in the panel's units. */
-    private fun describeJamb(jamb: Jamb): String {
+    private fun describeJamb(jamb: Jamb): Msg {
         val ev = ev()
         val pos = ev.valueOf(jamb.interval.position) as? ScalarValue
         val width = ev.valueOf(jamb.interval.width) as? ScalarValue
-        val where = "${Format.num(pos?.q?.mm ?: 0.0)} mm along leg ${jamb.interval.legIndex + 1}"
-        val edge = if (jamb.atEnd) "far jamb sets the width" else "near jamb slides the opening"
+        val where = Msgs.statusOnePickCycleMmAlongLeg(num = Format.num(pos?.q?.mm ?: 0.0), legIndex = jamb.interval.legIndex + 1)
+        val edge = if (jamb.atEnd) Msgs.statusOnePickCycleFarJambSetsWidth() else Msgs.statusOnePickCycleNearJambSlidesOpening()
         // what the grab took the gesture *from*, for the whole gesture — see [jambStoleFrame]
         val instead =
-            jambStoleFrame?.let { " (this opening, not group ${it.name} — grab the wall away from a jamb to move the frame)" }
-                ?: ""
-        return "Opening at $where, ${Format.num(width?.q?.mm ?: 0.0)} mm wide — $edge$instead"
+            jambStoleFrame?.let { Msgs.statusOnePickCycleThisOpeningNotGroupGrab(name = it.name) }
+                ?: Msg.EMPTY
+        return Msgs.statusOnePickCycleOpeningMmWide(theWhere = where, num = Format.num(width?.q?.mm ?: 0.0), edge = edge, instead = instead)
     }
 
     /** Where a (possibly zero-length) leg sits, for marking it on the canvas. */
@@ -4540,7 +4574,7 @@ class Editor(
             // because a point that lights up for everything else and not for this one reads as a glitch
             if (doc.joinWouldCycle(dragged, point)) {
                 clearMagnet()
-                statusHint = "Can't join ${doc.nameOf(dragged)} onto ${doc.nameOf(point)}: ${doc.nameOf(point)} already follows ${doc.nameOf(dragged)}."
+                statusMsg = Msgs.statusOnePickCycleCanTJoinOntoAlready(name = doc.nameOf(dragged), name2 = doc.nameOf(point))
                 return
             }
             weldTarget = point
@@ -4578,7 +4612,7 @@ class Editor(
         val base =
             doc.thickNetworkBase(tn) ?: run {
                 // an ortho-carrier wall names the tool that *does* extend it — never a silent refusal
-                statusHint = doc.takeNote() ?: "That wall cannot be extended with ${doc.toolDef(toolId)?.label}"
+                statusMsg = doc.takeNoteMsg() ?: Msgs.statusOnePickCycleThatWallCannotBeExtended(toolDef = doc.toolDef(toolId)?.label ?: "")
                 changed()
                 return true
             }
@@ -4592,10 +4626,8 @@ class Editor(
         // user reads is the number the wall has (the step keeps it either way)
         activeScalar = base.thickness
         val n = base.curves.size
-        statusHint =
-            "Extending wall ${doc.displayName(tn.footprint)} ($n carrier curve${if (n == 1) "" else "s"}, " +
-            "thickness ${base.thickness.name}): click the curves to add — Enter (or the wall again) re-stamps " +
-            "it, Esc leaves it as it is"
+        statusMsg =
+            Msgs.statusOnePickCycleExtendingWallCarrierCurveThickness(displayName = doc.displayName(tn.footprint), n = n, name = base.thickness.name)
         changed()
         return true
     }
@@ -4604,12 +4636,11 @@ class Editor(
     private fun midSequenceWallPick(
         tool: ToolDef,
         world: Vec2,
-    ): String? {
+    ): Msg? {
         if (!tool.extendsResult || filledSlots == 0) return null
         val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { doc.thickNetworkOf(it) != null } ?: return null
         if (doc.thickNetworkOf(hit) === extending) return null
-        return "Pick the wall first to extend it: ${doc.displayName(hit)} is a wall, not a carrier curve. " +
-            "Press Enter to finish this one, then click ${doc.displayName(hit)} as the first pick."
+        return Msgs.statusOnePickCyclePickWallFirstExtendIt(displayName = doc.displayName(hit))
     }
 
     /**
@@ -4622,9 +4653,9 @@ class Editor(
         val name = doc.nameOf(tn.footprint)
         val text =
             doc.thickNetworkExtension(tn, pickedElements.toList(), pickedSides.map { Tools.sideOf(it) }, pickedClicks.toList())
-        val said = doc.takeNote() // read before the adopt below replaces the document that said it
+        val said = doc.takeNoteMsg() // read before the adopt below replaces the document that said it
         if (text == null) {
-            statusHint = said ?: "Extending $name was refused"
+            statusMsg = said ?: Msgs.statusOnePickCycleExtendingWasRefused(name = name)
             resetPicks()
             changed()
             return true
@@ -4633,14 +4664,14 @@ class Editor(
             try {
                 DocumentFormat.load(text)
             } catch (e: Exception) {
-                statusHint = "Extending $name failed: ${e.message}"
+                statusMsg = Msgs.statusOnePickCycleExtendingFailed(name = name, message = e.message ?: "")
                 resetPicks()
                 changed()
                 return true
             }
         adopt(fresh)
         checkpoint()
-        statusHint = said ?: "Wall $name: $was -> ${tn.legCount} carrier curves"
+        statusMsg = said ?: Msgs.statusOnePickCycleWallCarrierCurves(name = name, was = was, legCount = tn.legCount)
         changed()
         return true
     }
@@ -4665,29 +4696,29 @@ class Editor(
             )
         val scalars = toolScalars(tool)
         when {
-            scalars == null -> statusHint = scalarPrompt(tool)
+            scalars == null -> statusMsg = scalarPrompt(tool)
             filledSlots >= tool.minPicks -> {
                 // one transaction, exactly as the single-shot runner's build is (OP-27) — a repeating tool
                 // has collected more clicks, so it has more to take back, not less
                 val refusal =
-                    transacted(tool.label) {
+                    transacted(Msg.text(tool.label)) {
                         doc.runTool(tool, picks, scalars)
                     }
                 if (refusal != null) {
-                    statusHint = refusal
+                    statusMsg = refusal
                     changed()
                     return true
                 }
                 checkpoint()
-                statusHint = doc.takeNote() ?: ""
+                statusMsg = doc.takeNoteMsg()
             }
             // in the tool's *own* word for what it collects ([ToolDef.roleOf]), not the hardcoded "curve" this
             // used to say: a repeating tool need not gather curves at all — a curve in space gathers points.
             // The role goes in parentheses rather than being pluralized, because a slot name is a phrase
             // ("point in space") and there is no rule that puts an s in the right place inside one.
             else ->
-                statusHint =
-                    "${tool.label}: needs at least ${tool.minPicks} pick${if (tool.minPicks == 1) "" else "s"} (${tool.roleOf(0)})"
+                statusMsg =
+                    Msgs.statusOnePickCycleNeedsLeastPick(name = tool.label, minPicks = tool.minPicks, roleOf = tool.roleOf(0))
         }
         resetPicks()
         changed()
@@ -4722,18 +4753,18 @@ class Editor(
         // its joints and the second one is only known once the next piece is known
         val chain = ArrayList<Pair<Element, Vec2>>()
         var closed = false
-        var stop: String? = null
+        var stop: Msg? = null
         // a chain cannot visit more pieces than the document has
         var budget = doc.elements.size + 1
         while (budget-- > 0) {
             val cur = chain.lastOrNull()?.first ?: start
             val next = doc.continuationsFrom(cur, entered, ev)
             if (next.isEmpty()) {
-                stop = "nothing continues past ${doc.nameOf(cur)}"
+                stop = Msgs.statusOnePickCycleNothingContinuesPast(name = doc.nameOf(cur))
                 break
             }
             if (next.size > 1) {
-                stop = "${next.size} pieces meet past ${doc.nameOf(cur)}, so the boundary forks there — pick the one you mean"
+                stop = Msgs.statusOnePickCyclePiecesMeetPastSoBoundary(count = next.size, name = doc.nameOf(cur))
                 break
             }
             val step = next.single()
@@ -4744,11 +4775,11 @@ class Editor(
                 break
             }
             if (pickedElements.any { it === step.piece } || chain.any { it.first === step.piece }) {
-                stop = "the boundary rejoins ${doc.nameOf(step.piece)}, which is already in it"
+                stop = Msgs.statusOnePickCycleBoundaryRejoinsWhichIsAlready(name = doc.nameOf(step.piece))
                 break
             }
             if (step.piece.kind == ElementKind.CIRCLE || step.piece.kind == ElementKind.ELLIPSE) {
-                stop = "${doc.nameOf(step.piece)} continues there, but which piece of a closed curve the boundary takes is a choice — click it"
+                stop = Msgs.statusOnePickCycleContinuesThereButWhichPiece(name = doc.nameOf(step.piece))
                 break
             }
             chain.add(step.piece to step.at)
@@ -4756,7 +4787,7 @@ class Editor(
         }
         if (chain.isEmpty()) {
             // a fork is worth saying even when nothing was followed: it is why the tool went quiet
-            if (stop != null && stop.contains("forks")) statusHint = "$stop ($filledSlots picked)"
+            if (stop != null && stop.contains("forks")) statusMsg = Msgs.statusOnePickCycleStopPicked(stop = stop, count = filledSlots)
             return
         }
         for ((i, link) in chain.withIndex()) {
@@ -4775,14 +4806,13 @@ class Editor(
         if (closed) {
             val n = filledSlots
             finishRepeatingTool()
-            statusHint = "Followed the boundary round through $n pieces and closed it"
+            statusMsg = Msgs.statusOnePickCycleFollowedBoundaryRoundThroughPieces(n = n)
             return
         }
         val last = pickedElements.last()
         val why = stop?.let { " — $it" } ?: ""
-        statusHint =
-            "Followed ${chain.size} piece${if (chain.size == 1) "" else "s"} to ${doc.nameOf(last)} " +
-            "($filledSlots picked)$why; click the next piece, or Enter to close"
+        statusMsg =
+            Msgs.statusOnePickCycleFollowedPiecePickedClickNext(count = chain.size, name = doc.nameOf(last), filledSlots = filledSlots, why = why)
     }
 
     /**
@@ -4836,15 +4866,14 @@ class Editor(
     ): Boolean = !slot.typedOnly || pendingTypedParams.any { it === e }
 
     /** What is still missing for [tool]'s scalar inputs, in the user's terms. */
-    private fun scalarPrompt(tool: ToolDef): String {
+    private fun scalarPrompt(tool: ToolDef): Msg {
         val have = scalarPicks.size
         val wanted = tool.scalars
         // only the slots that have no default: a defaulted one is not what the tool is waiting for, and
         // asking for it would read as an instruction rather than an offer
         val missing = wanted.drop(have).filter { it.default == null }
         val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ") { it.name }} picked)"
-        return "${tool.label}: type ${missing.joinToString(", then ") { it.name }}, then click (or press Enter) — " +
-            "or click a parameter or measurement in the panel$had"
+        return Msgs.statusOnePickCycleTypeThenClickPressEnter(name = tool.label, list = missing.joinToString(", then ") { it.name }, had = had)
     }
 
     /** The structural count [tool] will build with — see [count]. Zero for a tool that needs none. */
@@ -4855,19 +4884,16 @@ class Editor(
         // a tool that cuts *the part of this face space* (OP-17) has nothing to cut in the plan — refused
         // here rather than at completion, so the reason is the one the user reads
         if (tool.facePartOperand && doc.facePartTip() == null) {
-            statusHint =
+            statusMsg =
                 if (doc.activeSpace.parallel || doc.activeSpace.isStation) {
                     // a plane that passes through nothing (GitHub #9, and a station the same way, OP-26): the
                     // same sentence, without a line to name
-                    "${tool.label} needs a part to cut into, and ${doc.activeSpace.name} passed through no solid " +
-                        "when it was made — Extrude builds a solid on this plane instead, or Subtract one from a part"
+                    Msgs.statusOnePickCycleNeedsPartCutPassedThrough(name = tool.label, name2 = doc.activeSpace.name)
                 } else if (doc.activeSpace.isDatum) {
                     // a datum plane with no part (GitHub #6): honest, and it names the operation that does work
-                    "${tool.label} needs a part to cut into, and ${doc.activeSpace.name}'s line " +
-                        "(${doc.activeSpace.hinge?.let { doc.nameOf(it) }}) is part of no solid — Extrude builds a solid on this plane instead"
+                    Msgs.statusOnePickCycleNeedsPartCutLineIs(name = tool.label, name2 = doc.activeSpace.name, name3 = doc.activeSpace.hinge?.let { doc.nameOf(it) } ?: "")
                 } else {
-                    "${tool.label} works on a face: use Sketch on face to pick a solid's edge first, " +
-                        "then draw and cut there"
+                    Msgs.statusOnePickCycleWorksFaceUseSketchFace(name = tool.label)
                 }
             changed()
             return
@@ -5027,35 +5053,40 @@ class Editor(
             // state the drawing does not show. So the ghost is not silently skipped either — the one thing a
             // refusal owes is a name and a way forward, and both are here.
             val ghost = ghostUnder(world)
-            statusHint =
+            statusMsg =
                 when {
                     refused != null -> refused
                     ghost != null ->
-                        "${doc.nameOf(ghost)} is hidden — a tool builds only on what is in the drawing; " +
-                            "Show it first. ${tool.help}"
+                        Msgs.statusOnePickCycleIsHiddenToolBuildsOnly(name = doc.nameOf(ghost), help = tool.help)
                     // A **subject** slot ([SlotKind]) is the one kind of miss that has to explain itself
                     // rather than merely report itself: every other point slot would have placed something
                     // here, so "nothing happened" is the surprise. Said in the tool's own role word, and
                     // ending in the help, which is where each of these tools states *why* it cannot place.
                     Tools.needsExistingPoint(slot) ->
-                        "${tool.label} needs an existing ${tool.roleOf(slotIndex)} — click one; nothing was placed. ${tool.help}"
+                        Msgs.statusOnePickCycleNeedsExistingClickOneNothing(name = tool.label, roleOf = tool.roleOf(slotIndex), help = tool.help)
                     // …in the tool's own word for what it wants, so a curve in space says "hit no point in
                     // space" rather than asking for a curve it does not collect
-                    tool.repeating -> "That click hit no ${tool.roleOf(0)} — $filledSlots picked so far. ${tool.help}"
+                    tool.repeating -> Msgs.statusOnePickCycleThatClickHitNoPicked(roleOf = tool.roleOf(0), filledSlots = filledSlots, help = tool.help)
                     // A **solid** slot's miss has something better to say than "nothing pickable", and it is
                     // the one thing the canvas cannot show: *where* a body is clickable (OP-22, retiring
                     // session 16's parked cut). One canvas shows one space, so a solid is reached either by
                     // its footprint — drawn in the space its sketch was drawn in — or by its section, where a
                     // working plane cuts it. The generic sentence stays for every slot with nothing better.
                     slot == SlotKind.SOLID ->
-                        "That click hit no ${tool.roleOf(slotIndex)} — a solid is clicked by its footprint in the " +
-                            "space it was sketched in, by its section where a working plane cuts it, or on the body " +
-                            "itself in the 3D view." +
-                            // …and the way out is only offered by a tool that has one: a switch drops the picks
-                            // of every other ([setActiveSpace]), so promising otherwise would be a lie.
-                            (if (tool.crossSpace) " Switch the sketch plane — the picks are kept — and click it there." else "") +
-                            " ${tool.help}"
-                    else -> "That click hit nothing pickable — ${tool.help}"
+                        // …and the way out is only offered by a tool that has one: a switch drops the picks
+                        // of every other ([setActiveSpace]), so promising otherwise would be a lie.
+                        Msgs.statusOnePickCycleThatClickHitNoSolid2(
+                            roleOf = tool.roleOf(slotIndex),
+                            clause0 =
+                                Msg.joined(
+                                    listOf(
+                                        if (tool.crossSpace) Msgs.statusOnePickCycleSwitchSketchPlanePicksAre() else Msg.EMPTY,
+                                        Msgs.statusOnePickCycleHelpSuffix(help = tool.help),
+                                    ),
+                                    "",
+                                ),
+                        )
+                    else -> Msgs.statusOnePickCycleThatClickHitNothingPickable(help = tool.help)
                 }
             changed()
             return
@@ -5077,7 +5108,7 @@ class Editor(
         }
 
         if (tool.repeating) {
-            statusHint = "${tool.help} ($filledSlots picked)"
+            statusMsg = Msgs.statusOnePickCyclePicked(help = tool.help, filledSlots = filledSlots)
             // two picks fix the direction, so from there the boundary can be followed wherever it is not
             // a choice — see [extendBoundaryPicks]
             if (tool.followsBoundary && filledSlots >= 2) extendBoundaryPicks()
@@ -5088,10 +5119,10 @@ class Editor(
             // A tool still missing a scalar **keeps its picks** and says what it wants: the number can then
             // be typed (or a parameter picked) and the tool finishes with the clicks already in. Throwing
             // the picks away was the older answer, and it made the geometry pay for a value's absence.
-            if (!maybeCompleteTool(world)) statusHint = scalarPrompt(tool)
+            if (!maybeCompleteTool(world)) statusMsg = scalarPrompt(tool)
         } else {
-            val fed = pickedGroup?.let { groupFedNote(it) + " " } ?: ""
-            statusHint = "${optionalTaken(tool, slot, slotIndex)}$fed${tool.help} (${stillNeeded(tool)} more)"
+            val fed = pickedGroup?.let { Msgs.statusGeneralFedPrefix(fed = groupFedNote(it)) } ?: Msg.EMPTY
+            statusMsg = Msgs.statusOnePickCycleMore(optionalTaken = optionalTaken(tool, slot, slotIndex), fed = fed, help = tool.help, stillNeeded = stillNeeded(tool))
         }
         changed()
     }
@@ -5193,16 +5224,14 @@ class Editor(
         // …and family laws armed while a tool with no drawing to read completes: refused by name, never
         // dropped, for [armedFamilyLaws]' own reason (OP-26, session 79)
         if (armedFamilyLaws.isNotEmpty() && !tool.carriesLaws) {
-            statusHint =
-                "${tool.label} reads no section per station — the laws you typed belong to *Sweep (profile " +
-                "along a curve)*, whose section is a drawing. Clear the rows under *Formulas over t*, or arm that"
+            statusMsg =
+                Msgs.statusOnePickCycleReadsNoSectionPerStation(name = tool.label)
             changed()
             return true
         }
         if (armedLaw != null && !tool.carriesLaw) {
-            statusHint =
-                "${tool.label} carries no size law over a run — the law you typed belongs to *Tube along a " +
-                "curve* or *Sweep (profile along a curve)*. Clear the *Section law* field, or arm one of those"
+            statusMsg =
+                Msgs.statusOnePickCycleCarriesNoSizeLawOver(name = tool.label)
             changed()
             return true
         }
@@ -5215,7 +5244,7 @@ class Editor(
         // whether the gesture ends up replicated, refused or suppressed — and so the refusal can name the
         // input that stopped it rather than being discovered halfway through a fan.
         val plan = doc.replicationOf(tool, picks)
-        var orbitNote: String? = plan?.refusal
+        var orbitNote: Msg? = plan?.refusal
         var replicated = false
         // a tool may *create a sketch space* and make it active (Sketch plane, GitHub #6) — the view then has
         // to follow it here, exactly as [faceClick] does for Sketch on face, because switching the canvas is
@@ -5224,7 +5253,7 @@ class Editor(
         // …and the whole of it runs as one transaction (OP-27): every route below either leaves a step that
         // owns what it made, or leaves the document as it was — see [transacted]
         val refusal =
-            transacted(tool.label) {
+            transacted(Msg.text(tool.label)) {
                 // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
                 // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps].
                 // Riding a pattern comes **first** all the same (#18): an orbit carries *any* geometry-creating
@@ -5235,7 +5264,7 @@ class Editor(
                 if (plan?.gesture != null && !snapEnabled) {
                     // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
                     // sentence one level up: this feature is a one-off (a keyway, a single flat).
-                    orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
+                    orbitNote = Msgs.statusOnePickCycleNotReplicatedAltKeepsIt(name = plan.pattern.name)
                     once()
                 } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
                     replicated = true
@@ -5243,13 +5272,13 @@ class Editor(
                     // …and, when the gesture touched a level it could not be carried through, which one and why
                     // (#18): losing depth is a surprise the same way a refusal to fan at all is
                     val short = plan.deeper?.let { " — $it" } ?: ""
-                    orbitNote = "${tool.label}: ${plan.total} copies round pattern ${plan.pattern.name}$fan$short"
+                    orbitNote = Msgs.statusOnePickCycleCopiesRoundPattern(name = tool.label, total = plan.total, name2 = plan.pattern.name, fan = fan, short = short)
                 } else {
                     once()
                 }
             }
         if (refusal != null) {
-            statusHint = refusal
+            statusMsg = refusal
             changed()
             return true
         }
@@ -5260,12 +5289,12 @@ class Editor(
         // re-stamp precedent, GitHub #7's mechanism).
         val restamped = doc.takeRestamp()
         if (restamped != null) {
-            val said = doc.takeNote() // read before the adopt below replaces the document that said it
+            val said = doc.takeNoteMsg() // read before the adopt below replaces the document that said it
             val fresh =
                 try {
                     DocumentFormat.load(restamped)
                 } catch (e: Exception) {
-                    statusHint = "${tool.label} failed: ${e.message}"
+                    statusMsg = Msgs.statusOnePickCycleFailed(name = tool.label, message = e.message ?: "")
                     resetPicks()
                     changed()
                     return true
@@ -5273,7 +5302,7 @@ class Editor(
             adopt(fresh)
             checkpoint()
             resetPicks()
-            statusHint = said ?: tool.label
+            statusMsg = said ?: Msg.text(tool.label)
             changed()
             return true
         }
@@ -5288,20 +5317,19 @@ class Editor(
         // A tool that only *rewires* changes nothing the canvas can show (OP-4 case b: a point made relative
         // sits exactly where it did), so a silent success reads the same as a silent refusal. The document says
         // what happened — one channel, not a case per tool here.
-        val note = doc.takeNote()
+        val note = doc.takeNoteMsg()
         val group =
             if (fedGroup == null) {
                 null
             } else {
                 // the copies are deliberately *not* grouped (see OP-16's as-built note), so say it here
                 // rather than leave the user to discover it by clicking one
-                "${tool.label}: ${picks.count} instances of group ${fedGroup.name}'s $members element" +
-                    "${if (members == 1) "" else "s"} — the copies are not grouped"
+                Msgs.statusOnePickCycleInstancesGroupElementCopiesAre(name = tool.label, count = picks.count, name2 = fedGroup.name, members = members)
             }
         // an orbit's own note comes second to what the document said about the geometry it built, except when
         // the document said nothing — and a *refusal* to replicate leads, since it is the surprise
-        statusHint =
-            listOfNotNull(
+        statusMsg =
+            listOfNotNull<Msg>(
                 orbitNote.takeIf { !replicated },
                 note,
                 group,
@@ -5309,7 +5337,7 @@ class Editor(
                 // ...and, last, where the user now *is*: a tool that opened a space says its conventions,
                 // which is the one thing the canvas cannot show about a plane it is looking straight at
                 entered?.let { spaceNote(it) },
-            ).joinToString(" — ")
+            ).let { Msg.joined(it, " — ") }
         changed()
         return true
     }
@@ -5495,10 +5523,10 @@ class Editor(
      * user pointed at a face, and quietly opening a space on some other face whose footprint edge was near the
      * cursor would be the silent wrong answer this route exists to remove.
      */
-    private fun faceUnderRay(world: Vec2): Pair<Pair<Element, Int>?, String?>? {
+    private fun faceUnderRay(world: Vec2): Pair<Pair<Element, Int>?, Msg?>? {
         val hit = rayHit(world) ?: return null
         val (piece, why) = doc.faceAddressAt(hit.element, hit.at, hit.along, hit.sag, ev())
-        if (piece == null) return null to (why ?: "no face of ${doc.nameOf(hit.element)} can carry a sketch here")
+        if (piece == null) return null to (why ?: Msgs.statusOnePickCycleNoFaceCanCarrySketch(name = doc.nameOf(hit.element)))
         return (hit.element to piece) to null
     }
 
@@ -5566,7 +5594,7 @@ class Editor(
             }
         val cand = doc.sectionCandidateNear(world, tolWorld(), ev(), want) ?: return false
         if (cand.refusal != null) {
-            pickRefusal = "${cand.provenance} cannot be an input: ${cand.refusal}"
+            pickRefusal = Msgs.statusOnePickCycleCannotBeInput(provenance = cand.provenance, refusal = cand.refusal)
             return false
         }
         // A straight-curve slot must not silently take an arc, and vice versa — so the kind is checked against
@@ -5590,19 +5618,18 @@ class Editor(
             }
         if (!fits) {
             pickRefusal =
-                "${cand.provenance} is cut as ${if (k == ElementKind.SEGMENT) "a straight edge" else "a curve"} " +
-                "there, which this pick cannot use — click another piece of the section"
+                Msgs.statusOnePickCycleIsCutThereWhichThis(provenance = cand.provenance, ifWord = if (k == ElementKind.SEGMENT) Msgs.statusOnePickCycleStraightEdge() else Msgs.statusOnePickCycleACurve())
             return false
         }
         val el = doc.takeSectionInput(cand)
         if (el == null) {
-            pickRefusal = doc.takeNote() ?: "${cand.provenance} cannot be taken as an input here"
+            pickRefusal = doc.takeNoteMsg() ?: Msgs.statusOnePickCycleCannotBeTakenInputHere(provenance = cand.provenance)
             return false
         }
         pickedElements.add(el)
         // the solid is named too since a plane cuts every ancestor (GitHub #9): "corner #2 of the top face"
         // says which corner, not of what, and with two sections on screen that is the ambiguous half
-        statusHint = "Anchored on ${cand.provenance} of ${doc.nameOf(cand.solid)}"
+        statusMsg = Msgs.statusOnePickCycleAnchored(provenance = cand.provenance, name = doc.nameOf(cand.solid))
         return true
     }
 }

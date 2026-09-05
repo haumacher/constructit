@@ -17,6 +17,7 @@ import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -109,7 +110,7 @@ class PlaneSectionTest {
         val faces = assertNotNull(Section3.faces(cylinder()).first)
         assertEquals(3, faces.size, "one side, two caps")
         assertNull(faces[0].plane)
-        assertTrue(faces[0].reason!!.contains("cylinder"), faces[0].reason!!)
+        assertTrue(faces[0].reason!!.contains("cylinder"), "${faces[0].reason!!}")
     }
 
     /** A pyramid's four lateral faces are named — and every one of them is flat. */
@@ -128,7 +129,7 @@ class PlaneSectionTest {
     fun aMeshOnlySolidNamesNoFaces() {
         val (fs, why) = Section3.faces(Feature3.MeshBoolean(BoolOp.SUBTRACT))
         assertNull(fs)
-        assertTrue(why!!.contains("mesh-only"), why)
+        assertTrue(why!!.contains("mesh-only"), "$why")
     }
 
     // ---- the degenerate section: the plane lies ON a face ----
@@ -244,7 +245,7 @@ class PlaneSectionTest {
         val sec = Section3.sectionOf(solidOf(cylinder(r = 30.0, h = 80.0)), Plane3(Vec3.ZERO, Vec3.X, Vec3.Z))
         val side = sec.edges[0]
         assertNull(side.curve, "two rulings are two curves, and one index is one curve")
-        assertTrue(side.reason!!.contains("2 separate pieces"), side.reason!!)
+        assertTrue(side.reason!!.contains("2 separate pieces"), "${side.reason!!}")
         assertTrue(sec.drawn.size >= 2, "both rulings are drawn even though neither is named")
     }
 
@@ -258,7 +259,7 @@ class PlaneSectionTest {
         val sec = Section3.sectionOf(fake, Plane3(Vec3(0.0, 0.0, 10.0), Vec3.X, Vec3.Y))
         assertTrue(sec.drawn.isNotEmpty(), "it draws")
         assertTrue(sec.edges.isEmpty() && sec.corners.isEmpty(), "and names nothing")
-        assertTrue(sec.inputsRefusal!!.contains("mesh-only"), sec.inputsRefusal!!)
+        assertTrue(sec.inputsRefusal!!.contains("mesh-only"), "${sec.inputsRefusal!!}")
         assertTrue(sec.approximated)
     }
 

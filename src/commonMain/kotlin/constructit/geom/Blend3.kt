@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
@@ -34,19 +36,22 @@ enum class BlendKind {
     ;
 
     /** The word a refusal and a status line use. */
-    val word: String get() =
+    val word: Msg get() =
         when (this) {
-            FILLET -> "fillet"
-            CHAMFER -> "chamfer"
-            PROFILE -> "profile blend"
+            FILLET -> Msgs.wordBlendFillet()
+            CHAMFER -> Msgs.wordBlendChamfer()
+            PROFILE -> Msgs.wordBlendProfile()
         }
 
+    /** The branch this kind selects in an ICU `select` — the enumeration inside a sentence (OP-29). */
+    val selector: String get() = name.lowercase()
+
     /** What the scalar this kind takes is called — the drawn profile itself, for the general tier. */
-    val sizeWord: String get() =
+    val sizeWord: Msg get() =
         when (this) {
-            FILLET -> "radius"
-            CHAMFER -> "setback"
-            PROFILE -> "profile"
+            FILLET -> Msgs.wordBlendSizeRadius()
+            CHAMFER -> Msgs.wordBlendSizeSetback()
+            PROFILE -> Msgs.wordBlendSizeProfile()
         }
 }
 
@@ -120,16 +125,20 @@ data class BlendSection(val kind: BlendKind, val size: Double, val profile: List
         }
 
     /** How a refusal names the size that would fit — a number of millimetres, or a fraction of the drawing. */
-    fun fitPhrase(k: Double): String =
+    fun fitPhrase(k: Double): Msg =
         if (kind != BlendKind.PROFILE) {
-            "about ${Frames3.mm(size * k)} mm"
+            Msgs.phraseBlendAboutSize(mm = Frames3.mm(size * k))
         } else {
-            "about ${Frames3.mm(k * 100.0)}% of the profile you drew"
+            Msgs.phraseBlendAboutFraction(percent = Frames3.mm(k * 100.0))
         }
 
     /** How a refusal names the size this section *is*. */
-    fun sizePhrase(): String =
-        if (kind != BlendKind.PROFILE) "of ${kind.sizeWord} ${Frames3.mm(size)} mm" else "of that profile"
+    fun sizePhrase(): Msg =
+        if (kind != BlendKind.PROFILE) {
+            Msgs.phraseBlendOfSize(sizeWord = kind.sizeWord, mm = Frames3.mm(size))
+        } else {
+            Msgs.phraseBlendOfThatProfile()
+        }
 }
 
 /**
@@ -246,23 +255,23 @@ object Blend3 {
         whole: Boolean,
         address: Int,
         sameRun: ((SolidEdge, SolidEdge) -> Boolean)? = null,
-    ): Pair<List<Int>?, String?> {
+    ): Pair<List<Int>?, Msg?> {
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
         if (!whole) {
             if (address < 0 || address >= edges.size) {
-                return null to "this solid has no edge #${address + 1} (it has ${edges.size})"
+                return null to Msgs.refusalBlendThisSolidHasNoEdge(address = address + 1, count = edges.size)
             }
             return runThrough(edges, address, sameRun) to null
         }
         val (faces, whyFaces) = Section3.faces(feature)
         if (faces == null) return null to whyFaces
         if (address < 0 || address >= faces.size) {
-            return null to "this solid has no face #${address + 1} (it has ${faces.size})"
+            return null to Msgs.refusalBlendThisSolidHasNoFace(address = address + 1, count = faces.size)
         }
         val face = faces[address].name
         val hits = edges.indices.filter { edges[it].between.has(face) }
-        if (hits.isEmpty()) return null to "${face.label} has no edges to blend"
+        if (hits.isEmpty()) return null to Msgs.refusalBlendHasNoEdgesBlend(name = face.label)
         // **A face gesture takes the edges of that face that are still creases** (session 80). Two kinds are
         // not: one an earlier rounding already took (it keeps its index and its carrier and says so —
         // [SolidEdge.reason]), and a **rail of a round**, where a band hands over to the face it is tangent
@@ -273,9 +282,7 @@ object Blend3 {
         val live = hits.filter { edges[it].reason == null && !smoothRail(feature, it) }
         if (live.isEmpty()) {
             return null to
-                "every edge of ${face.label} has already been rounded, so there is nothing left there to " +
-                "break — pick a face that still has a sharp edge on it, or change the size on the rounding " +
-                "that took them"
+                Msgs.refusalBlendEveryEdgeHasAlreadyBeen(name = face.label)
         }
         return live to null
     }
@@ -403,13 +410,13 @@ object Blend3 {
      * The edge as a **curve in space** — the lift (OP-26), so the sweep carries the blend along the exact
      * carrier the edge already is: a straight one stays a segment, a cap edge's arc stays an [Curve3Element.Arc3].
      */
-    fun edgePath(edge: SolidEdge): Pair<Path3?, String?> = pathOf(edge)
+    fun edgePath(edge: SolidEdge): Pair<Path3?, Msg?> = pathOf(edge)
 
-    private fun pathOf(edge: SolidEdge): Pair<Path3?, String?> =
+    private fun pathOf(edge: SolidEdge): Pair<Path3?, Msg?> =
         when (val g = edge.geom) {
             is EdgeGeom.Straight -> {
                 if ((g.b - g.a).length() <= Geom3.WELD_TOL) {
-                    null to "${edge.name.label} is a single point, so there is no crease along it to blend"
+                    null to Msgs.refusalBlendIsSinglePointSoThere(name = edge.name.label)
                 } else {
                     Path3(listOf(Curve3Element.Seg3(g.a, g.b))) to null
                 }
@@ -418,17 +425,15 @@ object Blend3 {
                 when (g.piece) {
                     is ProfileElement.EllipseE, is ProfileElement.EllipticArcE ->
                         null to
-                            "${edge.name.label} is an ellipse, which this drawing carries no exact curve in space for — " +
-                            "blend a straight or circular edge"
+                            Msgs.refusalBlendIsEllipseWhichThisDrawing(name = edge.name.label)
                     is ProfileElement.BezierE ->
                         null to
-                            "${edge.name.label} is a spline, whose normal section turns along it — blend a straight " +
-                            "or circular edge"
+                            Msgs.refusalBlendIsSplineWhoseNormalSection(name = edge.name.label)
                     else -> {
                         val closed = g.piece is ProfileElement.CircleE
                         val path = Intersect3.liftedRun(listOf(g.piece), g.plane, closed).first
                         if (path.elements.isEmpty()) {
-                            null to "${edge.name.label} has no length, so there is no crease along it to blend"
+                            null to Msgs.refusalBlendHasNoLengthSoThere(name = edge.name.label)
                         } else {
                             path to null
                         }
@@ -461,7 +466,7 @@ object Blend3 {
         tangent: Vec3,
         e1: Vec3,
         e2: Vec3,
-    ): Pair<FilletLeg?, String?> {
+    ): Pair<FilletLeg?, Msg?> {
         fun local(p: Vec3) = Vec2((p - at).dot(e1), (p - at).dot(e2))
 
         fun direction(d: Vec3): Vec2? {
@@ -469,18 +474,18 @@ object Blend3 {
             return if (q.length() <= DIR_EPS) null else q.normalized()
         }
 
-        fun ruling(d: Vec3): Pair<FilletLeg?, String?> {
-            val q = direction(d) ?: return null to "${patch.name.label} lies along that edge rather than crossing it"
+        fun ruling(d: Vec3): Pair<FilletLeg?, Msg?> {
+            val q = direction(d) ?: return null to Msgs.refusalBlendLiesAlongThatEdgeRather(name = patch.name.label)
             return FilletLeg.of(Line(Vec2(0.0, 0.0), q)) to null
         }
 
         fun circleAbout(
             axisPoint: Vec3,
             axis: Vec3,
-        ): Pair<FilletLeg?, String?> {
+        ): Pair<FilletLeg?, Msg?> {
             val c = axisPoint + axis * ((at - axisPoint).dot(axis))
             val r = (at - c).length()
-            if (r <= Geom3.WELD_TOL) return null to "${patch.name.label} closes on the axis at that edge, so it traces no circle there"
+            if (r <= Geom3.WELD_TOL) return null to Msgs.refusalBlendClosesAxisThatEdgeSo(name = patch.name.label)
             return FilletLeg.of(Circle(local(c), r)) to null
         }
 
@@ -488,7 +493,7 @@ object Blend3 {
         if (plane != null) return ruling(tangent.cross(plane.normal.normalized()))
         val surface =
             patch.surface
-                ?: return null to (patch.reason ?: "${patch.name.label} has no surface this blend can be a function of")
+                ?: return null to (patch.reason ?: Msgs.refusalBlendHasNoSurfaceThisBlend(name = patch.name.label))
         val axis = surface.axis.normalized()
         val alongAxis = abs(axis.dot(tangent))
         // the axis **line** lies in the normal plane exactly when the edge runs across the axis and the axis
@@ -496,21 +501,21 @@ object Blend3 {
         val throughAxis = alongAxis <= 1e-7 && abs((surface.origin - at).dot(tangent)) <= RIGID_TOL
         return when (val band = surface.band) {
             is Revolve3.Band.Degenerate ->
-                null to "${patch.name.label} lies on the axis of revolution, so there is no surface to blend against"
-            is Revolve3.Band.Unnamed -> null to "${patch.name.label} is ${band.label}, which this blend has no section for"
+                null to Msgs.refusalBlendLiesAxisRevolutionSoThere(name = patch.name.label)
+            is Revolve3.Band.Unnamed -> null to Msgs.refusalBlendIsWhichThisBlendHas(name = patch.name.label, name2 = band.label)
             is Revolve3.Band.Planar -> ruling(tangent.cross(axis))
             is Revolve3.Band.Cylinder ->
                 when {
                     alongAxis >= 1.0 - 1e-7 -> circleAbout(surface.origin, axis)
                     throughAxis -> ruling(axis)
-                    else -> conic(patch, "a cylinder")
+                    else -> conic(patch, Msgs.nameBandCylinder())
                 }
             is Revolve3.Band.Cone ->
                 when {
                     alongAxis >= 1.0 - 1e-7 -> circleAbout(surface.origin, axis)
                     abs((surface.origin + axis * band.sApex - at).dot(tangent)) <= RIGID_TOL ->
                         ruling(at - (surface.origin + axis * band.sApex))
-                    else -> conic(patch, "a cone")
+                    else -> conic(patch, Msgs.nameBandCone())
                 }
             // a plane cuts a sphere in a circle whichever way it is turned, which is the one band with no case
             is Revolve3.Band.Sphere -> {
@@ -519,7 +524,7 @@ object Blend3 {
                 val inPlane = centre - tangent * h
                 val r = (at - inPlane).length()
                 if (r <= Geom3.WELD_TOL) {
-                    null to "${patch.name.label} closes to a point at that edge, so it traces no circle there"
+                    null to Msgs.refusalBlendClosesPointThatEdgeSo(name = patch.name.label)
                 } else {
                     FilletLeg.of(Circle(local(inPlane), r)) to null
                 }
@@ -531,24 +536,22 @@ object Blend3 {
                         val onAxis = surface.origin + axis * band.sc
                         val radial = (at - onAxis).let { it - axis * it.dot(axis) }
                         if (radial.length() <= Geom3.WELD_TOL) {
-                            null to "${patch.name.label} meets its own axis at that edge"
+                            null to Msgs.refusalBlendMeetsItsOwnAxisThat(name = patch.name.label)
                         } else {
                             FilletLeg.of(Circle(local(onAxis + radial.normalized() * band.rc), band.minor)) to null
                         }
                     }
-                    else -> conic(patch, "a torus")
+                    else -> conic(patch, Msgs.nameBandTorus())
                 }
         }
     }
 
     private fun conic(
         patch: FacePatch,
-        what: String,
-    ): Pair<FilletLeg?, String?> =
+        what: Msg,
+    ): Pair<FilletLeg?, Msg?> =
         null to
-            "${patch.name.label} is $what standing askew to that edge, so the plane square to the edge cuts it in a " +
-            "conic rather than in a line or a circle — this blend rounds a crease whose section is one of those, " +
-            "and a section that is neither is a future extension"
+            Msgs.refusalBlendIsStandingAskewThatEdge(name = patch.name.label, what = what)
 
     /** Whether two traces read in two stations' frames are the **same** trace — the rigidity the sweep needs. */
     private fun same(
@@ -569,22 +572,21 @@ object Blend3 {
     private fun creaseOf(
         feature: Feature3,
         edge: SolidEdge,
-    ): Pair<Crease?, String?> {
+    ): Pair<Crease?, Msg?> {
         // an edge a blend already consumed keeps its index and its carrier, but it is no longer a crease of
         // the body — so building on it is refused in the words the dressed list put there (slice 3)
         edge.reason?.let { return null to it }
         val (faces, whyFaces) = Section3.faces(feature)
         if (faces == null) return null to whyFaces
-        val face1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to "this solid has no ${edge.between.a.label}"
-        val face2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to "this solid has no ${edge.between.b.label}"
+        val face1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to Msgs.refusalBlendThisSolidHasNo(name = edge.between.a.label)
+        val face2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to Msgs.refusalBlendThisSolidHasNo(name = edge.between.b.label)
         if (face1.name == face2.name) {
             return null to
-                "${edge.name.label} is a seam where a face meets itself rather than a crease between two faces, " +
-                "so there is nothing there to break"
+                Msgs.refusalBlendIsSeamWhereFaceMeets(name = edge.name.label)
         }
         val (path, whyPath) = pathOf(edge)
         if (path == null) return null to whyPath
-        val t0 = Curves3.tangentAt(path.elements.first(), 0.0) ?: return null to "${edge.name.label} has no direction to sweep along"
+        val t0 = Curves3.tangentAt(path.elements.first(), 0.0) ?: return null to Msgs.refusalBlendHasNoDirectionSweepAlong(name = edge.name.label)
         val e1 = referenceOf(edge, t0)
         val stations = ArrayList<Station>()
         var length = 0.0
@@ -595,7 +597,7 @@ object Blend3 {
                 stations.add(Station(Frames3.pointAt(el, f), t, t.cross(e1).normalized()))
             }
         }
-        if (stations.isEmpty()) return null to "${edge.name.label} has no direction to sweep along"
+        if (stations.isEmpty()) return null to Msgs.refusalBlendHasNoDirectionSweepAlong(name = edge.name.label)
         // the **reference station** is the middle one, and its traces are the section that gets swept: the
         // others are read only to check that it is the same section there, which is what makes sweeping one
         // rigid wedge a claim rather than an assumption
@@ -604,16 +606,14 @@ object Blend3 {
         var leg2: FilletLeg? = null
         for ((k, st) in stations.withIndex()) {
             val (a, whyA) = traceOf(face1, st.at, st.tangent, e1, st.e2)
-            if (a == null) return null to "${edge.name.label}: $whyA"
+            if (a == null) return null to Msgs.refusalQualified(name = edge.name.label, reason = whyA ?: Msg.EMPTY)
             val (b, whyB) = traceOf(face2, st.at, st.tangent, e1, st.e2)
-            if (b == null) return null to "${edge.name.label}: $whyB"
+            if (b == null) return null to Msgs.refusalQualified(name = edge.name.label, reason = whyB ?: Msg.EMPTY)
             val known1 = leg1
             val known2 = leg2
             if (known1 != null && known2 != null && (!same(known1, a) || !same(known2, b))) {
                 return null to
-                    "the section square to ${edge.name.label} changes along it — this blend sweeps one rigid " +
-                    "section, so an edge whose section varies (a revolve's cap edge over a slanted or curved " +
-                    "profile piece) is a future extension rather than something to approximate"
+                    Msgs.refusalBlendSectionSquareChangesAlongIt(name = edge.name.label)
             }
             if (known1 == null || k == at) {
                 leg1 = a
@@ -665,22 +665,21 @@ object Blend3 {
         crease: Crease,
         mesh: Mesh3,
         reach: Double,
-    ): Pair<Triple<Int, Int, Boolean>?, String?> {
-        val n1 = normalOf(crease.leg1) ?: return null to "${crease.edge.name.label}: ${crease.face1.name.label} has no side at that edge"
-        val n2 = normalOf(crease.leg2) ?: return null to "${crease.edge.name.label}: ${crease.face2.name.label} has no side at that edge"
+    ): Pair<Triple<Int, Int, Boolean>?, Msg?> {
+        val n1 = normalOf(crease.leg1) ?: return null to Msgs.refusalBlendHasNoSideThatEdge(name = crease.edge.name.label, name2 = crease.face1.name.label)
+        val n2 = normalOf(crease.leg2) ?: return null to Msgs.refusalBlendHasNoSideThatEdge(name = crease.edge.name.label, name2 = crease.face2.name.label)
         var scale = min(reach, crease.length / 2.0)
         crease.leg1.circle?.let { scale = min(scale, it.radius) }
         crease.leg2.circle?.let { scale = min(scale, it.radius) }
         val delta = scale * PROBE_FRACTION
-        if (delta <= Geom3.WELD_TOL) return null to "${crease.edge.name.label} is too small to blend at that size"
+        if (delta <= Geom3.WELD_TOL) return null to Msgs.refusalBlendIsTooSmallBlendThat(name = crease.edge.name.label)
         val found = ArrayList<Pair<Int, Int>>(4)
         for (s1 in listOf(1, -1)) {
             for (s2 in listOf(1, -1)) {
                 val q = n1 * (s1 * delta) + n2 * (s2 * delta)
                 if (sideOf(crease.leg1, q) != s1 || sideOf(crease.leg2, q) != s2) {
                     return null to
-                        "${crease.face1.name.label} and ${crease.face2.name.label} run too nearly tangent at " +
-                        "${crease.edge.name.label} to tell the four sides of it apart"
+                        Msgs.refusalBlendRunTooNearlyTangentTell(name = crease.face1.name.label, name2 = crease.face2.name.label, name3 = crease.edge.name.label)
                 }
                 val w = crease.ref.at + crease.e1 * q.x + crease.ref.e2 * q.y
                 if (Geom3.encloses(mesh, w)) found.add(s1 to s2)
@@ -695,9 +694,7 @@ object Blend3 {
                     .let { Triple(it.first, it.second, false) } to null
             else ->
                 null to
-                    "${crease.edge.name.label} is not a simple crease between ${crease.face1.name.label} and " +
-                    "${crease.face2.name.label} — the material fills ${found.size} of its four sides, and a blend " +
-                    "needs exactly one of them to itself"
+                    Msgs.refusalBlendIsNotSimpleCreaseBetween(name = crease.edge.name.label, name2 = crease.face1.name.label, name3 = crease.face2.name.label, count = found.size)
         }
     }
 
@@ -752,7 +749,7 @@ object Blend3 {
         crease: Crease,
         sec: BlendSection,
         choice: BlendChoice,
-    ): Pair<Wedge?, String?> {
+    ): Pair<Wedge?, Msg?> {
         val loop: Loop
         val t1: Vec2
         val t2: Vec2
@@ -802,16 +799,14 @@ object Blend3 {
         val forward = GeomMath.signedArea(loop) >= 0.0
         val oriented = if (forward) loop else GeomMath.reverseLoop(loop)
         if (abs(GeomMath.signedArea(oriented)) <= Geom3.WELD_TOL * Geom3.WELD_TOL) {
-            return null to "a ${sec.kind.word} ${sec.sizePhrase()} leaves no material at ${crease.edge.name.label}"
+            return null to Msgs.refusalBlendLeavesNoMaterial(word = sec.kind.word, sizePhrase = sec.sizePhrase(), name = crease.edge.name.label)
         }
         // **a section that crosses itself has no region to take away** (GitHub #30's own refusal). Asked of
         // the whole loop rather than of the drawing alone, because a profile that is simple on paper can
         // still cross a leg once it is read in a skewed corner's frame.
         if (sec.kind == BlendKind.PROFILE && crossesItself(oriented)) {
             return null to
-                "that profile crosses itself once it is read in the corner at ${crease.edge.name.label}, so there " +
-                "is no corner region for it to take away — draw a profile that runs from one face to the other " +
-                "without doubling back"
+                Msgs.refusalBlendThatProfileCrossesItselfOnce(name = crease.edge.name.label)
         }
         return Wedge(Region(oriented, emptyList()), t1, t2, blendPieces, forward) to null
     }
@@ -843,21 +838,20 @@ object Blend3 {
         crease: Crease,
         drawn: List<ProfileElement>,
         choice: BlendChoice,
-    ): Pair<List<ProfileElement>?, String?> {
-        if (drawn.isEmpty()) return null to "that profile has no pieces to read"
+    ): Pair<List<ProfileElement>?, Msg?> {
+        if (drawn.isEmpty()) return null to Msgs.refusalBlendThatProfileHasNoPieces()
         if (crease.leg1.line == null || crease.leg2.line == null) {
             return null to
-                "the section square to ${crease.edge.name.label} meets ${
-                    (if (crease.leg1.line == null) crease.face1 else crease.face2).name.label
-                } in a circle rather than in a straight leg, and a drawn profile states its two ends as " +
-                "setbacks along two straight legs — round that edge with Fillet edge or Chamfer edge, whose " +
-                "section is tangent to the curve by construction. A drawn profile against a curved leg is a " +
-                "future extension"
+                Msgs.refusalBlendSectionSquareMeetsCircleRather(
+                    name = crease.edge.name.label,
+                    ifWord =
+                        (if (crease.leg1.line == null) crease.face1 else crease.face2).name.label,
+                )
         }
         // the pieces must actually make one run, or the "two ends" the frame reads are not two ends
         for (i in 0 until drawn.size - 1) {
             if ((GeomMath.startOf(drawn[i + 1]) - GeomMath.endOf(drawn[i])).length() > PROFILE_TOL) {
-                return null to "that profile's piece ${i + 1} does not meet piece ${i + 2}, so it is not one run from face to face"
+                return null to Msgs.refusalBlendThatProfilePieceDoesNot(i = i + 1, i2 = i + 2)
             }
         }
         // …and it must run from one axis to the other: the drawn x-axis *is* one face and the y-axis the
@@ -870,17 +864,13 @@ object Blend3 {
                 abs(head.x) <= PROFILE_TOL && abs(tail.y) <= PROFILE_TOL -> drawn.reversed().map { GeomMath.reverse(it) }
                 else ->
                     return null to
-                        "that profile's ends do not state a setback on each face: they stand at " +
-                        "(${Frames3.mm(head.x)}, ${Frames3.mm(head.y)}) and (${Frames3.mm(tail.x)}, ${Frames3.mm(tail.y)}), " +
-                        "and a profile's two ends must lie on the two axes — one at (x, 0), the other at (0, y). " +
-                        "Move them onto the axes"
+                        Msgs.refusalBlendThatProfileEndsDoNot(mm = Frames3.mm(head.x), mm2 = Frames3.mm(head.y), mm3 = Frames3.mm(tail.x), mm4 = Frames3.mm(tail.y))
             }
         val a = GeomMath.startOf(run.first()).x
         val b = GeomMath.endOf(run.last()).y
         if (a <= PROFILE_TOL || b <= PROFILE_TOL) {
             return null to
-                "that profile states a setback of ${Frames3.mm(a)} and ${Frames3.mm(b)} mm, and a rounding needs a " +
-                "positive setback on each face — move the end that sits on the corner"
+                Msgs.refusalBlendThatProfileStatesSetbackMm(mm = Frames3.mm(a), mm2 = Frames3.mm(b))
         }
         // **inside the corner's own quadrant, or it is a bead** — a profile reaching outside would *add*
         // material at a convex edge, and a section driving two booleans of opposite sign is structure decided
@@ -889,9 +879,7 @@ object Blend3 {
             for (q in GeomMath.tessellatePiece(e, GeomMath.TESS_TOL_MM)) {
                 if (q.x < -PROFILE_TOL || q.y < -PROFILE_TOL) {
                     return null to
-                        "that profile reaches outside the corner between ${crease.face1.name.label} and " +
-                        "${crease.face2.name.label} — a profile that leaves the corner would add material rather " +
-                        "than take it away. To add a bead, sweep a closed section along the edge and fuse it"
+                        Msgs.refusalBlendThatProfileReachesOutsideCorner(name = crease.face1.name.label, name2 = crease.face2.name.label)
                 }
             }
         }
@@ -903,7 +891,7 @@ object Blend3 {
         val cy = if (forward) u2 else u1
         val map = Affine(cx.x, cx.y, cy.x, cy.y, 0.0, 0.0)
         if (abs(map.det) <= DIR_EPS) {
-            return null to "${crease.face1.name.label} and ${crease.face2.name.label} run too nearly parallel at ${crease.edge.name.label} to read a profile in"
+            return null to Msgs.refusalBlendRunTooNearlyParallelRead(name = crease.face1.name.label, name2 = crease.face2.name.label, name3 = crease.edge.name.label)
         }
         val mapped = run.map { GeomMath.transform(it, map) }
         // with the flip the drawn x is the setback on **face 2**, so the run comes out face 2 → face 1 and is
@@ -954,9 +942,8 @@ object Blend3 {
     private fun notFitting(
         crease: Crease,
         sec: BlendSection,
-    ): String =
-        "no ${sec.kind.word} ${sec.sizePhrase()} fits between ${crease.face1.name.label} and " +
-            "${crease.face2.name.label} at ${crease.edge.name.label}"
+    ): Msg =
+        Msgs.refusalBlendNoFitsBetween(word = sec.kind.word, sizePhrase = sec.sizePhrase(), name = crease.face1.name.label, name2 = crease.face2.name.label, name3 = crease.edge.name.label)
 
     /**
      * Whether both tangencies stand **on** their own faces at every station, and the reason with the largest
@@ -1122,9 +1109,8 @@ object Blend3 {
             out: Geom3.MeshBuilder,
         ) = Unit
 
-        override fun label(pieces: List<Piece>): String =
-            "the corner where ${pieces[a].crease.edge.name.label} meets ${pieces[b].crease.edge.name.label} " +
-                "on ${shared.name.label}"
+        override fun label(pieces: List<Piece>): Msg =
+            Msgs.refusalBlendCornerWhereMeets(name = pieces[a].crease.edge.name.label, name2 = pieces[b].crease.edge.name.label, name3 = shared.name.label)
     }
 
     /**
@@ -1188,7 +1174,7 @@ object Blend3 {
     private fun sectionOf(
         crease: Crease,
         wedge: Wedge,
-    ): Pair<Grown?, String?> {
+    ): Pair<Grown?, Msg?> {
         val o = Vec2(0.0, 0.0)
         val arc = wedge.pieces.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }
         val n1 = outwardAt(wedge.t1, wedge.t2)
@@ -1198,7 +1184,7 @@ object Blend3 {
         val region: Region
         val stepped: Boolean
         if (crease.leg1.line != null && crease.leg2.line != null && n1 != null && n2 != null) {
-            val corner = offsetCorner(n1, n2) ?: return null to "the two faces at that crease run too nearly parallel to step off"
+            val corner = offsetCorner(n1, n2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
             val g1 = wedge.t1 + n1 * GROW_MM
             val g2 = wedge.t2 + n2 * GROW_MM
             plain = listOf(o, wedge.t1) + arc + listOf(wedge.t2)
@@ -1227,7 +1213,7 @@ object Blend3 {
             region = wedge.region
             stepped = false
         }
-        if (grown.size < 3) return null to "the rounding's own section has fewer than three corners"
+        if (grown.size < 3) return null to Msgs.refusalBlendRoundingOwnSectionHasFewer()
         // one winding for both, so index k of either ring is the same point of the same section
         return if (Geom3.polygonArea(grown) >= 0.0) {
             Grown(grown, plain, region, stepped) to null
@@ -1340,15 +1326,15 @@ object Blend3 {
         wedge: Wedge,
         choice: BlendChoice,
         sec: BlendSection,
-    ): Pair<Piece?, String?> {
+    ): Pair<Piece?, Msg?> {
         val (section, whySection) = sectionOf(crease, wedge)
-        if (section == null) return null to "${crease.edge.name.label}: $whySection"
+        if (section == null) return null to Msgs.refusalQualified(name = crease.edge.name.label, reason = whySection ?: Msg.EMPTY)
         val grown = section.polygon
         val distinct = ArrayList<Vec2>(grown.size)
         for (q in grown) if (distinct.none { (it - q).length() <= Geom3.WELD_TOL }) distinct.add(q)
         val (caps, whyCaps) = Geom3.triangulate(Geom3.TessRegion(distinct, emptyList()))
         if (caps == null) {
-            return null to "${crease.edge.name.label}: ${whyCaps ?: "the rounding's section cannot be triangulated"}"
+            return null to Msgs.refusalQualified(name = crease.edge.name.label, reason = whyCaps ?: Msgs.refusalBlendSectionCannotBeTriangulated())
         }
         val (back0, back1) = endSteps(crease, choice, sec)
         return Piece(
@@ -1448,7 +1434,7 @@ object Blend3 {
         )
 
         /** What a refusal calls this corner. */
-        fun label(pieces: List<Piece>): String
+        fun label(pieces: List<Piece>): Msg
 
         /**
          * The **faces** this corner adds to the dressed list, in the section's own piece order — empty
@@ -1549,10 +1535,21 @@ object Blend3 {
             }
         }
 
-        override fun label(pieces: List<Piece>): String =
-            "the inside corner where ${pieces[a].crease.edge.name.label} meets ${pieces[b].crease.edge.name.label} " +
-                "on ${shared.name.label}" +
-                (if (extra.isEmpty()) "" else ", turned about ${pieces[extra.first()].crease.edge.name.label}")
+        override fun label(pieces: List<Piece>): Msg =
+            if (extra.isEmpty()) {
+                Msgs.nameBlendInsideCorner(
+                    first = pieces[a].crease.edge.name.label,
+                    second = pieces[b].crease.edge.name.label,
+                    face = shared.name.label,
+                )
+            } else {
+                Msgs.nameBlendInsideCornerTurned(
+                    first = pieces[a].crease.edge.name.label,
+                    second = pieces[b].crease.edge.name.label,
+                    face = shared.name.label,
+                    upright = pieces[extra.first()].crease.edge.name.label,
+                )
+            }
 
         /**
          * Where this corner **ends the upright's own band**, as that band's own section placed on its edge —
@@ -1610,22 +1607,22 @@ object Blend3 {
             name: FaceName,
         ): FacePatch {
             if (sr == null) {
-                return FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
+                return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
             }
             if (leg.pivot != null) {
                 val (frame, map) =
                     axisFrame(piece, leg)
-                        ?: return FacePatch(name, null, emptyList(), "${name.label} has no axis to turn about")
+                        ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoAxisTurnAbout(name = name.label))
                 val mapped =
                     mappedSection(sr, map)
-                        ?: return FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
+                        ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
                 return inCornersWords(Revolve3.bandPatch(frame, mapped, name), name)
             }
             val from = leg.rings.first()
             val to = leg.rings.last()
             val v = to.origin - from.origin
             val len = v.length()
-            if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), "${name.label} has no length")
+            if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
             // the sweep runs along the section frame's own normal, so the run is stated from whichever end
             // it leaves — the same right-handed convention [bandCarrier] states a straight band with
             val u = from.cx.cross(from.cy).normalized()
@@ -1747,8 +1744,8 @@ object Blend3 {
             for ((x, y, z) in patch) out.triangle(x, y, z)
         }
 
-        override fun label(pieces: List<Piece>): String =
-            "the vertex where ${members.joinToString(", ") { pieces[it.first].crease.edge.name.label }} meet"
+        override fun label(pieces: List<Piece>): Msg =
+            Msgs.nameBlendVertexCorner(list = Msg.joined(members.map { pieces[it.first].crease.edge.name.label }, ", "))
 
         /**
          * The ball's own surface, stated as the sphere it is. A **bevelled** vertex states none: its three
@@ -1790,9 +1787,7 @@ object Blend3 {
         return patch.copy(
             name = name,
             reason =
-                "${name.label} is ${patch.surface?.band?.label ?: "a surface this drawing has no name for"} and not " +
-                    "a plane — it is where the rounding's own ball stands, so there is nothing to sketch on there; " +
-                    "put a datum plane where you want to sketch",
+                Msgs.refusalBlendIsNotPlaneItIs(name = name.label, name2 = patch.surface?.band?.label ?: Msgs.nameBandUnnamed()),
         )
     }
 
@@ -2222,7 +2217,7 @@ object Blend3 {
      */
     private fun cornersOf(pieces: List<Piece>): Corners {
         val out = ArrayList<Corner>()
-        var refusal: String? = null
+        var refusal: Msg? = null
         val taken = HashSet<Pair<Int, Boolean>>()
         // **vertices first, and that order is the rule.** A ring is shared by two tubes, so three bands at
         // one point cannot be three crossings; taking the vertex first is what stops two of them claiming
@@ -2298,7 +2293,7 @@ object Blend3 {
      * follow (session 81). Silently building the sharp-upright corner there would sweep a band over material
      * the upright's own rounding took away, which is the defect this holder exists to make impossible.
      */
-    private class Corners(val list: List<Corner>, val refusal: String?)
+    private class Corners(val list: List<Corner>, val refusal: Msg?)
 
     /** The ends of [which] that all stand at one point and are not spoken for, with that point. */
     private fun endsMeeting(
@@ -2349,7 +2344,7 @@ object Blend3 {
         at: Vec3,
         ea: Vec3,
         eb: Vec3,
-    ): Pair<Turn?, String?> {
+    ): Pair<Turn?, Msg?> {
         val a = pieces[i]
         val b = pieces[j]
         val n = shared.plane?.normal?.normalized() ?: return null to null
@@ -2447,25 +2442,20 @@ object Blend3 {
         eb: Vec3,
         total: Double,
         n: Vec3,
-    ): Pair<List<Leg>?, String?> {
+    ): Pair<List<Leg>?, Msg?> {
         val a = pieces[i]
         val up = pieces[u]
         val what =
-            "the inside corner where ${a.crease.edge.name.label} meets ${pieces[j].crease.edge.name.label} " +
-                "on ${shared.name.label}"
+            Msgs.refusalBlendInsideCornerWhereMeets(name = a.crease.edge.name.label, name2 = pieces[j].crease.edge.name.label, name3 = shared.name.label)
         val seg =
             up.seg ?: return null to
-                "${up.crease.edge.name.label} is not one straight run, so $what cannot be turned about it — " +
-                "the pair's section would have to follow a curve that moves along that edge, which is a " +
-                "future extension. Leave that edge sharp, or round it on a body whose upright is straight"
+                Msgs.refusalBlendIsNotOneStraightRun(name = up.crease.edge.name.label, what = what)
         // **the upright has to stand square to the shared face**, or the curve the pair's section follows is
         // not a curve *in* that face at all and there is no pivot to state (OP-3: a refusal, not a guess)
         val along = (seg.end - seg.start).normalized()
         if (abs(abs(along.dot(n)) - 1.0) > 1e-6) {
             return null to
-                "${up.crease.edge.name.label} is not square to ${shared.name.label}, so $what cannot be turned " +
-                "about it — the roundings there are a future extension. Leave that upright sharp, or round " +
-                "it on a body whose upright stands square to that face"
+                Msgs.refusalBlendIsNotSquareSoCannot(name = up.crease.edge.name.label, name2 = shared.name.label, what = what)
         }
         val aOther = otherFace(a, shared) ?: return null to null
         val forward = up.crease.face1.name == aOther.name
@@ -2484,8 +2474,7 @@ object Blend3 {
         val off = start - at
         if ((off - dirA * off.dot(dirA)).length() > RING_TOL || off.dot(dirA) < -RING_TOL) {
             return null to
-                "$what: ${up.crease.edge.name.label}'s rounding does not meet ${a.crease.edge.name.label} " +
-                "along that edge, so there is no set-back for the corner to start from — a future extension"
+                Msgs.refusalBlendRoundingDoesNotMeetAlong(what = what, name = up.crease.edge.name.label, name2 = a.crease.edge.name.label)
         }
         val legs = ArrayList<Leg>()
         var place = Placement(start, a.crease.e1, a.crease.ref.e2)
@@ -2494,7 +2483,7 @@ object Blend3 {
         for (p in curve) {
             val here = plan(GeomMath.startOf(p))
             if ((place.origin - here).length() > RING_TOL) {
-                return null to "$what: ${up.crease.edge.name.label}'s own profile is not one run, so the corner cannot follow it"
+                return null to Msgs.refusalBlendOwnProfileIsNotOne(what = what, name = up.crease.edge.name.label)
             }
             val t0 = tangentOf(p, true) ?: return null to profileTurnRefusal(what, up)
             val d0 = squareTo(world(t0), n, dir, total) ?: return null to profileTurnRefusal(what, up)
@@ -2541,13 +2530,10 @@ object Blend3 {
 
     /** Why a drawn upright's own profile cannot carry the corner, in the corner's own words. */
     private fun profileTurnRefusal(
-        what: String,
+        what: Msg,
         up: Piece,
-    ): String =
-        "$what turns about ${up.crease.edge.name.label}, whose own ${up.sec.kind.word} doubles back or leaves " +
-            "its face square to it — the pair's section would sweep through itself there, so that corner is a " +
-            "future extension. Give that upright a fillet, a chamfer, or a profile that runs one way across " +
-            "the corner"
+    ): Msg =
+        Msgs.refusalBlendTurnsAboutWhoseOwnDoubles(what = what, name = up.crease.edge.name.label, word = up.sec.kind.word)
 
     /** Why the two roundings' end sections do not meet on one ring once the upright is rounded. */
     private fun mismatchedTurn(
@@ -2556,11 +2542,8 @@ object Blend3 {
         j: Int,
         u: Int,
         shared: FacePatch,
-    ): String =
-        "the inside corner where ${pieces[i].crease.edge.name.label} meets ${pieces[j].crease.edge.name.label} " +
-            "on ${shared.name.label} is turned about ${pieces[u].crease.edge.name.label}, and the two roundings " +
-            "do not end on one ring there — a corner is built only where the two are congruent in the face they " +
-            "share. Give both edges the same rounding"
+    ): Msg =
+        Msgs.refusalBlendInsideCornerWhereMeetsIs(name = pieces[i].crease.edge.name.label, name2 = pieces[j].crease.edge.name.label, name3 = shared.name.label, name4 = pieces[u].crease.edge.name.label)
 
     /**
      * One leg that **turns**: [from] carried about [pivot] through [turn], stepped by the one sag rule.
@@ -2871,7 +2854,7 @@ object Blend3 {
         rings: Map<Pair<Int, Boolean>, Placement>,
         butts: Set<Pair<Int, Boolean>>,
         corners: List<Corner>,
-    ): Pair<Mesh3?, String?> {
+    ): Pair<Mesh3?, Msg?> {
         val b = Geom3.MeshBuilder()
         // the corners' own surfaces first, so the tool is one shell before a single tube is drawn
         for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b)
@@ -2880,7 +2863,7 @@ object Blend3 {
         for (c in corners) if (c is Turn && c.extra.isEmpty()) pivots.addAll(c.ends)
         for (at in group) {
             val piece = pieces[at]
-            val seg = piece.seg ?: return null to "${piece.crease.edge.name.label} is not one straight run, so it carries no corner"
+            val seg = piece.seg ?: return null to Msgs.refusalBlendIsNotOneStraightRun2(name = piece.crease.edge.name.label)
             val atStart = rings[at to true]
             val atEnd = rings[at to false]
             val u = (seg.end - seg.start).normalized()
@@ -2906,14 +2889,14 @@ object Blend3 {
             if (atEnd == null) for (t in piece.caps) b.triangle(p1.at(t.a), p1.at(t.b), p1.at(t.c))
         }
         val mesh = b.build()
-        if (mesh.triangles.isEmpty()) return null to "the rounding's own tool has no triangles"
-        if (Geom3.volume(mesh) <= 0.0) return null to "the rounding's own tool encloses no volume"
+        if (mesh.triangles.isEmpty()) return null to Msgs.refusalBlendRoundingOwnToolHasNo()
+        if (Geom3.volume(mesh) <= 0.0) return null to Msgs.refusalBlendRoundingOwnToolEnclosesNo()
         // Closedness, and deliberately **not** [MeshCanon.flap]. The tool is a *union of bands*, and where
         // one of them pivots about an upright ([Turn]) the section's own tangency stands on the pivot axis
         // while its stepped-off twin a micron away sweeps a micron-wide disc round it — so the tool overlaps
         // itself by exactly that micron there, which is a fold in the tool and no fold at all in the body it
         // cuts. A flap is a statement about a *result* (OP-9), and that is where it is asked ([MeshCanon.fault]).
-        MeshCanon.notClosed(mesh)?.let { return null to "the rounding's own tool is not a closed shell: $it" }
+        MeshCanon.notClosed(mesh)?.let { return null to Msgs.refusalBlendRoundingOwnToolIsNot(itWord = it) }
         return mesh to null
     }
 
@@ -2928,15 +2911,15 @@ object Blend3 {
         targets: List<Int>,
         sec: BlendSection,
         onFace: FaceName? = null,
-    ): Pair<List<BlendChoice>?, String?> {
+    ): Pair<List<BlendChoice>?, Msg?> {
         val feature = base.feature
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
         val reach = sec.reach()
-        if (reach <= Geom3.WELD_TOL) return null to "this ${sec.kind.word} has no size at all to run along an edge"
+        if (reach <= Geom3.WELD_TOL) return null to Msgs.refusalBlendThisHasNoSizeAll(word = sec.kind.word)
         val out = ArrayList<BlendChoice>(targets.size)
         for (i in targets) {
-            val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1}"
+            val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge2(i = i + 1)
             val (crease, why) = creaseOf(feature, edge)
             if (crease == null) return null to why
             val (sector, whySector) = sectorOf(crease, base.mesh, reach)
@@ -3045,21 +3028,21 @@ object Blend3 {
          * about, and then it is needed absolutely — see the note at the rebuild below.
          */
         root: Solid3? = null,
-    ): Pair<Solid3?, String?> {
-        if (sections.size < targets.size) return null to "this blend recorded ${sections.size} sections for ${targets.size} edges"
+    ): Pair<Solid3?, Msg?> {
+        if (sections.size < targets.size) return null to Msgs.refusalBlendThisBlendRecordedSectionsEdges(count = sections.size, count2 = targets.size)
         for ((k, sec) in sections.withIndex()) {
             if (k in absent || k >= targets.size) continue
             if (sec.kind != BlendKind.PROFILE && sec.size <= Geom3.WELD_TOL) {
-                return null to "a ${sec.kind.word} needs a positive ${sec.kind.sizeWord} — this one is ${Frames3.mm(sec.size)} mm"
+                return null to Msgs.refusalBlendNeedsPositiveThisOneIs(word = sec.kind.word, sizeWord = sec.kind.sizeWord, mm = Frames3.mm(sec.size))
             }
             if (sec.kind == BlendKind.PROFILE && sec.profile.isEmpty()) {
-                return null to "a ${sec.kind.word} needs a drawn profile to run along the edge"
+                return null to Msgs.refusalBlendNeedsDrawnProfileRunAlong(word = sec.kind.word)
             }
         }
         val feature = base.feature
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
-        if (choices.size < targets.size) return null to "this blend recorded ${choices.size} choices for ${targets.size} edges"
+        if (choices.size < targets.size) return null to Msgs.refusalBlendThisBlendRecordedChoicesEdges(count = choices.size, count2 = targets.size)
         // **Every target prepared first, then the corners, then one tool per group.** The pieces are built
         // in the step's own order, so a blend with no corner in it reaches [Geom3.sweep] exactly as it did
         // before this session and its triangles are the same triangles. A **tombstoned** target is skipped
@@ -3068,7 +3051,7 @@ object Blend3 {
         for ((k, i) in targets.withIndex()) {
             if (k in absent) continue
             val sec = sections[k]
-            val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
+            val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge3(i = i + 1, count = edges.size)
             val (crease, why) = creaseOf(feature, edge)
             if (crease == null) return null to why
             val choice = choices[k]
@@ -3077,9 +3060,14 @@ object Blend3 {
             if (!tangenciesFit(crease, wedge)) {
                 val fits = largestFitting(crease, sec, choice)
                 return null to
-                    "a ${sec.kind.word} ${sec.sizePhrase()} reaches past ${crease.face1.name.label} " +
-                    "or ${crease.face2.name.label} at ${crease.edge.name.label} — the largest that fits there is " +
-                    sec.fitPhrase(fits)
+                    Msgs.refusalBlendReachesPastLargestThatFits(
+                        word = sec.kind.word,
+                        sizePhrase = sec.sizePhrase(),
+                        name = crease.face1.name.label,
+                        name2 = crease.face2.name.label,
+                        name3 = crease.edge.name.label,
+                        fitPhrase = sec.fitPhrase(fits),
+                    )
             }
             val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, sec)
             if (piece == null) return null to whyPiece
@@ -3103,9 +3091,7 @@ object Blend3 {
             val blamed = c.ends.map { pieces[it.first] }.firstOrNull { !it.existing } ?: pieces[c.ends.first().first]
             val fits = largestCornerFitting(pieces)
             return null to
-                "${c.label(pieces)} is too sharp for a ${blamed.sec.kind.word} ${blamed.sec.sizePhrase()} — " +
-                "the corner the roundings share would reach further along an edge than the edge is long. " +
-                "The largest that fits there is ${blamed.sec.fitPhrase(fits)}"
+                Msgs.refusalBlendIsTooSharpCornerRoundings(name = c.label(pieces), word = blamed.sec.kind.word, sizePhrase = blamed.sec.sizePhrase(), fitPhrase = blamed.sec.fitPhrase(fits))
         }
         mixedCorner(pieces, corners)?.let { return null to it }
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
@@ -3115,7 +3101,7 @@ object Blend3 {
         fun apply(
             body: Solid3,
             group: List<Int>,
-        ): Pair<Solid3?, String?> {
+        ): Pair<Solid3?, Msg?> {
             val lead = pieces[group.firstOrNull { !pieces[it].existing } ?: group.first()]
             val (tool, whyTool) =
                 if (group.size == 1 && !(lead.seg != null && lead.stepped)) {
@@ -3137,12 +3123,12 @@ object Blend3 {
                     }
                 }
             if (tool == null) {
-                return null to "${lead.crease.edge.name.label}: ${whyTool ?: "the blend cannot be swept along it"}"
+                return null to Msgs.refusalQualified(name = lead.crease.edge.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
             }
             val op = if (lead.choice.convex) BoolOp.SUBTRACT else BoolOp.UNION
             val (next, whyBool) = Geom3.combine(op, body, tool)
             if (next == null) {
-                return null to "${lead.crease.edge.name.label}: ${whyBool ?: "the blend cannot be applied to this body"}"
+                return null to Msgs.refusalQualified(name = lead.crease.edge.name.label, reason = whyBool ?: Msgs.refusalBlendCannotBeAppliedToBody())
             }
             return next to null
         }
@@ -3199,15 +3185,10 @@ object Blend3 {
         // there is nothing to look up: the operand is only ever needed one rounding further along
         val start =
             (root ?: applyTo.takeIf { base === applyTo && it.feature !is Feature3.Blend }) ?: return null to
-                "${(pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label}: rounding it re-turns a corner an " +
-                "earlier rounding made, and this body has an ordinary boolean under it rather than a chain " +
-                "of roundings — so there is no undressed body to rebuild the chain from. Round that upright " +
-                "before the fusion, or before the faces whose corner it turns"
+                Msgs.refusalBlendRoundingItReTurnsCorner(first = (pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label)
         val ordered =
             orderedGroups(pieces, groups, corners) ?: return null to
-                "${(pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label}: two of this body's roundings each " +
-                "turn the other's corner, so there is no order to apply them in — round one of the two edges " +
-                "in a separate body, or leave one of them sharp"
+                Msgs.refusalBlendTwoThisBodyRoundingsEach(first = (pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label)
         var result = start
         for (group in ordered) {
             val (next, why) = apply(result, group)
@@ -3231,7 +3212,7 @@ object Blend3 {
         sec: BlendSection,
         choices: List<BlendChoice>,
         root: Solid3? = null,
-    ): Pair<Solid3?, String?> = blended(base, applyTo, targets, List(targets.size) { sec }, choices, emptyMap(), root)
+    ): Pair<Solid3?, Msg?> = blended(base, applyTo, targets, List(targets.size) { sec }, choices, emptyMap(), root)
 
     /**
      * **The band along a circular rim, built as what it is: a surface of revolution** (session 82).
@@ -3251,7 +3232,7 @@ object Blend3 {
      * Null where the crease is not one circular arc, or where its axis is not the section's own upright — then
      * the band is not a body of revolution and the sweep is the only construction there is.
      */
-    private fun revolvedBand(piece: Piece): Pair<Solid3?, String?>? {
+    private fun revolvedBand(piece: Piece): Pair<Solid3?, Msg?>? {
         val arc = piece.crease.path.elements.singleOrNull() as? Curve3Element.Arc3 ?: return null
         if (arc.radius <= Geom3.WELD_TOL) return null
         val up = piece.crease.e1.normalized()
@@ -3278,9 +3259,7 @@ object Blend3 {
         val into = -piece.grown.minOf { it.y }
         if (into > arc.radius + Geom3.WELD_TOL) {
             return null to
-                "the profile's reach into the bend (${Frames3.mm(into)} mm) is larger than the bend " +
-                "the run starts with (radius ${Frames3.mm(arc.radius)} mm, ${Frames3.mm(0.0)} mm along " +
-                "the path), so the sweep would pass through itself"
+                Msgs.refusalBlendProfileReachBendMmIs(mm = Frames3.mm(into), mm2 = Frames3.mm(arc.radius), mm3 = Frames3.mm(0.0))
         }
         return Geom3.revolve(Sketch3(plane, listOf(piece.grownRegion)), axisOrigin, axisDir, sweep)
     }
@@ -3338,7 +3317,7 @@ object Blend3 {
     private fun mixedCorner(
         pieces: List<Piece>,
         corners: List<Corner>,
-    ): String? {
+    ): Msg? {
         val claimed = HashSet<Pair<Int, Boolean>>()
         for (c in corners) claimed.addAll(c.ends)
         for (i in pieces.indices) {
@@ -3363,10 +3342,7 @@ object Blend3 {
                                 pieces[k].seg?.let { (it.start - corner).length() <= RING_TOL || (it.end - corner).length() <= RING_TOL } == true
                             }
                         if (here != 2) continue
-                        return "the corner where ${a.crease.edge.name.label} meets ${b.crease.edge.name.label} on " +
-                            "${shared.name.label} carries two roundings that are not the same section on that face — " +
-                            "a corner is built only where the two are congruent there. Give both edges the same " +
-                            "profile, or round only one of the two edges that meet at it"
+                        return Msgs.refusalBlendCornerWhereMeetsCarriesTwo(name = a.crease.edge.name.label, name2 = b.crease.edge.name.label, name3 = shared.name.label)
                     }
                 }
             }
@@ -3414,7 +3390,7 @@ object Blend3 {
         feature: Feature3,
         from: Plane3,
         at: Vec2,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val (faces, why) = Section3.faces(feature)
         if (faces == null) return null to why
         val d = from.normal.normalized()
@@ -3467,7 +3443,7 @@ object Blend3 {
      * One entry per target, in the feature's own order — **null where the rounding was removed** (OP-30's
      * tombstone), so the two derived lists can emit that position's slots and nothing else.
      */
-    private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing?>?, String?> {
+    private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing?>?, Msg?> {
         val (edges, whyEdges) = Section3.edges(f.base)
         if (edges == null) return null to whyEdges
         val out = ArrayList<Dressing?>(f.targets.size)
@@ -3476,11 +3452,11 @@ object Blend3 {
                 out.add(null)
                 continue
             }
-            val sec = f.sections.getOrNull(k) ?: return null to "this blend recorded no section for edge #${i + 1}"
-            val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
+            val sec = f.sections.getOrNull(k) ?: return null to Msgs.refusalBlendThisBlendRecordedNoSection(i = i + 1)
+            val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge3(i = i + 1, count = edges.size)
             val (crease, why) = creaseOf(f.base, edge)
             if (crease == null) return null to why
-            val choice = f.choices.getOrNull(k) ?: return null to "this blend recorded no choice for edge #${i + 1}"
+            val choice = f.choices.getOrNull(k) ?: return null to Msgs.refusalBlendThisBlendRecordedNoChoice(i = i + 1)
             val (wedge, whyWedge) = wedgeOf(crease, sec, choice)
             if (wedge == null) return null to whyWedge
             out.add(Dressing(i, edge, crease, wedge, choice, sec))
@@ -3496,11 +3472,12 @@ object Blend3 {
         f: Feature3.Blend,
         k: Int,
         edge: SolidEdge?,
-    ): String {
-        val what = edge?.name?.label ?: "edge #${f.targets[k] + 1}"
-        return "the ${f.sections.getOrNull(k)?.kind?.word ?: "rounding"} of $what was removed; nothing stands " +
-            "here — the slot is kept for the life of this dressing so that the roundings after it keep their " +
-            "numbers. Round $what itself instead"
+    ): Msg {
+        val what = edge?.name?.label ?: Msgs.nameSolidEdgeIndex(edge = f.targets[k] + 1)
+        return Msgs.refusalBlendWasRemovedNothingStandsHere(
+            getOrNull = f.sections.getOrNull(k)?.kind?.word ?: Msgs.wordBlendRounding(),
+            what = what,
+        )
     }
 
     /**
@@ -3525,7 +3502,7 @@ object Blend3 {
      * their own carriers: a line against a line, a line against a circle, a circle against a circle, all
      * of them the intersections this drawing already computes. Nothing is sampled and nothing is fitted.
      */
-    fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> = f.dressedFaces
+    fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> = f.dressedFaces
 
     /**
      * The derivation itself — run at most **once per feature instance**, behind the memo on
@@ -3533,7 +3510,7 @@ object Blend3 {
      * where it was: [Section3.faces] still asks [dressedFaces], and what changed is only how often the
      * answer has to be worked out.
      */
-    internal fun deriveDressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> {
+    internal fun deriveDressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> {
         derivations++
         val (baseFaces, whyFaces) = Section3.faces(f.base)
         if (baseFaces == null) return null to whyFaces
@@ -3668,11 +3645,11 @@ object Blend3 {
     fun cornerSuperseded(
         f: Feature3.Blend,
         name: FaceName.BlendCorner,
-    ): String? = supersedings(f)[name.edges]
+    ): Msg? = supersedings(f)[name.edges]
 
-    private fun supersedings(f: Feature3.Blend): Map<List<Int>, String> {
+    private fun supersedings(f: Feature3.Blend): Map<List<Int>, Msg> {
         val pieces = piecesOf(f) ?: return emptyMap()
-        val out = HashMap<List<Int>, String>()
+        val out = HashMap<List<Int>, Msg>()
         for (c in cornersOf(pieces).list) {
             if (c.extra.isEmpty()) continue
             val ends = c.ends.map { pieces[it.first].index }.distinct().sorted()
@@ -3680,9 +3657,7 @@ object Blend3 {
             if (whole == ends) continue
             val upright = pieces[c.extra.first()]
             out[ends] =
-                "${FaceName.BlendCorner(ends, 0).label} was re-turned about ${upright.crease.edge.name.label} " +
-                "when that edge was rounded — the ball no longer pivots about a sharp upright there, and " +
-                "${FaceName.BlendCorner(whole, 0).label} stands in its place"
+                Msgs.refusalBlendWasReTurnedAboutWhen(name = FaceName.BlendCorner(ends, 0).label, name2 = upright.crease.edge.name.label, name3 = FaceName.BlendCorner(whole, 0).label)
         }
         return out
     }
@@ -3842,10 +3817,10 @@ object Blend3 {
      * What the rails buy is what makes a chain a chain: after a fillet, *"the edge between the band and the
      * top face"* is a first-class edge that a further blend can be addressed by.
      */
-    fun dressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> = f.dressedEdges
+    fun dressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, Msg?> = f.dressedEdges
 
     /** The derivation itself, run once per feature instance — see [deriveDressedFaces]. */
-    internal fun deriveDressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> {
+    internal fun deriveDressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, Msg?> {
         derivations++
         val (baseEdges, whyEdges) = Section3.edges(f.base)
         if (baseEdges == null) return null to whyEdges
@@ -3863,8 +3838,7 @@ object Blend3 {
                 } else {
                     e.copy(
                         reason =
-                            "${e.name.label} was rounded away by the ${d.sec.kind.word} ${d.sec.sizePhrase()} — " +
-                                "${d.name.label} stands in its place, and its two tangent rails are edges of this body",
+                            Msgs.refusalBlendWasRoundedAwayStandsIts(name = e.name.label, word = d.sec.kind.word, sizePhrase = d.sec.sizePhrase(), name2 = d.name.label),
                     )
                 },
             )
@@ -3993,7 +3967,7 @@ object Blend3 {
             val name = d.nameAt(k)
             when {
                 el == null ->
-                    FacePatch(name, null, emptyList(), "${d.edge.name.label} is a chain of several pieces, so its band has no single surface")
+                    FacePatch(name, null, emptyList(), Msgs.refusalBlendIsChainSeveralPiecesSo(name = d.edge.name.label))
                 // a Bézier, a conic or a function curve in the profile: the band it sweeps is a real
                 // surface and its triangles are exact to the tessellation, but this drawing has no word
                 // for it — so the face keeps its index and carries the reason (OP-15's approximated class)
@@ -4002,8 +3976,7 @@ object Blend3 {
                         name,
                         null,
                         emptyList(),
-                        "${name.label} sweeps a piece of the profile this drawing has no surface for — it draws, " +
-                            "measures, prints and exports, and it offers no sketch plane and no exact section",
+                        Msgs.refusalBlendSweepsPieceProfileThisDrawing(name = name.label),
                     )
                 else -> inBlendsWords(d, bandCarrier(d, el, piece, name))
             }
@@ -4025,7 +3998,7 @@ object Blend3 {
                 val v = el.end - el.start
                 val len = v.length()
                 if (len <= Geom3.WELD_TOL) {
-                    FacePatch(name, null, emptyList(), "${d.edge.name.label} has no length, so its band has no surface")
+                    FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLengthSoIts(name = d.edge.name.label))
                 } else {
                     val u = v * (1.0 / len)
                     Section3.sweptFace(Plane3(el.start, d.crease.e1, u.cross(d.crease.e1)), u, len, piece, name)
@@ -4037,8 +4010,7 @@ object Blend3 {
                         name,
                         null,
                         emptyList(),
-                        "${d.edge.name.label} does not stand square to its own axis, so the band it carries is not a " +
-                            "surface of revolution this drawing has a name for",
+                        Msgs.refusalBlendDoesNotStandSquareIts(name = d.edge.name.label),
                     )
                 Revolve3.bandPatch(frame, sr, name)
             }
@@ -4047,8 +4019,7 @@ object Blend3 {
                     name,
                     null,
                     emptyList(),
-                    "${d.edge.name.label} is neither straight nor circular, so its band is a surface this drawing " +
-                        "has no name for",
+                    Msgs.refusalBlendIsNeitherStraightNorCircular(name = d.edge.name.label),
                 )
         }
     }
@@ -4067,11 +4038,10 @@ object Blend3 {
         patch: FacePatch,
     ): FacePatch {
         if (patch.plane != null || patch.reason == null) return patch
-        val what = patch.surface?.band?.label ?: "a surface this drawing has no name for"
+        val what = patch.surface?.band?.label ?: Msgs.refusalBlendSurfaceThisDrawingHasNo()
         return patch.copy(
             reason =
-                "${d.name.label} is $what and not a plane — it is the ${d.kindWord}, so there is nothing to " +
-                    "sketch on there; put a datum plane where you want to sketch",
+                Msgs.refusalBlendIsNotPlaneItIs2(name = d.name.label, what = what, kind = d.kindWord),
         )
     }
 
@@ -4125,14 +4095,14 @@ object Blend3 {
     private fun railGeom(
         d: Dressing,
         t: Vec2,
-    ): Pair<EdgeGeom?, String?> {
-        val el = soleElement(d.crease) ?: return null to "${d.edge.name.label} is a chain of several pieces, so its rails have no single curve"
+    ): Pair<EdgeGeom?, Msg?> {
+        val el = soleElement(d.crease) ?: return null to Msgs.refusalBlendIsChainSeveralPiecesSo2(name = d.edge.name.label)
         return when (el) {
             is Curve3Element.Seg3 -> {
                 val v = el.end - el.start
                 val len = v.length()
                 if (len <= Geom3.WELD_TOL) {
-                    null to "${d.edge.name.label} has no length"
+                    null to Msgs.refusalBlendHasNoLength(name = d.edge.name.label)
                 } else {
                     val u = v * (1.0 / len)
                     EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, 0.0), worldOnStraight(d.crease, el.start, u, t, len)) to null
@@ -4160,7 +4130,7 @@ object Blend3 {
                     EdgeGeom.OnPlane(Plane3(o, el.u, el.v), ring) to null
                 }
             }
-            else -> null to "${d.edge.name.label} is neither straight nor circular, so its rails have no exact curve"
+            else -> null to Msgs.refusalBlendIsNeitherStraightNorCircular2(name = d.edge.name.label)
         }
     }
 
@@ -4427,20 +4397,17 @@ object Blend3 {
     private fun correctedOutline(
         patch: FacePatch,
         trims: List<Pair<SolidEdge, Double>>,
-    ): Pair<List<ProfileElement>?, String?> {
+    ): Pair<List<ProfileElement>?, Msg?> {
         val plane =
             patch.plane
                 ?: return null to
-                    "${patch.name.label} is not a plane, so the strip the blend takes off it is an offset on a " +
-                    "curved surface — this drawing states that face's own boundary only where it is flat, and " +
-                    "the surface itself is unchanged (a future extension)"
+                    Msgs.refusalBlendIsNotPlaneSoStrip(name = patch.name.label)
         val offsets = HashMap<Int, Double>()
         for ((edge, d) in trims) {
             val hits = patch.outline.indices.filter { sameCurve(plane, patch.outline[it], edge) }
             if (hits.size != 1) {
                 return null to
-                    "${edge.name.label} matches ${hits.size} pieces of ${patch.name.label}'s own boundary, so the " +
-                    "strip the blend takes off it cannot be stated exactly"
+                    Msgs.refusalBlendMatchesPiecesOwnBoundarySo(name = edge.name.label, count = hits.size, name2 = patch.name.label)
             }
             offsets[hits[0]] = (offsets[hits[0]] ?: 0.0) + d
         }
@@ -4448,7 +4415,7 @@ object Blend3 {
         for (chain in chainsOf(patch.outline)) {
             if (chain.none { it in offsets }) continue
             val (fixed, why) = offsetChain(patch.outline, chain, offsets)
-            if (fixed == null) return null to "${patch.name.label}: $why"
+            if (fixed == null) return null to Msgs.refusalQualified(name = patch.name.label, reason = why ?: Msg.EMPTY)
             for ((k, i) in chain.withIndex()) out[i] = fixed[k]
         }
         return out to null
@@ -4466,15 +4433,15 @@ object Blend3 {
         outline: List<ProfileElement>,
         chain: List<Int>,
         offsets: Map<Int, Double>,
-    ): Pair<List<ProfileElement>?, String?> {
+    ): Pair<List<ProfileElement>?, Msg?> {
         val (fixed, code) = GeomMath.offsetCycle(chain.map { outline[it] }, chain.map { offsets[it] ?: 0.0 })
         if (fixed != null) return fixed to null
         return null to
             when (code) {
                 GeomMath.OFFSET_NOT_A_CARRIER ->
-                    "one of the pieces beside the blend is neither a straight run nor an arc, so the join cannot be solved"
-                GeomMath.OFFSET_NO_JUNCTION -> "the blend's new boundary does not meet the piece beside it"
-                else -> "a piece of that boundary is consumed at that size"
+                    Msgs.refusalBlendOnePiecesBesideBlendIs()
+                GeomMath.OFFSET_NO_JUNCTION -> Msgs.refusalBlendBlendNewBoundaryDoesNot()
+                else -> Msgs.refusalBlendPieceThatBoundaryIsConsumed()
             }
     }
 
@@ -4558,9 +4525,8 @@ object Blend3 {
             else -> null
         }
 
-    const val NO_FACE_UNDER_CLICK =
-        "no flat face of this solid lies under that click as this space looks at it — click on the face whose " +
-            "edges you want broken, or orbit until you can see it"
+    val NO_FACE_UNDER_CLICK =
+        Msgs.refusalBlendNoFlatFaceThisSolid()
 
     /**
      * The face of edge [edgeIndex] that [from] **looks at**: of the two the edge separates, the one that is a
@@ -4576,10 +4542,10 @@ object Blend3 {
         feature: Feature3,
         edgeIndex: Int,
         from: Plane3,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
-        val edge = edges.getOrNull(edgeIndex) ?: return null to "this solid has no edge #${edgeIndex + 1}"
+        val edge = edges.getOrNull(edgeIndex) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge4(edgeIndex = edgeIndex + 1)
         val (faces, whyFaces) = Section3.faces(feature)
         if (faces == null) return null to whyFaces
         val d = from.normal.normalized()

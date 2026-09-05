@@ -25,6 +25,7 @@ import constructit.geom.Mesh3
 import constructit.geom.Turn3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -468,11 +469,11 @@ class RevolveIntervalTest {
     fun theStatusLineNamesAnOffsetOnlyWhenThereWillBeOne() {
         val ed = barEditor()
         ed.setTool(Tools.REVOLVE)
-        val whole = ed.currentHelp().substringAfter(" Using ")
+        val whole = ed.currentHelp().render().substringAfter(" Using ")
         assertTrue(whole.startsWith("angle = 360° (default)"), whole)
         assertFalse(whole.contains("offset"), "a complete revolution has no start to offset: $whole")
         ed.type("90")
-        val partial = ed.currentHelp().substringAfter(" Using ")
+        val partial = ed.currentHelp().render().substringAfter(" Using ")
         assertTrue(partial.contains("offset = 0° (default)"), "with an angle stated there is an interval to place: $partial")
     }
 

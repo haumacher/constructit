@@ -102,9 +102,9 @@ class FlapFreeBlendProbeTest {
     ): SolidRef {
         val body = Evaluator().solid(on)
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyTargets)
+        assertNotNull(targets, whyTargets?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(on, on, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 

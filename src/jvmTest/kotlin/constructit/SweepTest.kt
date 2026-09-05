@@ -111,13 +111,13 @@ class SweepTest {
     ): String {
         val (solid, why) = Geom3.sweep(path, up, profile, roll, twist)
         assertNull(solid, "this sweep was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     /** The tessellated area of the profile the mesh is actually made of — what an exact volume is against. */
     private fun tessArea(profile: SweepProfile): Double {
         val (t, why) = Geom3.tessellateRegion(profile.region)
-        return Geom3.tessArea(assertNotNull(t, why))
+        return Geom3.tessArea(assertNotNull(t, why?.render()))
     }
 
     // ---- 1. a tube along a straight segment is a cylinder ----
@@ -171,7 +171,7 @@ class SweepTest {
         // …and it runs straight **up the space's own normal**, so the start reference is the degenerate case
         // too: the projection of +Z perpendicular to +Z is nothing, and the fallback has to answer
         val (frame, why) = Frames3.along(path, up, reach = 5.0)
-        val f = assertNotNull(frame, why)
+        val f = assertNotNull(frame, why?.render())
         assertTrue(f.stations.size >= 2, "a straight run needs two stations and no more")
         for (st in f.stations) {
             assertEquals(0.0, st.curvature, "a straight run has exactly zero curvature — not nearly zero")

@@ -13,6 +13,8 @@ import constructit.geom.Profile
 import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Segment
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 
 /** Apply an affine map to any geometry value, preserving its type (used by mirror/rotate/scale). */
 fun transformValue(
@@ -53,7 +55,7 @@ fun transformValue(
         // *re-parenting* (step 3), which recomposes the frame and keeps the world output fixed — a
         // different operation from mirroring what it carries. Deliberately no rule here rather than a
         // plausible-looking wrong one; the Evaluator turns this into node invalidity (OP-3).
-        is FrameValue -> throw IllegalArgumentException("a placement frame cannot be transformed (OP-16 step 3)")
+        is FrameValue -> throw MsgError(Msgs.refusalTransformFrame())
         // 3D values (OP-17) live in a space this 2D map does not reach. Mirroring a plane or a solid is a
         // real operation, but it needs a 3D transform, and inventing one from a 2D affine (which axis
         // does its reflection line become?) would be a plausible-looking wrong answer. Refused, so the
@@ -63,27 +65,27 @@ fun transformValue(
         // a rotation), while `−I` in space has det = −1, so reflecting a body through a point yields a
         // **mirror-image part** — a different thing to manufacture, and one that has to be said out loud
         // before it can be built by clicking.
-        is PlaneValue -> throw IllegalArgumentException("a sketch plane cannot be transformed by a 2D map (OP-17)")
+        is PlaneValue -> throw MsgError(Msgs.refusalTransformPlane())
         // ...and a height point (OP-25) is a point in space: a 2D map has nothing to say about the axis it
         // stands on. Mirror its base and its plane instead, and the point follows by construction.
-        is Point3Value -> throw IllegalArgumentException("a height point cannot be transformed by a 2D map — mirror its base (OP-25)")
+        is Point3Value -> throw MsgError(Msgs.refusalTransformHeightPoint())
         // ...and a curve in space (OP-26) is the same answer one dimension further: a 2D affine map says
         // nothing about the axis its points stand on. Mirror the points it is built through — the curve is a
         // pure function of them and follows by construction, which is the whole of the parenting rule.
-        is Path3Value -> throw IllegalArgumentException("a curve in space cannot be transformed by a 2D map — mirror the points it runs through (OP-26)")
-        is SketchValue -> throw IllegalArgumentException("a sketch cannot be transformed by a 2D map (OP-17)")
-        is SolidValue -> throw IllegalArgumentException("a solid cannot be transformed by a 2D map (OP-17)")
+        is Path3Value -> throw MsgError(Msgs.refusalTransformSpaceCurve())
+        is SketchValue -> throw MsgError(Msgs.refusalTransformSketch())
+        is SolidValue -> throw MsgError(Msgs.refusalTransformSolid())
         // A section is a *reading* of a solid at a plane (OP-17): what it would mean to mirror one is to
         // mirror the plane, which is the case above. Take the input first, then transform that.
-        is SectionValue -> throw IllegalArgumentException("a section cannot be transformed by a 2D map — mirror its inputs instead (OP-17)")
+        is SectionValue -> throw MsgError(Msgs.refusalTransformSection())
         // …and an intersection's ordered set of curves in space (OP-26, step 6) is a reading of a solid at a
         // plane exactly as a section is, with the curve's own answer above on top of it.
-        is Path3SetValue -> throw IllegalArgumentException("intersection curves cannot be transformed by a 2D map — mirror the solid and the plane instead (OP-26)")
+        is Path3SetValue -> throw MsgError(Msgs.refusalTransformIntersectionCurves())
         // …and a sphere locus (OP-28) is the same answer once more: a 2D affine map says nothing about the
         // axis its centre stands on, and there is no honest image of a sphere in a plane's own coordinates.
         // Mirror the centre — the locus is a pure function of it and of its radius, and follows by
         // construction, which is the parenting rule again.
-        is Sphere3Value -> throw IllegalArgumentException("a sphere locus cannot be transformed by a 2D map — mirror its centre (OP-28)")
+        is Sphere3Value -> throw MsgError(Msgs.refusalTransformSphereLocus())
         // …and its ordered solution sets in space, for the reason the curves above give.
-        is Point3SetValue -> throw IllegalArgumentException("points in space cannot be transformed by a 2D map — mirror the loci they came from (OP-28)")
+        is Point3SetValue -> throw MsgError(Msgs.refusalTransformSpacePoints())
     }

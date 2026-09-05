@@ -13,6 +13,7 @@ import constructit.editor.PointerButton
 import constructit.editor.Tools
 import constructit.editor.writableMaster
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -174,7 +175,7 @@ class GroupCreationWordsTest {
         assertFalse(s.contains("e23"), "so the tail of the drawing is counted, not listed: $s")
 
         // …and it says what to do about it, in the words the dialog uses
-        assertTrue(s.contains(INCLUDE_CLOSURE_LABEL), "the way through is named: $s")
+        assertTrue(s.contains(INCLUDE_CLOSURE_LABEL.render()), "the way through is named: $s")
         assertTrue(s.contains("or leave it flat"), "and so is the other honest answer: $s")
     }
 
@@ -327,7 +328,7 @@ class GroupCreationWordsTest {
         assertTrue(s.startsWith("Can't place base: e1, e2, e4, e6 are also used by"), "got: $s")
         assertTrue(s.contains("e10, e11, e12 and 11 more of the drawing"), "summarized here too: $s")
         assertTrue(s.contains("cannot move independently"), "got: $s")
-        assertTrue(s.contains(INCLUDE_CLOSURE_LABEL), "and names the way through: $s")
+        assertTrue(s.contains(INCLUDE_CLOSURE_LABEL.render()), "and names the way through: $s")
         assertFalse(Regex("\\bn\\d+\\b|\\boc\\d+\\b").containsMatchIn(s), "no internal id: $s")
     }
 

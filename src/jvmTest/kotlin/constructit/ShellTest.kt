@@ -17,6 +17,7 @@ import constructit.geom.Section3
 import constructit.geom.Shell3
 import constructit.geom.SolidFace
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -334,7 +335,7 @@ class ShellTest {
         // …and the twin of the open face is the one entry that says why it is not a face
         val twin = shelled[base.size + top]
         assertNull(twin.plane)
-        assertTrue(assertNotNull(twin.reason).contains("is open, so there is no wall behind it"), twin.reason ?: "")
+        assertTrue(assertNotNull(twin.reason).contains("is open, so there is no wall behind it"), "${twin.reason ?: ""}")
 
         // the pocket floor is the inner twin of the bottom cap, a plane 3 mm up whose normal points into the cavity
         val bottom = base.indexOfFirst { it.name == FaceName.Cap(SolidFace.BOTTOM) }
@@ -368,7 +369,7 @@ class ShellTest {
         val floorAddress = assertNotNull(Section3.addressOfFace(feature, FaceName.ShellInner(bottom)), "the pocket floor is addressed")
         assertTrue(floorAddress >= n + 2, "past the base's own ends: $floorAddress")
         val (patch, whyPatch) = Section3.facePatchOfFootprintPiece(feature, floorAddress)
-        assertNotNull(patch, whyPatch)
+        assertNotNull(patch, whyPatch?.render())
         assertEquals(FaceName.ShellInner(bottom), patch.name, "and that address is the pocket floor")
         assertClose(assertNotNull(patch.plane).origin.z, 3.0, 1e-9)
         // …and the count agrees, so a reader can walk the whole space: the four uprights, the base's two caps,
@@ -393,13 +394,13 @@ class ShellTest {
 
         // straight down onto the rim, 1 mm in from the long edge — that is the wall's top, not the floor
         val (rim, whyRim) = Section3.faceAt(body.feature, Vec3(20.0, 1.0, 20.0), Vec3(0.0, 0.0, -1.0), sag)
-        assertNotNull(rim, whyRim)
+        assertNotNull(rim, whyRim?.render())
         assertEquals(FaceName.Cap(SolidFace.TOP), rim.patch.name, "the rim keeps the top cap's own name and address")
         assertEquals(Section3.addressOfFace(body.feature, FaceName.Cap(SolidFace.TOP)), rim.piece)
 
         // …and the middle of that same cap is now the pocket floor, 3 mm up
         val (floor, whyFloor) = Section3.faceAt(body.feature, Vec3(20.0, 15.0, 3.0), Vec3(0.0, 0.0, -1.0), sag)
-        assertNotNull(floor, whyFloor)
+        assertNotNull(floor, whyFloor?.render())
         assertTrue(floor.patch.name is FaceName.ShellInner, "the ray reaches the inside: ${floor.patch.name.label}")
         assertNotNull(floor.piece, "and it has an address a sketch can be stored at")
     }
@@ -582,7 +583,7 @@ class ShellTest {
         val onAxis = faces(ev, cup).indexOfFirst { it.reason?.contains("lies on the axis of revolution") == true }
         assertTrue(onAxis >= 0, "the cup's profile has a piece on the axis")
         val said = assertNotNull(Shell3.openFaceRefusal(ev.solid(cup).feature, onAxis))
-        assertTrue(said.contains("sweeps no surface at all"), said)
+        assertTrue(said.contains("sweeps no surface at all"), "$said")
         assertTrue(assertNotNull(Shell3.openFaceRefusal(ev.solid(cup).feature, 99)).contains("has no face #100"), "and an index past the list")
     }
 

@@ -106,7 +106,7 @@ class SweepCornerTest {
     ): String {
         val (solid, why) = Geom3.sweep(path, up, profile)
         assertNull(solid, "this sweep was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     /** A body that builds, checked for the one thing every solid in this project owes (OP-9). */
@@ -128,7 +128,7 @@ class SweepCornerTest {
         reach: Double = 3.0,
     ): List<Double> {
         val (frame, why) = Frames3.along(path, up, reach = reach)
-        return assertNotNull(frame, why).stations.filter { it.corner }.map { it.s }
+        return assertNotNull(frame, why?.render()).stations.filter { it.corner }.map { it.s }
     }
 
     // ---- 1. the queue's own route: two corners closer together than the two mitres eating into them ----

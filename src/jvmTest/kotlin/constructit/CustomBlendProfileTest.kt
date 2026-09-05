@@ -20,6 +20,7 @@ import constructit.geom.Section3
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -166,7 +167,7 @@ class CustomBlendProfileTest {
         val body = Evaluator().solid(base)
         val sec = BlendSection(BlendKind.PROFILE, 0.0, sectionOf(profile))
         val (choices, why) = Blend3.choicesFor(body, targets, sec, onFace)
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(base, base, cx.planeXY(), null, BlendKind.PROFILE, whole, address, choices, run = if (whole) emptyList() else targets, profile = profile)
     }
 
@@ -183,7 +184,7 @@ class CustomBlendProfileTest {
     ): SolidRef {
         val body = Evaluator().solid(base)
         val (choices, why) = Blend3.choicesFor(body, listOf(target), BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole = false, address = target, choices = choices)
     }
 
@@ -535,7 +536,7 @@ class CustomBlendProfileTest {
         val body = Evaluator().solid(box)
         val sec = BlendSection(BlendKind.PROFILE, 0.0, sectionOf(profile))
         val (choices, why) = Blend3.choicesFor(body, listOf(rim), sec, top)
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         val out = cx.blend(box, box, cx.planeXY(), null, BlendKind.PROFILE, false, rim, choices, run = listOf(rim), profile = profile)
         return assertNotNull(refusalOf(out), "that profile is refused")
     }
@@ -604,7 +605,7 @@ class CustomBlendProfileTest {
         val profile = polyline(cx, drawn)
         val sec = BlendSection(BlendKind.PROFILE, 0.0, sectionOf(profile))
         val (choices, whyC) = Blend3.choicesFor(body, listOf(rim), sec, null)
-        assertNotNull(choices, whyC)
+        assertNotNull(choices, whyC?.render())
         val out = cx.blend(bar, bar, cx.planeXY(), null, BlendKind.PROFILE, false, rim, choices, run = listOf(rim), profile = profile)
         val why = assertNotNull(refusalOf(out), "a drawn profile against a bore refuses")
         assertTrue("in a circle rather than in a straight leg" in why, why)
@@ -632,7 +633,7 @@ class CustomBlendProfileTest {
         val faces = assertNotNull(Section3.faces(Evaluator().solid(shaped).feature).first, "faces")
         val band = assertNotNull(faces.firstOrNull { it.name is FaceName.BlendBand }, "the band is a face")
         assertNull(band.plane, "there is nothing to sketch on a Bézier band")
-        assertTrue("no surface for" in (band.reason ?: ""), band.reason ?: "no reason")
+        assertTrue("no surface for" in band.reason, "${band.reason ?: "no reason"}")
     }
 
     /** …and an **arc** band still refuses sketch-on-face in the arc's own words. */
@@ -649,7 +650,7 @@ class CustomBlendProfileTest {
         val faces = assertNotNull(Section3.faces(Evaluator().solid(shaped).feature).first, "faces")
         val band = assertNotNull(faces.firstOrNull { it.name is FaceName.BlendBand }, "the band is a face")
         assertNull(band.plane, "a cylinder is not a plane")
-        assertTrue("put a datum plane where you want to sketch" in (band.reason ?: ""), band.reason ?: "no reason")
+        assertTrue("put a datum plane where you want to sketch" in band.reason, "${band.reason ?: "no reason"}")
     }
 
     /** **The profile is an ordinary drawing**: move an end and the body re-cuts, with no node minted. */

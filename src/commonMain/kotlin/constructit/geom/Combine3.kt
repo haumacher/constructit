@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -124,17 +126,15 @@ object Combine3 {
         viewA: List<ProfileElement>,
         planeB: Plane3,
         viewB: List<ProfileElement>,
-    ): Pair<Path3?, String?> {
-        if (viewA.isEmpty() || viewB.isEmpty()) return null to "a view with no curve in it states no run"
+    ): Pair<Path3?, Msg?> {
+        if (viewA.isEmpty() || viewB.isEmpty()) return null to Msgs.refusalCombineViewNoCurveItStates()
         val nA = planeA.normal.normalized()
         val nB = planeB.normal.normalized()
         val axis = nA.cross(nB)
         val sine = axis.length()
         if (sine <= Geom3.PARALLEL_EPS) {
             return null to
-                "these two sketch spaces are parallel, so they have no common direction and there is nothing " +
-                "to combine — the second view would have to be drawn in a space that meets the first one, " +
-                "such as an elevation across the plan"
+                Msgs.refusalCombineTheseTwoSketchSpacesAre()
         }
         val d = axis.normalized()
         val k = nA.dot(nB)
@@ -151,9 +151,7 @@ object Combine3 {
         val hi = min(a.wHi, b.wHi)
         if (hi <= lo + Vec3.EPS) {
             return null to
-                "the two views do not describe the same run: along their common direction the first covers " +
-                "${Frames3.mm(a.wLo)} to ${Frames3.mm(a.wHi)} mm and the second ${Frames3.mm(b.wLo)} to " +
-                "${Frames3.mm(b.wHi)} mm, and those ranges do not overlap — move one of them so that they do"
+                Msgs.refusalCombineTwoViewsDoNotDescribe(mm = Frames3.mm(a.wLo), mm2 = Frames3.mm(a.wHi), mm3 = Frames3.mm(b.wLo), mm4 = Frames3.mm(b.wHi))
         }
 
         val meet = Meeting(nA, nB, k, denom, d)
@@ -166,7 +164,7 @@ object Combine3 {
             if (pieces == null) return null to why
             out.addAll(pieces)
         }
-        if (out.isEmpty()) return null to "the two views share too little of the common direction to make a run"
+        if (out.isEmpty()) return null to Msgs.refusalCombineTwoViewsShareTooLittle()
         val ordered = if (a.reversed) out.reversed().map { it.reversed() } else out
         return Path3(stitched(ordered)) to null
     }
@@ -293,7 +291,7 @@ object Combine3 {
         elements: List<ProfileElement>,
         d: Vec3,
         which: String,
-    ): Pair<View?, String?> {
+    ): Pair<View?, Msg?> {
         val g = Vec2(plane.u.dot(d), plane.v.dot(d))
         val base = plane.origin.dot(d)
         val pieces = ArrayList<Piece>(elements.size)
@@ -308,31 +306,22 @@ object Combine3 {
                 val after = pieces[i].deriv(min(1.0, t + 1e-6)).dot(g)
                 return null to
                     if (before * after < 0.0) {
-                        "the $which view doubles back along the two spaces' common direction at " +
-                            "${Frames3.mm(w)} mm, so a place on the other view answers to more than one place " +
-                            "on it and the two drawings no longer describe one run — break the view there and " +
-                            "combine each part"
+                        Msgs.refusalCombineViewDoublesBackAlongTwo(which = which, mm = Frames3.mm(w))
                     } else {
-                        "the $which view turns to run square to the two spaces' common direction at " +
-                            "${Frames3.mm(w)} mm, where it states no position along that direction at all — " +
-                            "break the view there and combine each part"
+                        Msgs.refusalCombineViewTurnsRunSquareTwo(which = which, mm = Frames3.mm(w))
                     }
             }
             val dw = pieces[i].point(1.0).dot(g) - pieces[i].point(0.0).dot(g)
             if (abs(dw) <= Vec3.EPS) {
                 return null to
-                    "the $which view runs square to the two spaces' common direction, so every point of it " +
-                    "stands at the same place along that direction and there is nothing for the other view " +
-                    "to be matched against — draw it across the run instead"
+                    Msgs.refusalCombineViewRunsSquareTwoSpaces(which = which)
             }
             val s = if (dw > 0.0) 1 else -1
             if (sign == 0) {
                 sign = s
             } else if (s != sign) {
                 return null to
-                    "the $which view doubles back along the two spaces' common direction between its pieces, " +
-                    "so a place on the other view answers to more than one place on it — break the view where " +
-                    "it turns and combine each part"
+                    Msgs.refusalCombineViewDoublesBackAlongTwo2(which = which)
             }
         }
         val ordered = if (sign < 0) pieces.reversed().map { reversedPiece(it) } else pieces
@@ -345,9 +334,7 @@ object Combine3 {
         for (i in 1 until cuts.size) {
             if (cuts[i] <= cuts[i - 1]) {
                 return null to
-                    "the $which view steps back along the two spaces' common direction between its pieces, " +
-                    "so a place on the other view answers to more than one place on it — break the view " +
-                    "where it turns and combine each part"
+                    Msgs.refusalCombineViewStepsBackAlongTwo(which = which)
             }
         }
         return View(plane, g, base, ordered, cuts, sign < 0) to null
@@ -565,7 +552,7 @@ object Combine3 {
         wl: Double,
         wr: Double,
         meet: Meeting,
-    ): Pair<List<List<Vec3>>?, String?> {
+    ): Pair<List<List<Vec3>>?, Msg?> {
         val wm = 0.5 * (wl + wr)
         val ia = a.pieceAt(wm)
         val ib = b.pieceAt(wm)
@@ -669,7 +656,7 @@ object Combine3 {
         wl: Double,
         wr: Double,
         meet: Meeting,
-    ): Pair<List<List<Vec3>>?, String?> {
+    ): Pair<List<List<Vec3>>?, Msg?> {
         val slopeA = minOf(a.slopeAt(ia, paramAtW(a, ia, wl)), a.slopeAt(ia, paramAtW(a, ia, wr)))
         val slopeB = minOf(b.slopeAt(ib, paramAtW(b, ib, wl)), b.slopeAt(ib, paramAtW(b, ib, wr)))
         val masterIsA = slopeA <= slopeB
@@ -707,11 +694,8 @@ object Combine3 {
     }
 
     /** The refusal a cusp comes out as — see [MAX_DEPTH]. */
-    private fun tooSharp(w: Double): String =
-        "the two views cannot be matched into one run near ${Frames3.mm(w)} mm along their common direction: " +
-            "the run turns too sharply there to be stated to ${Frames3.mm(FIT_TOL_MM * 1000.0)} µm, which is " +
-            "what happens where both views turn to run square to that direction at the same place — the run " +
-            "in space comes to a point there, and no curve passes through it"
+    private fun tooSharp(w: Double): Msg =
+        Msgs.refusalCombineTwoViewsCannotBeMatched(mm = Frames3.mm(w), mm2 = Frames3.mm(FIT_TOL_MM * 1000.0))
 
     /**
      * One span, halved until it fits: the cubic through the exact ends and tangents, accepted when its own

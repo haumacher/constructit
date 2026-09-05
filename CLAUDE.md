@@ -51,24 +51,46 @@ disabled without crashing the engine — put such comments on their own line abo
 
 ### Languages (OP-29)
 
-User-visible text of the **chrome** — tool titles, help lines, slot names, category headings, panel labels,
-buttons, the fixed hints — lives in `l10n/app_en.arb` and its translated siblings, never in Kotlin or in
-`index.html`. The English ARB is the source of truth; `:generateMessages` (in `buildSrc/`) compiles every
-bundle into one typed accessor per key in `constructit.l10n.Messages`, and that runs in the ordinary build,
-so **editing an ARB recompiles**. The generated sources are build output and are not committed.
+**Every user-visible sentence** — the chrome's tool titles, help lines, slot names, category headings, panel
+labels and buttons, *and* every status note and refusal reason the engine produces — lives in
+`l10n/app_en.arb` and its translated siblings, never in Kotlin or in `index.html`. The English ARB is the
+source of truth; `:generateMessages` (in `buildSrc/`) compiles every bundle into two objects — one typed
+accessor per key in `constructit.l10n.Messages` (the sentence) and one factory per key in
+`constructit.l10n.Msgs` (the `Msg` *value*) — and that runs in the ordinary build, so **editing an ARB
+recompiles**. The generated sources are build output and are not committed.
+
+**A message is a value, rendered at the edge** (OP-29 slice 2). `EvalResult.Invalid`, `Document.noteMsg`,
+`Editor.statusMsg`, every `Pair<T?, Msg?>` refusal, `FaceName.label` and every `.word` enumeration carry a
+`Msg`, never a `String`; the shell (or a rendering accessor such as `Document.note` / `Editor.statusHint`)
+turns it into words in the active language. `Msg.text(s)` is for text that is *format* and not UI — an
+element's name, a number already formatted, an exception's own message (OP-18). A message argument may itself
+be a `Msg` and renders in the same locale, which is how a refusal names a face in the reader's language.
 
 - **Adding a string**: add the key, its English text and a real `@key` `description` to `l10n/app_en.arb`
   (the description is what DeepL is given as *context*, so write one that disambiguates), plus typed
-  `placeholders` if it has any. Call the generated accessor. Keys are `tool.<id>.title|help|slot.<n>`,
-  `category.<name>`, `slot.<kind>`, `ui.*` for the panel and `msg.*` for a note.
+  `placeholders` if it has any (`"type": "message"` for an argument that is itself a `Msg`). Call the
+  generated accessor — `Messages.<key>()` where a `String` is wanted, `Msgs.<key>()` where the value is.
+  Keys are `tool.<id>.title|help|slot.<n>`, `category.<name>`, `slot.<kind>`, `ui.*` for the panel, `msg.*`
+  for a chrome note, `refusal.<area>.*` for why the engine cannot build something, `note.<area>.*` and
+  `status.<area>.*` for what a gesture did, `name.*` for what a face or an edge is called, and `word.*` /
+  `phrase.*` / `list.*` for the pieces a longer sentence takes as arguments.
 - **`index.html` states keys, never words**: `data-i18n`, `data-i18n-title`, `data-i18n-placeholder`, which
   `Main.kt`'s `applyStaticText()` fills in and refills when the language changes.
-- **`ChromeBundleTest` fails the build on an English sentence** left in `Tools.kt`, `Main.kt` or
-  `index.html`. A scalar slot's name is exempt by rule: it becomes a *parameter name in the file*, so it is
-  format and stays locale-neutral (OP-18).
+- **Two tests fail the build on an English sentence left in Kotlin**: `ChromeBundleTest` for `Tools.kt`,
+  `Main.kt` and `index.html`; `EngineBundleTest` for `geom/`, `dsl/`, `core/`, `Document.kt` and
+  `Editor.kt`. A scalar slot's name is exempt by rule: it becomes a *parameter name in the file*, so it is
+  format and stays locale-neutral (OP-18); so is a `require`/`throw` that states a programming invariant, and
+  each of those is listed by hand with its reason.
+- **Never build a sentence by concatenation.** A clause that is sometimes empty is a `{name}` placeholder of
+  type `message` filled with `Msg.EMPTY`; a choice of words is an ICU `select` *inside* the pattern, with the
+  article in each branch (German declines, English does not); a count is an ICU `plural`, never
+  `+ (if (n == 1) "" else "s")` — that idiom renders *"2 Elements"* in German.
 - **Formatting is ICU MessageFormat**, done by the reference engines behind one `expect fun formatMessage`
-  — ICU4J on the JVM, FormatJS's `intl-messageformat` in the browser. Never hand-roll a formatter, and
-  prefer `{name}` to `#` inside a plural (the translation pipeline mangles `#`).
+  — ICU4J on the JVM, FormatJS's `intl-messageformat` in the browser. Never hand-roll a formatter, and:
+  prefer `{name}` to `#` inside a plural (the translation pipeline mangles `#`); write `''` for an
+  apostrophe that touches a brace, because `'{n}'` **quotes the brace** and renders the literal text `{n}`;
+  and never leave a `select` branch empty (the translation pipeline refuses it, and it always wants to be a
+  plural instead).
 - **`translateArb` is not part of the build**: it spends DeepL characters, so it is run by hand when the
   English bundle has changed. It needs `deepl.apiKey` in `~/.gradle/gradle.properties`, and
   `--no-configuration-cache` (the plugin reads `Task.project` at execution time). `l10n/app_de.arb` is

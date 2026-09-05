@@ -19,6 +19,8 @@ import constructit.geom.SizeLaws
 import constructit.geom.Skin3
 import constructit.geom.SweepProfile
 import constructit.geom.Vec2
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -171,13 +173,12 @@ object SectionFamilies {
         runLength: Double,
         tolMm: Double,
         read: (Region, Vec2?) -> Region,
-    ): Pair<Built?, String?> {
+    ): Pair<Built?, Msg?> {
         // ---- a name the drawing does not carry: kept, named, and healed the moment it exists ----
         if (family.unresolved.isNotEmpty()) {
             val which = family.unresolved.joinToString(", ") { "'$it'" }
             return null to
-                "this section's laws drive $which, and the drawing carries no value of that name — add a " +
-                "parameter called ${family.unresolved.first()} in the panel and the body comes back"
+                Msgs.refusalFamilyThisSectionLawsDriveDrawing(which = which, first = family.unresolved.first())
         }
         // ---- the twist law: an angle over the run, checked for readability and nothing else ----
         val twist =
@@ -188,7 +189,7 @@ object SectionFamilies {
                     try {
                         SizeLaw(family.twist.ast, family.twistEnv(args, from), Dimension.ANGLE, family.twist.param, family.twist.text)
                     } catch (e: ExprError) {
-                        return null to "${family.twist.what(Dimension.ANGLE)}: ${e.message}"
+                        return null to Msgs.refusalQualified(name = Msg.text(family.twist.what(Dimension.ANGLE)), reason = Msg.text(e.message ?: ""))
                     }
                 SizeLaws.unreadable(law)?.let { return null to it }
                 law
@@ -200,7 +201,7 @@ object SectionFamilies {
             try {
                 envs.add(family.envOf(i, args, from))
             } catch (e: ExprError) {
-                return null to "${family.laws[i].name}($PARAM_HINT): ${e.message}"
+                return null to Msgs.refusalQualified(name = Msg.text("${family.laws[i].name}($PARAM_HINT)"), reason = Msg.text(e.message ?: ""))
             }
         }
 
@@ -318,16 +319,16 @@ object SectionFamilies {
         runLength: Double,
         tolMm: Double,
         read: (Region, Vec2?) -> Region,
-    ): Pair<Station?, String?> {
+    ): Pair<Station?, Msg?> {
         val overrides = HashMap<Node, Value>(family.laws.size * 2)
         for (i in family.laws.indices) {
             val q =
                 try {
                     valueAt(family.laws[i], envs[i], t)
                 } catch (e: DimensionError) {
-                    return null to "${lawText(family.laws[i])} cannot be read ${where(t, runLength)}: ${e.message}"
+                    return null to Msgs.refusalFamilyCannotBeRead(lawText = lawText(family.laws[i]), theWhere = where(t, runLength), message = e.message ?: "")
                 } catch (e: ExprError) {
-                    return null to "${lawText(family.laws[i])} cannot be read ${where(t, runLength)}: ${e.message}"
+                    return null to Msgs.refusalFamilyCannotBeRead(lawText = lawText(family.laws[i]), theWhere = where(t, runLength), message = e.message ?: "")
                 }
             overrides[family.laws[i].target] = ScalarValue(q)
         }
@@ -337,8 +338,8 @@ object SectionFamilies {
                 is EvalResult.Ok -> (r.value as? RegionValue)?.region
                 is EvalResult.Invalid ->
                     return null to
-                        "the section has no shape ${where(t, runLength)}, where ${values(family, envs, t)} — ${r.reason}"
-            } ?: return null to "the section is no closed area ${where(t, runLength)}, where ${values(family, envs, t)}"
+                        Msgs.refusalFamilySectionHasNoShapeWhere(theWhere = where(t, runLength), values = values(family, envs, t), reason = r.reason)
+            } ?: return null to Msgs.refusalFamilySectionIsNoClosedArea(theWhere = where(t, runLength), values = values(family, envs, t))
         val at =
             if (family.anchor == null) {
                 null
@@ -347,9 +348,8 @@ object SectionFamilies {
                     is EvalResult.Ok -> (a.value as? PointValue)?.p
                     is EvalResult.Invalid ->
                         return null to
-                            "the point the section rides on has no place ${where(t, runLength)}, where " +
-                            "${values(family, envs, t)} — ${a.reason}"
-                } ?: return null to "the point the section rides on is no point of the section's plane"
+                            Msgs.refusalFamilyPointSectionRidesHasNo(theWhere = where(t, runLength), values = values(family, envs, t), reason = a.reason)
+                } ?: return null to Msgs.refusalFamilyPointSectionRidesIsNo()
             }
         val read2 = read(region, at)
         val outer = read2.outer.elements.map { GeomMath.tessellatePiece(it, tolMm) }
@@ -377,17 +377,15 @@ object SectionFamilies {
         first: Station,
         st: Station,
         runLength: Double,
-    ): String? {
+    ): Msg? {
         if (st.pieces == first.pieces && st.holes == first.holes) return null
         val what =
             if (st.pieces != first.pieces) {
-                "${first.pieces} pieces ${where(first.t, runLength)} and ${st.pieces} ${where(st.t, runLength)}"
+                Msgs.refusalFamilyPieces(pieces = first.pieces, theWhere = where(first.t, runLength), pieces2 = st.pieces, theWhere2 = where(st.t, runLength))
             } else {
-                "${first.holes.size} holes ${where(first.t, runLength)} and ${st.holes.size} ${where(st.t, runLength)}"
+                Msgs.refusalFamilyHoles(count = first.holes.size, theWhere = where(first.t, runLength), count2 = st.holes.size, theWhere2 = where(st.t, runLength))
             }
-        return "the section has $what, where ${values(family, envs, st.t)} — a family carries one section " +
-            "through the whole run, so how many pieces it has is the same everywhere. Draw the two sections " +
-            "you want and skin them with *Loft (ruled)*, or split a curve with *Break* so the counts agree"
+        return Msgs.refusalFamilySectionHasWhereFamilyCarries(what = what, values = values(family, envs, st.t))
     }
 
     /**
@@ -406,7 +404,7 @@ object SectionFamilies {
         st: Station,
         runLength: Double,
         tolMm: Double,
-    ): String? {
+    ): Msg? {
         for ((i, piece) in st.outer.withIndex()) {
             // **how long the piece is**, walked along its own polyline — not the distance between its ends,
             // which is zero for every *closed* piece there is (a circle's loop has exactly one, and it comes
@@ -418,25 +416,17 @@ object SectionFamilies {
                     (1 until piece.size).sumOf { (piece[it] - piece[it - 1]).length() }
                 }
             if (length <= Geom3.WELD_TOL) {
-                return "piece #${i + 1} of the section has no length ${where(st.t, runLength)}, where " +
-                    "${values(family, envs, st.t)} — a family carries one section through the whole run, and a " +
-                    "piece that vanishes part-way along leaves it with fewer. Hold that piece off zero, or " +
-                    "draw the two sections you want and skin them with *Loft (ruled)*"
+                return Msgs.refusalFamilyPieceSectionHasNoLength(i = i + 1, theWhere = where(st.t, runLength), values = values(family, envs, st.t))
             }
         }
         if (abs(st.area) <= AREA_EPS) {
-            return "the section encloses no area ${where(st.t, runLength)}, where ${values(family, envs, st.t)} — " +
-                "there is nothing to sweep there"
+            return Msgs.refusalFamilySectionEnclosesNoAreaWhere(theWhere = where(st.t, runLength), values = values(family, envs, st.t))
         }
         if (st.area * first.area < 0.0) {
-            return "the section turns inside out ${where(st.t, runLength)}, where ${values(family, envs, st.t)} — " +
-                "it runs the other way round there than it does at the start of the run, so the body would be " +
-                "folded through itself. Hold the section's own size off zero"
+            return Msgs.refusalFamilySectionTurnsInsideOutWhere(theWhere = where(st.t, runLength), values = values(family, envs, st.t))
         }
         crossing(Geom3.tessellateLoop(st.region.outer, tolMm))?.let { (a, b) ->
-            return "the section's outline crosses itself ${where(st.t, runLength)}, where " +
-                "${values(family, envs, st.t)} — the edge from corner #${a + 1} meets the one from corner " +
-                "#${b + 1}, so the body would pass through itself. Hold the section's own dimensions apart"
+            return Msgs.refusalFamilySectionOutlineCrossesItselfWhere(theWhere = where(st.t, runLength), values = values(family, envs, st.t), a = a + 1, b = b + 1)
         }
         return null
     }
@@ -515,26 +505,29 @@ object SectionFamilies {
     private fun where(
         t: Double,
         runLength: Double,
-    ): String = "${Frames3.mm(t * runLength)} mm along the run (t = ${Frames3.mm(t)})"
+    ): Msg = Msgs.refusalFamilyMmAlongRunT(mm = Frames3.mm(t * runLength), mm2 = Frames3.mm(t))
 
     /** What the laws said at [t] — `chord = 200 mm, twist = 7.5°`, so a refusal can be checked. */
     private fun values(
         family: SectionFamily,
         envs: List<Map<String, Quantity>>,
         t: Double,
-    ): String {
-        if (family.laws.isEmpty()) return "the section is read as it is drawn"
-        return family.laws.indices.joinToString(", ") { i ->
-            val v =
-                try {
-                    printed(valueAt(family.laws[i], envs[i], t))
-                } catch (_: DimensionError) {
-                    "no value"
-                } catch (_: ExprError) {
-                    "no value"
-                }
-            "${family.laws[i].name} = $v"
-        }
+    ): Msg {
+        if (family.laws.isEmpty()) return Msgs.refusalFamilySectionIsReadItIs()
+        return Msg.joined(
+            family.laws.indices.map { i ->
+                val v =
+                    try {
+                        Msg.text(printed(valueAt(family.laws[i], envs[i], t)))
+                    } catch (_: DimensionError) {
+                        Msgs.refusalFamilyNoValue()
+                    } catch (_: ExprError) {
+                        Msgs.refusalFamilyNoValue()
+                    }
+                Msgs.refusalFamilyLawValue(name = family.laws[i].name, value = v)
+            },
+            ", ",
+        )
     }
 
     /** A quantity as a refusal prints it — millimetres, degrees or a bare number. */

@@ -22,6 +22,8 @@ import constructit.geom.Solid3
 import constructit.geom.SweepProfile
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.test.Test
@@ -106,7 +108,7 @@ class SweepEmbeddingTest {
     ): String {
         val (solid, why) = Geom3.sweep(path, up, profile)
         assertNull(solid, "this sweep was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     /** What the criterion itself says about this path with a profile reaching [reach] — the report, not the sweep. */
@@ -115,7 +117,7 @@ class SweepEmbeddingTest {
         reach: Double,
     ): EmbeddingReport {
         val (frame, why) = Frames3.along(path, up, reach = reach)
-        return Embedding.check(assertNotNull(frame, why), reach, "the tube's radius (${Frames3.mm(reach)} mm)")
+        return Embedding.check(assertNotNull(frame, why?.render()), reach, Msg.text("the tube's radius (${Frames3.mm(reach)} mm)"))
     }
 
     /** The distance a refusal names, in mm — the `passes within …` figure, read back out of the sentence. */
@@ -425,7 +427,7 @@ class SweepEmbeddingTest {
         )
         assertTrue(last.s - first.s > 2.0 * reach, "and read as a plain arc difference they are a whole loop apart: ${last.s} mm")
 
-        assertNull(Embedding.check(frame, reach, "the tube's radius (6 mm)").defect, "so the loop is embedded")
+        assertNull(Embedding.check(frame, reach, Msg.text("the tube's radius (6 mm)")).defect, "so the loop is embedded")
         assertManifold(sweptOrFail(loop, SweepProfile.Round(reach)).mesh, "the closed ring of tube")
     }
 
@@ -473,7 +475,7 @@ class SweepEmbeddingTest {
         val n = frame.stations.size
         assertTrue(n > 2000, "a 40-turn coil really is sampled into thousands of stations: $n")
 
-        val report = Embedding.check(frame, reach, "the tube's radius (3 mm)")
+        val report = Embedding.check(frame, reach, Msg.text("the tube's radius (3 mm)"))
         assertNull(report.defect, "and it is embedded")
         assertTrue(
             report.pairsExamined < 100 * n,

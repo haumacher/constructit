@@ -294,7 +294,7 @@ class ChainCutTest {
         val plane = Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
         val target = ev.solid(block).mesh
         val (tools, why) = Chains.tools((ev.valueOf(chain) as ChainValue).chain, plane, target)
-        assertNotNull(tools, why)
+        assertNotNull(tools, why?.render())
         val m = Chains.margin(80.0)
         // Every face plane of the block, as the coordinate it stands at on its own axis. No vertex of either
         // tool comes within a margin of any of them — so the closure cannot be coplanar with a face, and the
@@ -347,7 +347,7 @@ class ChainCutTest {
     fun theFirstHalfIsAlwaysTheLeftOfTheRun() {
         val chain = Chains.through(listOf(Vec2(-1.0, 0.0), Vec2(1.0, 0.0))).first!!
         val (sides, why) = Chains.halves(chain, Vec2(-10.0, -10.0), Vec2(10.0, 10.0))
-        assertNotNull(sides, why)
+        assertNotNull(sides, why?.render())
         val left = sides.first.single()
         val right = sides.second.single()
         assertTrue(left.outer.elements.all { GeomMath.startOf(it).y >= -1e-9 }, "the left half is the +y one")

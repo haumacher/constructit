@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -27,7 +29,7 @@ enum class Handedness(val turnSign: Double) {
     ;
 
     /** The word a refusal and a status line use. */
-    val word: String get() = if (this == RIGHT) "right-hand" else "left-hand"
+    val word: Msg get() = if (this == RIGHT) Msgs.wordHandRight() else Msgs.wordHandLeft()
 }
 
 /**
@@ -966,10 +968,10 @@ object Curves3 {
     fun planeOfRun(
         path: Path3,
         tolMm: Double = FLAT_TOL_MM,
-    ): Pair<Plane3?, String?> {
+    ): Pair<Plane3?, Msg?> {
         val pts = polyline(path)
         if (pts.size < 3) {
-            return null to "it is a single straight run, and a straight line lies in infinitely many planes — there is no one plane to sketch in"
+            return null to Msgs.refusalPathItIsSingleStraightRun()
         }
         var n = Vec3.ZERO
         for (i in pts.indices) {
@@ -977,12 +979,12 @@ object Curves3 {
             val b = pts[(i + 1) % pts.size]
             n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y))
         }
-        val (lo, hi) = bounds(path) ?: return null to "it has no points"
+        val (lo, hi) = bounds(path) ?: return null to Msgs.refusalPathItHasNoPoints()
         val span = (hi - lo).length()
         // |n| is twice the area the run's points span, so this says "its area is no more than the tolerance
         // times its length" — i.e. it is as good as straight, whichever way it is turned
         if (n.length() <= 2.0 * tolMm * maxOf(span, 1.0)) {
-            return null to "its points sweep no area — a straight run lies in infinitely many planes, so there is no one plane to sketch in"
+            return null to Msgs.refusalPathItsPointsSweepNoArea()
         }
         val normal = n.normalized()
         var c = Vec3.ZERO
@@ -992,8 +994,7 @@ object Curves3 {
         for (p in pts) dev = maxOf(dev, kotlin.math.abs((p - centroid).dot(normal)))
         if (dev > tolMm) {
             return null to
-                "it is not flat: its points stand up to ${Frames3.mm(dev)} mm off the best plane through them, " +
-                "and the limit is ${Frames3.mm(tolMm)} mm — this is a curve in space, not a sketch"
+                Msgs.refusalPathItIsNotFlatIts(mm = Frames3.mm(dev), mm2 = Frames3.mm(tolMm))
         }
         val origin = pts[0] - normal * (pts[0] - centroid).dot(normal)
         val along = pts[1] - pts[0]

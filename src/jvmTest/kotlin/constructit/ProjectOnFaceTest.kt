@@ -23,6 +23,7 @@ import constructit.geom.Segment
 import constructit.geom.Sketch3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -218,7 +219,7 @@ class ProjectOnFaceTest {
         assertTrue(path.fitted, "a conic has no case in space, so it is fitted")
         assertTrue(path.path.closed, "a circle comes back to itself, and so does its image")
         assertTrue(path.path.elements.size >= 4, "a genuine chain of cubics: ${path.path.elements.size}")
-        assertTrue(path.exactnessWord.contains("fitted"), path.exactnessWord)
+        assertTrue(path.exactnessWord.contains("fitted"), "$path.exactnessWord")
 
         val map = assertNotNull(Project3.mapOnto(plan, plane))
         val exact = Conics.transform(Conics.ofCircle(circle), map)
@@ -287,7 +288,7 @@ class ProjectOnFaceTest {
         val side = faceOf(plate(), 0)
         val (made, why) = Project3.projectedOnto(listOf(seg(Vec2(20.0, 20.0), Vec2(80.0, 60.0))), plan, side)
         assertNull(made)
-        assertTrue(assertNotNull(why).contains("edge-on"), why!!)
+        assertTrue(assertNotNull(why).contains("edge-on"), "${why!!}")
 
         // …and it heals as soon as the space the curve is drawn in stops looking along the face
         val tilted = Plane3(Vec3.ZERO, Vec3.X, Vec3(0.0, sqrt(0.5), sqrt(0.5)))
@@ -310,11 +311,11 @@ class ProjectOnFaceTest {
         val (index, why) = Project3.landingFace(Feature3.MeshBoolean(BoolOp.SUBTRACT), listOf(seg(Vec2(0.0, 0.0), Vec2(10.0, 0.0))), plan)
         assertNull(index)
         assertEquals(Section3.faces(Feature3.MeshBoolean(BoolOp.SUBTRACT)).second, why, "the existing sentence, unchanged")
-        assertTrue(assertNotNull(why).contains("mesh-only"), why!!)
+        assertTrue(assertNotNull(why).contains("mesh-only"), "${why!!}")
 
         val (i2, why2) = Project3.landingFace(Feature3.Imported("part.jt"), listOf(seg(Vec2(0.0, 0.0), Vec2(10.0, 0.0))), plan)
         assertNull(i2)
-        assertTrue(assertNotNull(why2).contains("imported"), why2!!)
+        assertTrue(assertNotNull(why2).contains("imported"), "${why2!!}")
     }
 
     // ---- 5. which face the drawing lands on ----

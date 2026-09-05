@@ -94,13 +94,13 @@ class SweepLawTest {
     ): String {
         val (solid, why) = Geom3.sweep(path, up, profile)
         assertNull(solid, "this sweep was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     /** The tessellated area of a section at its stated size — what an exact volume is measured against. */
     private fun tessArea(profile: SweepProfile): Double {
         val (t, why) = Geom3.tessellateRegion(profile.region)
-        return Geom3.tessArea(assertNotNull(t, why))
+        return Geom3.tessArea(assertNotNull(t, why?.render()))
     }
 
     /** The greatest distance any vertex on the plane `x = [x]` stands from the run's axis (the world x axis). */
@@ -484,7 +484,7 @@ class SweepLawTest {
                 SweepProfile.of(radiusLaw("4mm + 16mm * t")),
                 plan = plane,
             )
-        val body = assertNotNull(solid, why)
+        val body = assertNotNull(solid, why?.render())
         val feature = body.feature as constructit.geom.Feature3.Sweep
         val ys = feature.plan.flatMap { r -> r.outer.elements.map { GeomMath.startOf(it).y } }
         assertTrue(ys.isNotEmpty(), "the tapered tube shows a plan")
@@ -505,7 +505,7 @@ class SweepLawTest {
                 SweepProfile.of(radiusLaw("4mm + 16mm * t")),
                 plan = plane,
             )
-        val feature = assertNotNull(solid, why).feature as constructit.geom.Feature3.Sweep
+        val feature = assertNotNull(solid, why?.render()).feature as constructit.geom.Feature3.Sweep
         val again = Geom3.sweptPlan(feature, plane)
         assertEquals(
             feature.plan.map { r -> r.outer.elements.map { GeomMath.startOf(it) } },
@@ -527,14 +527,14 @@ class SweepLawTest {
         for (tol in listOf(0.2, 0.02, 0.002)) {
             val (solid, why) = Geom3.sweep(path, up, profile, tolMm = tol)
             assertNull(solid, "refused at every tolerance")
-            words.add(assertNotNull(why))
+            words.add(assertNotNull(why).render())
         }
         assertEquals(1, words.size, "and in one set of words: $words")
 
         val fits = SweepProfile.of(radiusLaw("15mm + 55mm * t"))
         for (tol in listOf(0.2, 0.02, 0.002)) {
             val (solid, why) = Geom3.sweep(path, up, fits, tolMm = tol)
-            assertManifold(assertNotNull(solid, why).mesh, "the body that fits, at tolerance $tol")
+            assertManifold(assertNotNull(solid, why?.render()).mesh, "the body that fits, at tolerance $tol")
         }
     }
 
@@ -563,7 +563,7 @@ class SweepLawTest {
         val path = Path3(Curves3.straightThrough(listOf(Vec3(0.0, 0.0, 0.0), Vec3(200.0, 0.0, 0.0))))
         val profile = SweepProfile.of(radiusLaw("10mm - 8mm * t"))
         val (frame, why) = Frames3.along(path, up, reach = 10.0, lawSpans = 4)
-        val f = assertNotNull(frame, why)
+        val f = assertNotNull(frame, why?.render())
         val (scales, noScale) = SizeLaws.scalesAlong(profile, f)
         assertNull(noScale, "every station has a size")
         val ks = assertNotNull(scales)

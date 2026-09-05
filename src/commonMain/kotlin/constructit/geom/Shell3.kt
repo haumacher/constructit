@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 
 /**
@@ -50,10 +52,10 @@ object Shell3 {
      * Why [feature] cannot be hollowed **at all**, or null when it can — the kind gate, asked before any
      * geometry is made so that a refusal is about the body rather than about a number (OP-3, OP-21).
      */
-    fun shellable(feature: Feature3): String? =
+    fun shellable(feature: Feature3): Msg? =
         when (feature) {
             is Feature3.Extrusion ->
-                if (feature.depth <= Geom3.WELD_TOL) "this solid has no depth, so there is no wall to leave behind" else null
+                if (feature.depth <= Geom3.WELD_TOL) Msgs.refusalShellThisSolidHasNoDepth() else null
             is Feature3.Revolution -> {
                 // **Closed the whole way round**, asked of the emitter's own reading rather than of the kind:
                 // [Turn3.Full] and a *stated* interval that measures a full turn are the same closed body with
@@ -61,43 +63,28 @@ object Shell3 {
                 // the geometry does not.
                 val frame = Revolve3.frameOf(feature)
                 when {
-                    frame == null -> "the axis of revolution has no direction"
+                    frame == null -> Msgs.refusalShellAxisRevolutionHasNoDirection()
                     frame.full -> null
                     else ->
-                        "this solid is revolved less than the whole way round, so its cavity would have to be held " +
-                            "off the two radial caps by an *angle* rather than by a distance — and that wall would " +
-                            "grow thicker with the radius, which is not the thickness you typed. Revolve the whole " +
-                            "way round to shell it; a shell of a partial revolve is a future extension"
+                        Msgs.refusalShellThisSolidIsRevolvedLess()
                 }
             }
             is Feature3.Prism ->
-                "this solid is a stack of slabs from the exact boolean algebra (OP-22), so it has no one profile to " +
-                    "offset inward — shell the body first and combine it afterwards, or hollow it with a Cut; the " +
-                    "slab reading of a shell is a future extension"
+                Msgs.refusalShellThisSolidIsStackSlabs()
             is Feature3.MeshBoolean ->
-                "this solid is mesh-only (a general boolean's result, OP-9), so it has no profile to offset inward — " +
-                    "hollowing it would be a mesh offset, which this drawing does not do. Shell the operands before " +
-                    "fusing them, and the fused part is hollow by construction"
+                Msgs.refusalShellThisSolidIsMeshOnly()
             is Feature3.Imported ->
-                "this body was imported from a file, so it is triangles and nothing else (OP-9) — hollowing one " +
-                    "would be a mesh offset, which this drawing does not do; build the wall you want beside it"
+                Msgs.refusalShellThisBodyWasImportedFile()
             is Feature3.Sweep ->
-                "this solid is a profile swept along a curve (OP-26), so its wall would be its section offset along " +
-                    "the whole run — sweep a **hollow section** instead, which is the same body by construction; a " +
-                    "shell of a sweep is a future extension"
+                Msgs.refusalShellThisSolidIsProfileSwept()
             is Feature3.Loft ->
-                "this solid's cross-section changes along the run (a loft), so one wall thickness is not a constant " +
-                    "offset of its sections — a shell of a loft is a future extension"
+                Msgs.refusalShellThisSolidCrossSectionChanges()
             is Feature3.Skin ->
-                "this solid is a skin over drawn sections, so its outline changes along the run and one wall " +
-                    "thickness is not a constant offset of its sections — loft the outer sections, loft the inner " +
-                    "ones and subtract; a shell of a skin is a future extension"
+                Msgs.refusalShellThisSolidIsSkinOver()
             is Feature3.Blend ->
-                "this solid is a blended body, so the surface to offset inward is the rounding's own — shell the body " +
-                    "first and round it afterwards, which is the same part by construction"
+                Msgs.refusalShellThisSolidIsBlendedBody()
             is Feature3.Shell ->
-                "this solid is already a shell, so there is no second cavity to make — retype its wall thickness, " +
-                    "which is an ordinary parameter, or open one of its faces"
+                Msgs.refusalShellThisSolidIsAlreadyShell()
         }
 
     /**
@@ -110,13 +97,12 @@ object Shell3 {
     fun openFaceRefusal(
         feature: Feature3,
         face: Int,
-    ): String? {
+    ): Msg? {
         val (faces, why) = Section3.faces(feature)
         if (faces == null) return why
-        if (face < 0 || face >= faces.size) return "this solid has no face #${face + 1} (it has ${faces.size})"
+        if (face < 0 || face >= faces.size) return Msgs.refusalShellThisSolidHasNoFace(face = face + 1, count = faces.size)
         if (sweepsNothing(feature, face)) {
-            return "${faces[face].name.label} sweeps no surface at all (its profile edge lies on the axis of " +
-                "revolution), so there is nothing to open there"
+            return Msgs.refusalShellSweepsNoSurfaceAllIts(name = faces[face].name.label)
         }
         return null
     }
@@ -147,14 +133,14 @@ object Shell3 {
         feature: Feature3,
         thickness: Double,
         openFaces: List<Int>,
-    ): Pair<Feature3?, String?> {
+    ): Pair<Feature3?, Msg?> {
         if (thickness <= Geom3.WELD_TOL) {
-            return null to "a shell needs a positive wall thickness — this one is ${Frames3.mm(thickness)} mm"
+            return null to Msgs.refusalShellShellNeedsPositiveWallThickness(mm = Frames3.mm(thickness))
         }
         return when (feature) {
             is Feature3.Extrusion -> extrusionCavity(feature, thickness, openFaces)
             is Feature3.Revolution -> revolutionCavity(feature, thickness, openFaces)
-            else -> null to (shellable(feature) ?: "this solid has no cavity to make")
+            else -> null to (shellable(feature) ?: Msgs.refusalShellThisSolidHasNoCavity())
         }
     }
 
@@ -162,14 +148,13 @@ object Shell3 {
         f: Feature3.Extrusion,
         t: Double,
         open: List<Int>,
-    ): Pair<Feature3?, String?> {
+    ): Pair<Feature3?, Msg?> {
         val n = Geom3.boundaryPieces(f).size
         val z0 = if (open.contains(n)) 0.0 else t
         val z1 = f.depth - (if (open.contains(n + 1)) 0.0 else t)
         if (z1 - z0 <= Geom3.WELD_TOL) {
             return null to
-                "a wall of ${Frames3.mm(t)} mm leaves no cavity between the two caps of a body " +
-                "${Frames3.mm(f.depth)} mm deep"
+                Msgs.refusalShellWallMmLeavesNoCavity(mm = Frames3.mm(t), mm2 = Frames3.mm(f.depth))
         }
         val (regions, why) = erodedRegions(f, f.sketch.regions, t, open)
         if (regions == null) return null to why
@@ -180,7 +165,7 @@ object Shell3 {
         f: Feature3.Revolution,
         t: Double,
         open: List<Int>,
-    ): Pair<Feature3?, String?> {
+    ): Pair<Feature3?, Msg?> {
         val (regions, why) = erodedRegions(f, f.sketch.regions, t, open)
         if (regions == null) return null to why
         return Feature3.Revolution(Sketch3(f.sketch.plane, regions), f.axisOrigin, f.axisDir, f.turn) to null
@@ -200,7 +185,7 @@ object Shell3 {
         regions: List<Region>,
         t: Double,
         open: List<Int>,
-    ): Pair<List<Region>?, String?> {
+    ): Pair<List<Region>?, Msg?> {
         val out = ArrayList<Region>(regions.size)
         var index = 0
         for (region in regions) {
@@ -217,16 +202,14 @@ object Shell3 {
                 val moved = Loop(pieces)
                 if (!keptItsHandedness(loop, moved)) {
                     return null to
-                        "a wall of ${Frames3.mm(t)} mm turns one of this profile's rings inside out, so there is no " +
-                        "cavity of that thickness in it"
+                        Msgs.refusalShellWallMmTurnsOneThis(mm = Frames3.mm(t))
                 }
                 loops.add(moved)
             }
             val eroded = Region(loops[0], loops.drop(1))
             if (!insideBase(region, eroded)) {
                 return null to
-                    "a wall of ${Frames3.mm(t)} mm pushes the cavity's own boundary outside this profile, so the " +
-                    "wall would not close"
+                    Msgs.refusalShellWallMmPushesCavityOwn(mm = Frames3.mm(t))
             }
             out.add(eroded)
         }
@@ -237,15 +220,13 @@ object Shell3 {
     private fun offsetRefusal(
         code: String?,
         t: Double,
-    ): String =
+    ): Msg =
         when (code) {
             GeomMath.OFFSET_NOT_A_CARRIER ->
-                "one piece of this profile is neither a straight run nor an arc, so its offset is not a curve this " +
-                    "drawing can state exactly — a shell of a spline, an ellipse or a function curve is a future extension"
+                Msgs.refusalShellOnePieceThisProfileIs()
             GeomMath.OFFSET_NO_JUNCTION ->
-                "the cavity's own boundary does not close at a wall of ${Frames3.mm(t)} mm — two of its offset " +
-                    "pieces no longer meet"
-            else -> "a wall of ${Frames3.mm(t)} mm consumes one piece of this profile, so there is no cavity of that thickness in it"
+                Msgs.refusalShellCavityOwnBoundaryDoesNot(mm = Frames3.mm(t))
+            else -> Msgs.refusalShellWallMmConsumesOnePiece(mm = Frames3.mm(t))
         }
 
     /** Whether the offset ring still runs the way it did — a ring turned inside out has no cavity in it. */
@@ -334,29 +315,29 @@ object Shell3 {
         base: Solid3,
         thickness: Double,
         openFaces: List<Int>,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         shellable(base.feature)?.let { return null to it }
         for (i in openFaces) openFaceRefusal(base.feature, i)?.let { return null to it }
         val (cavity, why) = cavityOf(base.feature, thickness, openFaces)
         if (cavity == null) {
             val fits = largestFitting(base.feature, thickness, openFaces)
-            val reason = why ?: "this body has no cavity of that thickness"
+            val reason = why ?: Msgs.refusalShellThisBodyHasNoCavity()
             return null to
-                if (fits > Geom3.WELD_TOL) "$reason — the thickest wall that fits is about ${Frames3.mm(fits)} mm" else reason
+                if (fits > Geom3.WELD_TOL) Msgs.refusalShellThickestWallThatFitsIs(reason = reason, mm = Frames3.mm(fits)) else reason
         }
         val (tool, whyTool) = solidOf(cavity)
-        if (tool == null) return null to (whyTool ?: "the cavity of this body cannot be built")
+        if (tool == null) return null to (whyTool ?: Msgs.refusalShellCavityThisBodyCannotBe())
         val (out, whyBool) = Geom3.combine(BoolOp.SUBTRACT, base, tool)
-        if (out == null) return null to (whyBool ?: "the cavity cannot be taken out of this body")
+        if (out == null) return null to (whyBool ?: Msgs.refusalShellCavityCannotBeTakenOut())
         return out to null
     }
 
     /** The cavity as a body — its own kind's emitter, since an offset extrusion is an extrusion. */
-    private fun solidOf(cavity: Feature3): Pair<Solid3?, String?> =
+    private fun solidOf(cavity: Feature3): Pair<Solid3?, Msg?> =
         when (cavity) {
             is Feature3.Extrusion -> Geom3.extrude(cavity.sketch, cavity.depth)
             is Feature3.Revolution -> Geom3.revolve(cavity.sketch, cavity.axisOrigin, cavity.axisDir, cavity.turn)
-            else -> null to "the cavity of this body is not a shape this drawing can build"
+            else -> null to Msgs.refusalShellCavityThisBodyIsNot()
         }
 
     // ---- the shelled face and edge lists: the base's, extended ----
@@ -386,7 +367,7 @@ object Shell3 {
      * its normal points out of the *wall* (into the cavity) as OP-17's convention requires, and the outline
      * mapped into that flipped frame so it still says the same curve.
      */
-    fun faces(f: Feature3.Shell): Pair<List<FacePatch>?, String?> {
+    fun faces(f: Feature3.Shell): Pair<List<FacePatch>?, Msg?> {
         val (baseFaces, whyBase) = Section3.faces(f.base)
         if (baseFaces == null) return null to whyBase
         val (cavity, whyCavity) = cavityOf(f.base, f.thickness, f.openFaces)
@@ -395,8 +376,7 @@ object Shell3 {
         if (cavFaces == null) return null to whyCav
         if (cavFaces.size != baseFaces.size) {
             return null to
-                "this body's cavity has ${cavFaces.size} faces where the body itself has ${baseFaces.size}, so the " +
-                "inner faces cannot be paired with the outer ones"
+                Msgs.refusalShellThisBodyCavityHasFaces(count = cavFaces.size, count2 = baseFaces.size)
         }
         val out = ArrayList<FacePatch>(2 * baseFaces.size)
         for ((i, patch) in baseFaces.withIndex()) {
@@ -422,20 +402,18 @@ object Shell3 {
     private fun rimOutline(
         patch: FacePatch,
         cav: FacePatch,
-    ): Pair<List<ProfileElement>?, String?> {
+    ): Pair<List<ProfileElement>?, Msg?> {
         val plane =
             patch.plane
                 ?: return null to
-                    "${patch.name.label} is not a plane, so the rim left when the wall opens through it is not a " +
-                    "boundary this drawing states — the face is open all the same (a future extension)"
+                    Msgs.refusalShellIsNotPlaneSoRim(name = patch.name.label)
         val cavPlane =
             cav.plane
                 ?: return null to
-                    "the cavity's own face behind ${patch.name.label} is not a plane, so the rim left when the wall " +
-                    "opens through it is not a boundary this drawing states (a future extension)"
+                    Msgs.refusalShellCavityOwnFaceBehindIs(name = patch.name.label)
         if (!samePlane(plane, cavPlane)) {
             return null to
-                "the cavity does not reach ${patch.name.label} in its own plane, so the rim there cannot be stated exactly"
+                Msgs.refusalShellCavityDoesNotReachIts(name = patch.name.label)
         }
         val map = mapBetween(cavPlane, plane)
         val holes =
@@ -457,8 +435,7 @@ object Shell3 {
                 name,
                 null,
                 emptyList(),
-                "face #${face + 1} is open, so there is no wall behind it — what this body has there is that face's " +
-                    "own rim, which keeps its index",
+                Msgs.refusalShellFaceIsOpenSoThere(face = face + 1),
             )
         }
         val plane = cav.plane
@@ -467,8 +444,7 @@ object Shell3 {
                 name,
                 null,
                 emptyList(),
-                "${name.label} is ${cav.surface?.band?.label ?: "a surface this drawing has no name for"} and not a " +
-                    "plane, so there is nothing to sketch on there; put a datum plane where you want to sketch",
+                Msgs.refusalShellIsNotPlaneSoThere(name = name.label, name2 = cav.surface?.band?.label ?: Msgs.refusalShellSurfaceThisDrawingHasNo()),
                 cav.surface,
             )
         }
@@ -491,7 +467,7 @@ object Shell3 {
      * of them is the twin of an **open** face, where the face this body actually has is that face's **rim**, so
      * the pair names the base face. That is what makes the rim's own inner boundary an edge of the body.
      */
-    fun edges(f: Feature3.Shell): Pair<List<SolidEdge>?, String?> {
+    fun edges(f: Feature3.Shell): Pair<List<SolidEdge>?, Msg?> {
         val (baseEdges, whyBase) = Section3.edges(f.base)
         if (baseEdges == null) return null to whyBase
         val (cavity, whyCavity) = cavityOf(f.base, f.thickness, f.openFaces)

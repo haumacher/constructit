@@ -13,6 +13,7 @@ import constructit.editor.PointerButton
 import constructit.editor.SvgDrawTarget
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -200,7 +201,7 @@ class PlacedGroupTest {
         ed.click(Vec2(0.0, 90.0))
         ed.click(Vec2(-60.0, 0.0))
         assertEquals(listOf("x", "y", "angle"), ed.selectionFields().map { it.label })
-        assertEquals("frame of kitchen", ed.selectionLabel())
+        assertEquals("frame of kitchen", ed.selectionLabel().render())
         assertClose(ed.selectionFields()[0].read(Evaluator())!!.mm, 0.0)
         assertClose(ed.selectionFields()[1].read(Evaluator())!!.mm, 10.0)
 

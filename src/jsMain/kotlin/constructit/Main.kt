@@ -28,6 +28,8 @@ import constructit.geom.MeshQuality
 import constructit.geom.Vec2
 import constructit.l10n.L10n
 import constructit.l10n.Messages
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.Quantity
 import kotlinx.browser.document
@@ -435,14 +437,14 @@ private fun setupApp() {
             if (!scene.isEmpty) viewport.frame(scene)
             editor.note(
                 if (scene.isEmpty && !viewport.editing()) {
-                    Messages.msgNothingSolid()
+                    Msgs.msgNothingSolid()
                 } else {
-                    viewport.help()
+                    Msg.text(viewport.help())
                 },
             )
-            if (!gl.available) editor.note(Messages.msgNoWebgl())
+            if (!gl.available) editor.note(Msgs.msgNoWebgl())
         } else {
-            editor.note("")
+            editor.note(Msg.EMPTY)
         }
         repaint()
     }
@@ -466,7 +468,7 @@ private fun setupApp() {
         canvasPreview.hidden = !on
         (document.getElementById("v-prev") as HTMLElement).className = if (on) "active" else ""
         if (!on) {
-            editor.note("")
+            editor.note(Msg.EMPTY)
             repaint()
             return
         }
@@ -477,10 +479,10 @@ private fun setupApp() {
             if (ok && preview.ready) {
                 if (!scene.isEmpty) preview.frame(scene)
                 preview.draw()
-                editor.note(previewNote(scene))
+                editor.note(Msg.text(previewNote(scene)))
                 console.log("[Preview] ready — ${scene.nodes.size} solid(s), ${scene.triangleCount} triangles")
             } else {
-                editor.note(preview.problem ?: Messages.msgPreviewFailed())
+                editor.note(preview.problem?.let { Msg.text(it) } ?: Msgs.msgPreviewFailed())
             }
             renderPanel(editor, view3d, viewport)
         }
@@ -636,20 +638,20 @@ private fun setupApp() {
         }
         if (key == "Shift" && !editor.axisLock) {
             editor.axisLock = true
-            editor.note(Messages.msgAxislock())
+            editor.note(Msgs.msgAxislock())
             repaint()
         }
         if (key == " " && !spaceDown) {
             spaceDown = true
             viewport.panMode = true // the same key means the same thing in both views
             e.preventDefault() // Space would otherwise scroll the page
-            editor.note(if (view3d) Messages.msgSpace3d() else Messages.msgSpace2d())
+            editor.note(if (view3d) Msgs.msgSpace3d() else Msgs.msgSpace2d())
             repaint()
         }
         if (key == "Alt" && editor.snapEnabled) {
             e.preventDefault() // Alt alone would otherwise reach the browser menu bar
             editor.snapEnabled = false
-            editor.note(Messages.msgAlt())
+            editor.note(Msgs.msgAlt())
             repaint()
         }
         // the camera modifier, while the 3D view is drawing: it only *says* so here — the routing decision is
@@ -660,7 +662,7 @@ private fun setupApp() {
             // reversal that is selecting and moving geometry under SELECT, not only drawing under a tool
             if (viewport.editing()) {
                 editor.note(
-                    if (viewport.drawing()) Messages.msgCtrlDrawing() else Messages.msgCtrlSelecting(),
+                    if (viewport.drawing()) Msgs.msgCtrlDrawing() else Msgs.msgCtrlSelecting(),
                 )
             }
             repaint()
@@ -670,24 +672,24 @@ private fun setupApp() {
         val key = (it as org.w3c.dom.events.KeyboardEvent).key
         if (key == "Shift" && editor.axisLock) {
             editor.axisLock = false
-            editor.note("")
+            editor.note(Msg.EMPTY)
             repaint()
         }
         if (key == " " && spaceDown) {
             spaceDown = false
             viewport.panMode = false
-            editor.note(if (view3d) viewport.help() else "")
+            editor.note(if (view3d) Msg.text(viewport.help()) else Msg.EMPTY)
             repaint()
         }
         if (key == "Alt" && !editor.snapEnabled) {
             editor.snapEnabled = true
-            editor.note("")
+            editor.note(Msg.EMPTY)
             repaint()
         }
         if ((key == "Control" || key == "Meta") && viewport.cameraModifier) {
             viewport.cameraModifier = false
             // back to the tool, mid-session: an orbit already under way keeps the camera to its release
-            if (view3d) editor.note(viewport.help())
+            if (view3d) editor.note(Msg.text(viewport.help()))
             repaint()
         }
     })
@@ -905,7 +907,7 @@ private fun setupApp() {
                 if (target == null) {
                     editor.doc.unwireParameter(entry)
                 } else if (!editor.doc.wireParameter(entry, target)) {
-                    editor.note(Messages.msgWireRefused(entry.name))
+                    editor.note(Msgs.msgWireRefused(entry.name))
                 }
                 editor.checkpoint()
                 repaint()
@@ -948,7 +950,7 @@ private fun setupApp() {
         }
         val idx = t.getAttribute("data-fidx")?.toIntOrNull() ?: return@addEventListener
         val v = t.value.toDoubleOrNull() ?: return@addEventListener
-        if (!editor.writeSelectionField(idx, v)) editor.note(Messages.msgValueDerived())
+        if (!editor.writeSelectionField(idx, v)) editor.note(Msgs.msgValueDerived())
         repaint()
     })
     // Hovering a name in *built from* / *used by* points the canvas at that element, and clicking it goes
@@ -1342,8 +1344,9 @@ private fun setupApp() {
         applyStaticText()
         // the palette is rebuilt only when the *set* of tools changes, and the set did not — the words did
         paletteShows = null
-        // a standing note was composed in the language before last, so it goes rather than lingering
-        editor.note("")
+        // …and the standing note **stays**, because since OP-29's slice 2 it is a value and not a sentence:
+        // the very note the last gesture produced is re-read here in the language just chosen, with no
+        // gesture repeated. Slice 1 had to throw it away, which is the difference this slice is about.
         repaint()
     })
 
@@ -1467,7 +1470,7 @@ private fun renderCreateDialog(editor: Editor) {
                 "<span>${d.closureLabel}</span><span class=\"tports\">${d.closureNote}</span></label>"
         }
     host.innerHTML =
-        "<div class=\"cdtitle\">${Messages.uiDialogTitle(d.title, d.members.size)}</div>" +
+        "<div class=\"cdtitle\">${Messages.uiDialogTitle(d.title.render(), d.members.size)}</div>" +
         "<div class=\"cdhelp\">${d.help}</div>" +
         "<input id=\"cd-name\" type=\"text\" placeholder=\"${attr(Messages.uiDialogName())}\" value=\"${d.name}\">" +
         framed +
@@ -1491,7 +1494,7 @@ private fun renderPanel(
         when {
             editor.statusHint.isNotEmpty() -> editor.statusHint
             view3d -> viewport.help()
-            else -> editor.currentHelp()
+            else -> editor.currentHelp().render()
         }
     (document.getElementById("status") as HTMLElement).textContent =
         listOfNotNull(spoken.ifEmpty { null }, editor.validityNote).joinToString(" · ")
@@ -1750,7 +1753,7 @@ private fun renderPanel(
                 listOfNotNull(
                     bad?.let { b -> Messages.uiTreeInvalid(b.reason) },
                     why,
-                    readout?.let { r -> Messages.uiTreeRounding(editor.doc.nameOf(entry!!.body), r) },
+                    readout?.let { r -> Messages.uiTreeRounding(editor.doc.nameOf(entry!!.body), r.render()) },
                 ).joinToString("; ")
             "<div class=\"item$active${if (bad == null) "" else " invalid"}${if (gone) " gone" else ""}" +
                 "${if (entry == null) "" else " child"}\" data-eid=\"${it.id}\"" +

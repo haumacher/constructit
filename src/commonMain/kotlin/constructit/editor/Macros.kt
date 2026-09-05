@@ -1,5 +1,8 @@
 package constructit.editor
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
+
 // User-defined macros — the UI half of OP-6, and the headline capability of the paradigm: record a
 // sub-construction, designate which of its free sources are the macro's *input ports*, and get a
 // reusable tool in the palette.
@@ -16,7 +19,7 @@ const val MACRO_TOOL_PREFIX = "macro:"
  * checkbox with it, and the browser shell renders that label — so the way out is worded the same wherever
  * the user meets it.
  */
-const val INCLUDE_CLOSURE_LABEL = "include everything these points are built on"
+val INCLUDE_CLOSURE_LABEL = Msgs.uiCreateIncludeEverythingThesePointsAre()
 
 /**
  * A macro **definition** (OP-6): the sub-construction behind [elements], with the free sources
@@ -70,9 +73,10 @@ class MacroDef(
             // sentence below into a message with placeholders, like every other composed sentence.
             labelText = name,
             helpText =
-                "Custom tool $name: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}" +
-                    " (the first places the instance)" +
-                    if (scalarInputs.isEmpty()) "." else ", with ${scalarInputs.joinToString(", ") { it.name }} from the panel.",
+                Msgs.uiCreateCustomToolHelp(
+                    head = Msgs.uiCreateCustomToolClickPointFirst(name = name, count = pointInputs.size),
+                    panel = if (scalarInputs.isEmpty()) Msgs.uiCreateFullStop() else Msgs.uiCreatePanel(list = scalarInputs.joinToString(", ") { it.name }),
+                ).render(),
         ) { d, p, s -> d.instantiateMacro(this, p.points, s) }
     }
 }
@@ -98,7 +102,7 @@ class MacroAnalysis(
     /** Candidate scalar inputs: unbound parameters feeding the selection. */
     val parameters: List<ScalarEntry>,
     /** Why this selection cannot be a tool (empty when it can) — phrased for the user. */
-    val problems: List<String>,
+    val problems: List<Msg>,
     /** Which of [points] the selection *displays* itself, as opposed to merely depending on. */
     val owned: Set<String> = points.mapTo(HashSet()) { it.id },
     /**
@@ -108,7 +112,7 @@ class MacroAnalysis(
      * has to: a figure whose freedom is a rider plus an offset is exactly the one that could be grouped and
      * then never placed.
      */
-    val freedoms: List<Freedom> = points.map { Freedom(it, FreedomKind.FREE_POINT, it.id, it.id in owned) },
+    val freedoms: List<Freedom> = points.map { Freedom(it, FreedomKind.FREE_POINT, Msg.text(it.id), it.id in owned) },
 )
 
 /** Which of the two things the shared create dialog is making (OP-16: one dialog, two defaults). */
@@ -146,7 +150,7 @@ class CreateDialog(
     members: List<Element>,
     val candidates: List<InputCandidate>,
     /** Set when a *tool* is impossible; a group is still offered, since it needs none of this. */
-    val problem: String? = null,
+    val problem: Msg? = null,
     /**
      * What the group would still have to contain to be placeable (`Document.placementClosure`) — a function
      * because a dialog is built from an analysis and holds no document, exactly as the naming hook is.
@@ -160,7 +164,7 @@ class CreateDialog(
     /** The elements the thing being made is built of — grown by [includeClosure], never by anything else. */
     val members: List<Element> get() = memberList
 
-    val title: String get() = if (mode == CreateMode.TOOL) "Make a tool" else "Group"
+    val title: Msg get() = if (mode == CreateMode.TOOL) Msgs.uiCreateMakeTool() else Msgs.uiCreateGroup()
 
     /**
      * **Give the group a frame** (OP-16 step 2), so confirming places it in the same breath — ticked by
@@ -175,34 +179,30 @@ class CreateDialog(
     var framed: Boolean = mode == CreateMode.GROUP
 
     /** The tick's label. */
-    val framedLabel: String get() = "movable (with frame)"
+    val framedLabel: Msg get() = Msgs.uiCreateMovableFrame()
 
     /** What ticking it makes — an intent, not a success. */
-    val framedMeaning: String get() =
-        "a movable part: it gets a frame, so the whole of it moves as one — drag any member, or type x / y / angle"
+    val framedMeaning: Msg get() =
+        Msgs.uiCreateMovablePartItGetsFrame()
 
     /** What leaving it unticked makes — the other intent, and the one a user found the use for. */
-    val flatMeaning: String get() =
-        "a named set: no frame, e.g. an array original — the copies an array makes of it derive frame-free"
+    val flatMeaning: Msg get() =
+        Msgs.uiCreateNamedSetNoFrameE()
 
     /**
      * The dialog's own help line. Naming the default is the point: a group takes the freedom it is built on
      * and becomes movable, while a tool starts with everything free ticked, because a tool with no inputs is
      * a copy and not a function.
      */
-    val help: String get() =
+    val help: Msg get() =
         when {
             problem != null -> problem
             mode == CreateMode.TOOL ->
-                "Ticked sources become the tool's inputs (clicked, or taken from the panel). " +
-                    "The first point places the instance; unticked ones are captured, shared by every instance."
+                Msgs.uiCreateTickedSourcesBecomeToolInputs()
             candidates.isEmpty() ->
-                "A group of the ${members.size} selected element(s). Ticked \"$framedLabel\": $framedMeaning. " +
-                    "Unticked: $flatMeaning."
+                Msgs.uiCreateGroupSelectedElementSTicked(count = members.size, framedLabel = framedLabel, framedMeaning = framedMeaning, flatMeaning = flatMeaning)
             else ->
-                "A group of the ${members.size} selected element(s), plus the ticked degrees of freedom it is " +
-                    "built on — those are what the frame moves. Untick one to leave it outside, and the group " +
-                    "will not move independently. Ticked \"$framedLabel\": $framedMeaning. Unticked: $flatMeaning."
+                Msgs.uiCreateGroupSelectedElementSPlus(count = members.size, framedLabel = framedLabel, framedMeaning = framedMeaning, flatMeaning = flatMeaning)
         }
 
     /**
@@ -210,7 +210,7 @@ class CreateDialog(
      * read at creation time so an unticked shared point is reported *here*, where it can still be ticked,
      * rather than only when Place refuses much later (OP-16's honest-failure rule).
      */
-    var warnings: List<String> = emptyList()
+    var warnings: List<Msg> = emptyList()
         internal set
 
     fun toggle(index: Int): Boolean {
@@ -238,18 +238,18 @@ class CreateDialog(
             .also { closureCache = it }
 
     /** The action's label — one sentence, in the words the refusal uses. */
-    val closureLabel: String get() = INCLUDE_CLOSURE_LABEL
+    val closureLabel: Msg get() = INCLUDE_CLOSURE_LABEL
 
     /**
      * What ticking it costs, **as a count, before confirming** — and honestly when that is everything: a
      * closure that swallows the drawing is a decision the user should be able to decline, not a surprise.
      */
-    val closureNote: String get() =
+    val closureNote: Msg get() =
         when {
-            closure.isEmpty() -> "nothing more is needed — this group already moves as one"
+            closure.isEmpty() -> Msgs.uiCreateNothingMoreIsNeededThis()
             members.size + closure.size >= drawingSize && drawingSize > 0 ->
-                "+ ${closure.size} elements — that is the whole drawing; leaving it flat may be the better answer"
-            else -> "+ ${closure.size} element${if (closure.size == 1) "" else "s"}"
+                Msgs.uiCreateElementsThatIsWholeDrawing(count = closure.size)
+            else -> Msgs.uiCreatePlusElements(count = closure.size)
         }
 
     /** Whether the affordance is worth showing at all — still true once taken, so the tick does not vanish. */
@@ -283,12 +283,12 @@ class CreateDialog(
     val ready: Boolean get() = if (mode == CreateMode.TOOL) problem == null && checkedPoints.isNotEmpty() else members.isNotEmpty()
 
     /** What is missing, when [ready] is false. */
-    val blocker: String? get() =
+    val blocker: Msg? get() =
         when {
             ready -> null
             problem != null -> problem
-            mode == CreateMode.TOOL -> "Tick at least one point: the first one is where an instance is placed"
-            else -> "Select the elements to group first"
+            mode == CreateMode.TOOL -> Msgs.uiCreateTickLeastOnePointFirst()
+            else -> Msgs.uiCreateSelectElementsGroupFirst()
         }
 
     companion object {
@@ -330,7 +330,7 @@ class CreateDialog(
                     analysis.points.map { InputCandidate(name(it), it, null, !anyOwned || it.id in analysis.owned) } +
                         analysis.parameters.map { InputCandidate(it.name, null, it, true) }
                 } else {
-                    analysis.freedoms.map { InputCandidate(it.label, it.element, null, true) }
+                    analysis.freedoms.map { InputCandidate(it.label.render(), it.element, null, true) }
                 }
             return CreateDialog(mode, "", members, rows, analysis.problems.firstOrNull()?.takeIf { tool }, closureOf, drawingSize)
         }

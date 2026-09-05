@@ -300,7 +300,7 @@ fun assertTransportNeverFlips(
     reach: Double,
 ) {
     val (frame, why) = Frames3.along(path, up, reach = reach)
-    val f = kotlin.test.assertNotNull(frame, why)
+    val f = kotlin.test.assertNotNull(frame, why?.render())
     assertTrue(f.stations.size >= 4, "the path is sampled into stations to look at: ${f.stations.size}")
     for (i in 1 until f.stations.size) {
         val a = f.stations[i - 1]

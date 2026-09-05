@@ -1,5 +1,8 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
+
 /**
  * **Is this mesh a closed, oriented solid?** — the one production implementation of the question OP-9's
  * *watertight-or-refused* doctrine is stated in, and the twin of the test suite's `assertManifold`.
@@ -25,11 +28,11 @@ object Watertight {
      * The message is a sentence fragment ("the surface is not closed and consistently wound at the edge 3-4"),
      * so every caller can put it after its own framing rather than re-deriving the reason.
      */
-    fun defect(mesh: Mesh3): String? {
-        if (mesh.triangles.isEmpty()) return "it has no triangles"
+    fun defect(mesh: Mesh3): Msg? {
+        if (mesh.triangles.isEmpty()) return Msgs.refusalMeshItHasNoTriangles()
         val used = HashMap<Long, Int>(mesh.triangles.size * 3)
         for (t in mesh.triangles) {
-            if (t.a == t.b || t.b == t.c || t.a == t.c) return "a triangle repeats a corner"
+            if (t.a == t.b || t.b == t.c || t.a == t.c) return Msgs.refusalMeshTriangleRepeatsCorner()
             for (e in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
                 val key = (e.first.toLong() shl 32) or (e.second.toLong() and 0xffffffffL)
                 used[key] = (used[key] ?: 0) + 1
@@ -41,11 +44,11 @@ object Watertight {
                 val fwd = (e.first.toLong() shl 32) or (e.second.toLong() and 0xffffffffL)
                 val back = (e.second.toLong() shl 32) or (e.first.toLong() and 0xffffffffL)
                 if (used[fwd] != 1 || used[back] != 1) {
-                    return "the surface is not closed and consistently wound at the edge ${e.first}-${e.second}"
+                    return Msgs.refusalMeshSurfaceIsNotClosedConsistently(first = e.first, second = e.second)
                 }
             }
         }
-        if (Geom3.volume(mesh) <= 0.0) return "it encloses no positive volume — the surface is inside out"
+        if (Geom3.volume(mesh) <= 0.0) return Msgs.refusalMeshItEnclosesNoPositiveVolume()
         return null
     }
 }

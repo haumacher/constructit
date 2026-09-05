@@ -14,6 +14,7 @@ import constructit.editor.ThickNetwork
 import constructit.editor.Tools
 import constructit.geom.Geom3
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -492,13 +493,13 @@ class OpeningHandleTest {
         ed.setTool(Tools.SELECT)
         ed.pointerDown(ed.camera.worldToScreen(Vec2(50.0, 0.5)))
         assertTrue(ed.selectedJamb == null, "along the wall the leg is nearer: ${ed.selectionLabel()}")
-        assertEquals("leg", ed.selectionLabel().substringBefore(" "), "got: ${ed.selectionLabel()}")
+        assertEquals("leg", ed.selectionLabel().render().substringBefore(" "), "got: ${ed.selectionLabel()}")
         ed.pointerUp(ed.camera.worldToScreen(Vec2(50.0, 0.5)))
 
         // and a vertex outranks everything meeting at it
         ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
         assertTrue(ed.selectedJamb == null)
-        assertEquals("corner", ed.selectionLabel().substringBefore(" "), "got: ${ed.selectionLabel()}")
+        assertEquals("corner", ed.selectionLabel().render().substringBefore(" "), "got: ${ed.selectionLabel()}")
         ed.pointerUp(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
     }
 }

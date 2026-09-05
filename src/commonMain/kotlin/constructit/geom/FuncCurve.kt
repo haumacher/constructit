@@ -3,6 +3,8 @@ package constructit.geom
 import constructit.expr.Expr
 import constructit.expr.ExprError
 import constructit.expr.ExprEval
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -42,7 +44,7 @@ data class FuncCurve(
     val y: Expr,
     val dx: Expr?,
     val dy: Expr?,
-    val noTangent: String?,
+    val noTangent: Msg?,
     val env: Map<String, Quantity>,
     val t0: Double,
     val t1: Double,
@@ -114,11 +116,11 @@ object FuncCurves {
      */
     private fun mm(
         q: Quantity,
-        what: String,
+        what: Msg,
     ): Double {
         if (q.dim == Dimension.LENGTH) return q.base
         if (q.dim == Dimension.NONE && q.base == 0.0) return 0.0
-        throw DimensionError("$what must be a length, and this is ${q.dim}")
+        throw DimensionError(Msgs.refusalDimensionMustBeALength(what = what, dim = q.dim.toString()))
     }
 
     /**
@@ -146,8 +148,8 @@ object FuncCurves {
         t: Double,
     ): Vec2 {
         val env = envAt(c, t)
-        val px = mm(ExprEval.eval(c.x, env), "x(${c.param})")
-        val py = mm(ExprEval.eval(c.y, env), "y(${c.param})")
+        val px = mm(ExprEval.eval(c.x, env), Msg.text("x(${c.param})"))
+        val py = mm(ExprEval.eval(c.y, env), Msg.text("y(${c.param})"))
         return c.map.apply(Vec2(px, py))
     }
 
@@ -167,8 +169,8 @@ object FuncCurves {
         val ey = c.dy ?: return null
         return try {
             val env = envAt(c, t)
-            val vx = mm(ExprEval.eval(ex, env), "dx/d${c.param}")
-            val vy = mm(ExprEval.eval(ey, env), "dy/d${c.param}")
+            val vx = mm(ExprEval.eval(ex, env), Msg.text("dx/d${c.param}"))
+            val vy = mm(ExprEval.eval(ey, env), Msg.text("dy/d${c.param}"))
             c.map.linear(Vec2(vx, vy))
         } catch (_: ExprError) {
             null
@@ -207,20 +209,19 @@ object FuncCurves {
      * domain — or null when it is one. What a node turns into [constructit.core.EvalResult.Invalid] (OP-3),
      * so every failure here heals the moment the formula or the domain is corrected.
      */
-    fun invalidity(c: FuncCurve): String? {
-        if (!c.t0.isFinite() || !c.t1.isFinite()) return "the domain of ${c.param} is not a pair of numbers"
+    fun invalidity(c: FuncCurve): Msg? {
+        if (!c.t0.isFinite() || !c.t1.isFinite()) return Msgs.refusalFunccurveDomainIsNotPairNumbers(param = c.param)
         if (c.span <= 0.0) {
-            return "the domain runs from ${trim(c.t0)} to ${trim(c.t1)}, which is not forwards — a function curve " +
-                "needs its ${c.param} to end after it starts"
+            return Msgs.refusalFunccurveDomainRunsWhichIsNot(text = trim(c.t0), text2 = trim(c.t1), param = c.param)
         }
         for (i in 0..VALIDATE_STEPS) {
             val t = c.t0 + c.span * i / VALIDATE_STEPS
             try {
                 pointAtOrThrow(c, t)
             } catch (e: ExprError) {
-                return "at ${c.param} = ${trim(t)}: ${e.message}"
+                return Msgs.refusalFunccurveAtParameter(param = c.param, value = trim(t), message = e.message ?: "")
             } catch (e: DimensionError) {
-                return "at ${c.param} = ${trim(t)}: ${e.message}"
+                return Msgs.refusalFunccurveAtParameter(param = c.param, value = trim(t), message = e.message ?: "")
             }
         }
         return null

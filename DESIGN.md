@@ -14468,6 +14468,33 @@ the composition table is driven generically as well as by its own test.
   the drawing does not have. Corner patches already move when a rounding is added, nothing durable addresses
   one, and the thing that does — a rounding chained on a rail — is precisely what now holds still.
 
+- **Turn 79 — languages, slice 2: a message is a value, and the engine stops making sentences** (OP-29;
+  session 81). The design had settled the shape a year of prose ago — *"every sentence becomes one message
+  with typed placeholders, the enumerations move inside it, and the engine stops producing prose"* — so what
+  is worth an entry is not the shape but the four things doing it to ~1200 sentences taught. **The typing
+  trick that made it landable is the one that kept 1500 assertions untouched**: `EvalResult.Invalid` carries
+  `why: Msg` and *answers* `reason: String`; `Document.noteMsg` is the state and `note` is a rendering
+  accessor over it. A test that reads `ed.statusHint` gets a sentence, in the language it is running in, and
+  never learns that anything moved — which is what let the refactor be checked by the suite that existed
+  rather than by a suite written for it. **`toString` renders, and the "safe" alternative is not safe**: a
+  `toString` returning the key would have put `refusal.blend.tooSharp` on a screen the first time a
+  half-converted `"…$msg…"` quoted a message into a template, whereas rendering makes that composition
+  correct in *both* languages — and that is precisely what allowed the conversion to proceed area by area,
+  with a converted refusal reading right while the note quoting it was still a string. **ICU's apostrophe is
+  a trap laid for exactly this refactor**: `'{n}'` does not put `{n}` in quotes, it *quotes the brace*, and
+  the message then renders the literal text and binds nothing — 30 English patterns and 11 German ones were
+  written that way (by a mechanical conversion and by DeepL), and only ICU4J's own parser, asked in a test,
+  could see it. Its siblings: a select branch may not be *empty*, which the translation pipeline refuses
+  outright and which is always a plural wanting to be written properly; and DeepL translates the ICU
+  **keywords**, so `{count, plural, one{…}}` came back as `{count, Plural, ein{…}}` twice. And **a mechanical
+  terminology sweep buys consistency and owes grammar**: pinning *helix* to one word across 28 sentences left
+  `ein Helix` where the German noun is feminine, and eleven keys needed their article, gender and genitive
+  put back by hand. Of the 366 German corrections the review made, the 22 *broken* ones were all found by
+  tests and the 344 *wrong* ones all by reading — which is the honest division of labour, and the reason
+  neither half can be dropped. The one number that disappoints: the bundle grew 84.6 KB gzipped, past the
+  budget slice 1 set, because the table now holds every sentence of the app in every language; nothing about
+  the engine is to blame and the cure is a chunk per language, recorded on the queue.
+
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -16357,6 +16384,8 @@ German as the first target and the mechanism proven on a third language.
 
 **Where the plugin comes from (corrected in session 81, after the first CI run).** Slice 1 applied `de.haumacher.auto-translate-arb` as a composite build of the sibling checkout, because the Plugin Portal then carried 1.1.1 and the German was made with the description-as-context and glossary features that came later. That made the build depend on a second checkout, and the GitHub build failed with *"Included build '…/auto-translate' does not exist"*. The plugin's 1.1.4 release — the first with those features — is on the Portal, so the build applies the **published** plugin, versioned in `build.gradle.kts`, and `-Pautotranslate.path=` swaps in a sibling composite only for developing the plugin against this repository. A build that needs a checkout beside it is a build that fails everywhere but on the machine it was written on; the JT sibling is the one deliberate exception, and CI checks it out by name.
 
+**The plugin's own defects are its own issues.** The four defects and the one feature gap slice 1 and 2 found in `auto-translate` are filed where they belong, at the user's direction, as haumacher/auto-translate issues #4 (`translateArb` under the configuration cache), #5 (`#` → `{#}`), #6 (translated placeholder names), #7 (a target language added after the source is stamped), #8 (a context attribute separate from `description`); the workarounds this repository carries — explicit `{count}` plurals, `--no-configuration-cache`, the placeholder guard — are dropped as each is released.
+
 Slice 1 is delivered whole and the chrome speaks two languages. What follows is the shape it actually took,
 the three places the design's own sentences had to be corrected by contact with the tools, and what is
 deliberately still English.
@@ -16422,7 +16451,9 @@ status hints, `Document`'s 249 notes, the refusal reasons in `geom/` and the `Ev
 prints — about 1200 composed sentences. A German session therefore shows a **German chrome around English
 prose**, which is what a slice looks like from inside. Two smaller ones, each for a reason rather than for
 lack of time: a **scalar slot's name** stays locale-neutral because it is a file identifier (above), and the
-**units** `mm` and `°` stay as they are because number and unit formatting is slice 3.
+**units** `mm` and `°` stay as they are because number and unit formatting is slice 3. *(Read as of session
+81. Everything in this paragraph but those last two is retired by the slice-2 note below; the scalar slot's
+name and the units stand.)*
 
 **The file stays locale-neutral, and it is asserted.** `MessageBundleTest.theFileSaysTheSameThingInEveryLanguage`
 builds two drawings, saves each under `en` and under `de`, and requires the two scripts to be byte-identical
@@ -16436,6 +16467,133 @@ its prose moved into the bundle), against a budget of 60 KB: that is FormatJS's 
 language. A **third** language would have taken it to +73.2 KB, over the budget — and French, unlike German,
 has had no human pass. Both reasons say the same thing, so `app_fr.arb` is not committed; the proof it was
 run for is recorded above.
+
+### Implementation status (as built — **slice 2: the sentences leave the code**, session 81)
+
+Slice 1 left a German chrome around English prose. Slice 2 is the load-bearing half the design named: the
+~1200 composed status notes and refusal reasons are **message values** now, and a German session is German
+all the way down — the refusal, the note, the name of the face inside the refusal, the plural, the *a/an*.
+`geom/`, `dsl/`, `core/`, `Document.kt` and `Editor.kt` between them carry **no English sentence at all**,
+and `EngineBundleTest` fails the build on the next one.
+
+**A message is a value, and `Msg` is three shapes in one class.** `constructit.l10n.Msg` is a key plus
+`Map<String, Any?>` of arguments; `Msg.text(s)` is locale-neutral text (an element's name, a formatted
+number, an exception's own words — *format*, never UI, OP-18); `Msg.joined(parts, sep)` is several notes on
+one line, where the separator is punctuation and each part renders on its own. An argument may itself be a
+`Msg` and is rendered in the **outer** locale, which is the whole reason `FaceName.label`, `EdgeName.label`,
+`kindWord` and every `.word` enumeration are messages and not strings: *"the plane does not cut the top
+face"* is one German sentence with one German name in it, not three fragments. `Msg.andList` puts even the
+final *and* of a read-out list in the bundle. `:generateMessages` now emits a second object, `Msgs`, with
+one factory per key returning the value, and `Messages` became a thin rendering face over it
+(`Messages.foo(a, b, locale) == Msgs.foo(a, b).render(locale)`) — one table, one signature, two ways to ask.
+A new ARB placeholder type, `"message"`, is what makes a nested message *typed*: 535 placeholders declare it,
+so a call site that hands a pre-rendered English word to a slot that wants a message does not compile.
+
+**`toString` renders, and that is a decision.** The design left it open; the answer is that the "safe"
+alternative is not safe. A `toString` that gave the key back would put `refusal.blend.tooSharp` on a user's
+screen the moment any surviving `"…$msg…"` composed a message into a sentence — a silent wrong output in
+production, not a caught mistake. Rendering makes that same composition *correct in English and correct in
+German*, and it is what made a refactor of this size landable **in areas**: a refusal converted in `geom/`
+read exactly as before while the note in `Document` that quoted it was still a string, and the note
+converted later without the refusal being touched again. The guard against relying on it for ever is
+`EngineBundleTest`, which fails on a sentence left in Kotlin, plus `MessageValueTest`, which pins the
+decision.
+
+**The channels changed type; the readings kept their names.** `EvalResult.Invalid` carries `why: Msg` and
+answers `reason: String` by rendering it; `Document.noteMsg`/`Editor.statusMsg`/`Editor.validityMsg` are the
+state and `note`/`statusHint`/`validityNote`/`statusLine` are rendering accessors over them; the
+`Pair<T?, String?>` refusal idiom became `Pair<T?, Msg?>` in all 136 declarations. That shape is what let
+**every one of the ~1500 existing substring assertions stay exactly as written**: a test reads `ed.statusHint`
+and gets the sentence, in the language the test is running in, which on the JVM is English. The one thing a
+test *had* to gain is `operator fun Msg?.contains(CharSequence)`, so `"…" in why` reads through a value the
+way it read through a string; 38 test files import it and nothing else about them moved except a `.render()`
+where kotlin.test wanted a `String?` for its failure message. **No English sentence was reworded** — the
+conversion preserved the text byte for byte and moved only its *shape* — with exactly one exception, listed
+because a claim of "none" would be a lie: `"sqrt of negative"` became `"sqrt of a negative number"`, and no
+assertion read it.
+
+**Enumerations moved inside the sentence.** `kindWord` was `(if (w.first() in "aeiou") "an " else "a ") + w`
+— an English rule executed in Kotlin over an enum's own `name`. It is now one ICU `select` of 21 branches
+with the article *inside each branch*, so a language whose article depends on gender and case can put the
+right one in each. The same move fixes the blend kind (fillet / chamfer / profile blend), the two caps of an
+extrusion and of a partial revolve, the side a mitre eats its run from, whether a run closed or merely
+ended, and whether a rounding took one edge or every edge of a face — 22 patterns carry a `select`. And the
+English-only `"element" + (if (n == 1) "" else "s")` idiom is gone: 44 patterns are real ICU plurals, which
+is not cosmetic, because that idiom rendered *"2 Elements"* in German and nothing about the code could have
+noticed.
+
+**Optional clauses are arguments, never concatenations.** Where a sentence had a clause that is sometimes
+empty (*"…, offset by x"*, *" — but {why}"*, *", picked in the 3D view"*), the clause is a `{name}` of type
+`message` filled with `Msg.EMPTY` when absent, and the frame is one pattern the translator reads whole. 47
+such chains were merged; the `{clause…}` names carry a line in their description saying what they are.
+
+**Three traps the tools set, all of them ICU's apostrophe rule.** (1) `'{n}'` is not *"{n} in quotes"* — the
+apostrophe **quotes the brace**, so the message renders the literal text `{n}` and binds nothing. 30 English
+patterns and 11 German ones were written that way by the mechanical conversion and by DeepL respectively;
+the cure is `''{n}''`, and `MessageBundleTest` catches it because ICU4J's own parser reports the argument
+list. (2) A **select branch may not be empty**: `{n, select, one{} other{s}}` is legal ICU and the
+translation pipeline refuses it (*"text must not be empty"*), which is a better error than it looks — an
+empty branch is always a plural or a select wanting to be written properly, and all seven became one. (3)
+DeepL translates the ICU **keywords**, not just the words: two patterns came back as `{count, Plural,
+ein{…} weitere{…}}`. The generator's placeholder guard (slice 1's finding) caught the renamed *arguments*;
+the keyword case needed a structural comparison of English against German, which `MessageBundleTest` now
+performs through ICU4J's `MessagePattern`.
+
+**What the German cost, and what the review found.** 1495 new keys — 1488 in one run of 1613 fragments over
+240 context groups, for **122,519 billed characters in 1 m 37 s**, and 99 more for five keys added
+afterwards; the 670 keys slice 1 had already stamped were reused verbatim. The bundle is 2163 keys, 171 KB of
+English and 231 KB of German. The review made **366 corrections**, in seven classes. **24 broken**, in 22 keys
+(11 renamed placeholders across 9 keys, 2 translated ICU keywords, 11 placeholders quoted out of existence by
+an apostrophe) — every one of them caught by a test rather than by reading. The other 342 were found by
+reading: **96 register** (`klicke`/`ziehe` against the chrome's `Sie`, which slice 1 had settled and DeepL
+does not know); **190 terminology** (one word per concept: *solid* → Volumenkörper 115 times against a
+mixture with *Körper*, *crease* → Kante, *rail* → Leitkurve, *guide* → Führungskurve, *blend* → Verrundung,
+*helix* → Helix — the last chosen against the new glossary because slice 1's reviewed chrome had already
+settled it, and consistency with what a person approved beats a lemma added later); **11 grammar** (the
+*Helix* sweep left `ein Helix` where the noun is feminine, and eleven keys needed their article, gender and
+genitive put back — the price of a mechanical terminology pass, and the reason each one is inspected); **11
+mid-sentence capitals** (a fragment that continues a sentence, capitalised as though it began one — found by
+comparing the first letter against the English, and then read one by one, because a German *noun* is
+capitalised wherever it stands and four of the thirteen candidates were nouns); **13 select branches and
+phrasings** (`top{Nach oben}` for *the top face*, `yes{Verrundungen}` where a verb was wanted, `one{it}` left
+in English, *"copies round pattern X"* read as *"copies of the round pattern"*); and **21 words and phrases**
+(*about {mm} mm* as *über* rather than *etwa*, *less* as *weniger* rather than *minus*, `roughness` and
+`metallic` left in English inside a German sentence). The glossary gained 24 terms
+of art and deliberately **not** the polysemous everyday words — *run*, *face*, *edge*, *corner*, *plane*:
+slice 1's own finding is that a pinned lemma crossing a verb and a noun is how *Fillet edge* became *round
+off the fillet*, and those five are verbs as often as they are nouns here.
+
+**The file stays locale-neutral, on four drawings now.** `GermanSessionTest.theFileSaysTheSameThingInEveryLanguage`
+saves three built drawings and GitHub #29's own script under `en` and under `de` and requires the bytes to be
+identical, then round-trips each. Nothing in `DocumentFormat` changed.
+
+**The switch now keeps what is standing.** Slice 1's language picker had to *clear* the status line, because
+the note it held had been composed in the language before last. It does not any more: the note is a value, so
+the picker re-reads the very sentence the last gesture produced. `BrowserE2ETest.theChromeSpeaksGerman` makes
+a gesture, reads its German status line, switches to English and reads the *same note* in English with no
+gesture repeated — which is the shortest statement of what "rendered at the edge" bought.
+
+**Cost, measured, and the one budget this breaks.** `constructit.js` grew from 569.4 KB to 656.1 KB gzipped:
+**+84.6 KB**, against slice 1's stated 60 KB budget for the whole feature. Nothing here is engine — FormatJS
+was already paid for — it is the *text*: 171 KB of English and 231 KB of German patterns, compiled into the
+one table every session downloads whether or not it ever switches. The route the design already records
+(generate `when` branches at build time and drop FormatJS) does not help, because it saves the parser and not
+the sentences. What would is **one chunk per language, fetched on demand**, which the generator is in exactly
+the right place to emit; it is recorded on the queue rather than built here, because a slice that both moves
+1200 sentences and changes how the bundle is loaded could not be reviewed.
+
+**What is deliberately still English**, stated so it is not looked for. The **expression parser's own
+diagnostics** (`expr/Expr.kt`: *"a value is expected at position 4"*, *"unknown unit 'in'"*) — a dozen
+sentences about the syntax of a formula, with character positions in them; they are a sublanguage of their
+own, they reach the user through `ExprError.message`, and they belong with slice 3's number and unit
+formatting rather than with the geometry's refusals. The **`exchange/` layer**'s import and export notes,
+which are outside the five files this slice owns. Five `require`/`throw` messages that state a *programming*
+invariant, listed by hand in `EngineBundleTest` with the reason for each. And **numbers and units**: every
+`Frames3.mm(x)` and `Format.num(x)` still hands its message a String it has already formatted, which is why
+`{closingGap}` renders `0.30000000000000004` in German exactly as it does in English — deliberately, because
+turning those into ICU number arguments changes what the English says and is slice 3's whole subject. The
+messages are shaped for it: one `phrase`/`lengthWord` argument per number, reused, never a `"5 mm"` baked
+into a pattern.
 
 
 ## Open work queue (crash-safe snapshot; ordered)
@@ -20228,22 +20386,33 @@ meaning moved, so the version stays 6. See the as-built note *the next step* und
 
 **Queued in session 81 — level sections through a rounded body; (b) retired in session 81 as not-a-bug, (a) still open.** Both pre-date OP-30 and both speak the same sentence (*"the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead"*): (a) a **single band with a free end** — a fillet along one rim edge of a plate — notches the two side faces its caps stand in with the wedge's own section, and `dressedFaces` corrects the outlines of the band's *own* two faces only, so those side faces keep a stale outline and the level section cannot close; the cure is the same analytic correction for the **end** faces (a wedge of two lines and an arc taken out of a corner of the outline — line against line, line against circle, nothing new). ~~(b) a **chain of roundings** — the second level's trims land on faces the first already corrected, and the correction is not composed.~~ **(b) was a misdiagnosis and is retired in session 81, unfixed because there was nothing to fix**: the chain composes its corrections perfectly, and the one-pass follow-up (OP-30's next step) proved it by answering the identical number. A plate rounded 3 mm on its top rim and 5 mm on its bottom one sections into the analytic area at a plane through either band, both as a chain of two levels and as one pass, to the last bit (`DressedBodyOnePassTest.aLevelSectionThroughTwoSizesIsExact`). What the *"two sizes"* symptom really is, is **(a) one edge further along**: two *adjacent* rim edges at different radii are not congruent, so **no corner is built** between them and each band has a **free end** at the vertex they meet at — and a free end is exactly what (a) is about. That case refuses identically before and after the follow-up (`twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords`), so what is queued here is (a) alone, and its cure is the whole of it. A whole-face rounding (a closed chain) sections exactly today, which is why the OP-30 probe uses one — and so now does a dressing of several closed chains at several sizes.
 
-**Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
+**Queued in session 81 — languages (OP-29); slices 1 and 2 retired, slices 3 and 4 still open.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*. What is left is **(3)** number and unit formatting in the UI — the decimal comma, the display unit, and with them the `Frames3.mm`/`Format.num` strings that slice 2 deliberately kept as pre-formatted arguments — and **(4)** the review loop, proven on a third language.
 
 **Slice 1 of the languages retired in session 81 — the mechanism, and the chrome.** The ARB, the generator,
 the two `format` actuals and the locale switch are built, and the whole chrome speaks them: 134 tool rows,
 their help and slot names, the ten category headings, the generic slot words, and every label, button,
 placeholder and tooltip of `index.html` and `Main.kt` — 668 keys, English and German, with a
-`ChromeBundleTest` that fails the build on an English sentence left behind in any of the three files. What
-remains of OP-29 is unchanged in shape and is what the queue still holds: **(2)** the ~1200 composed status
-notes and refusal reasons as messages-as-values, which is the load-bearing refactor and the reason a German
-session today reads as a German chrome around English prose; **(3)** number and unit formatting; **(4)** the
-review loop, which slice 1 has now walked once and left two findings for the plugin's own tracker — a target
-language added after the source is stamped translates nothing, and the ARB `description` doubling as the
-DeepL *context* means per-key documentation costs one request per key. It leaves one thing parked, stated
-where it belongs: a **scalar slot's name** is shown in the panel and in the status line but is also the name
-of a parameter in the file, so it cannot be translated as it stands — giving it a display name beside its
-file name is slice 2's business, not a deferral of slice 1's.
+`ChromeBundleTest` that fails the build on an English sentence left behind in any of the three files. It
+left two findings for the plugin's own tracker — a target language added after the source is stamped
+translates nothing, and the ARB `description` doubling as the DeepL *context* means per-key documentation
+costs one request per key — and one thing parked, stated where it belongs: a **scalar slot's name** is shown
+in the panel and in the status line but is also the name of a parameter in the file, so it cannot be
+translated as it stands.
+
+**Slice 2 of the languages retired in session 81 — the sentences, all ~1200 of them.** Every refusal in
+`geom/`, `dsl/` and `core/`, every status note in `Document` and `Editor`, and every *name* they quote is a
+`Msg` — a key and typed arguments, rendered at the edge in the reader's language — and `EngineBundleTest`
+fails the build on the next English sentence written into those five places. 1495 new keys, the German made
+with the published plugin for 122,618 billed characters and corrected by hand in 366 places. See the as-built
+note *slice 2: the sentences leave the code* under *Languages (OP-29)* for the `Msg` design, the `toString`
+decision, ICU's apostrophe trap, and what is deliberately still English. It leaves **two** things parked,
+each stated where it belongs. The **scalar slot's name** slice 1 parked is still parked and is not a message
+problem: giving a parameter a display name beside its file name is a change to the *model* (a second name on
+`ScalarEntry`, and a rule for which of the two the writer uses), and it belongs with slice 3's panel work
+rather than with a refactor of sentences. And the **bundle now carries every sentence of the app in every
+language** — +84.6 KB gzipped, past slice 1's 60 KB budget — because the pattern table is compiled into the
+one chunk every session downloads; the cure is a chunk per language fetched on demand, which the generator is
+in the right place to emit and which no slice has yet been given.
 
 
 **Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide them.**

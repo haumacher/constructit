@@ -6,6 +6,7 @@ import constructit.editor.Editor
 import constructit.editor.PointerButton
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -56,7 +57,7 @@ class FramedGroupDefaultTest {
         assertTrue(d.framedMeaning.contains("moves as one"), "got: ${d.framedMeaning}")
         assertTrue(d.flatMeaning.contains("array original"), "the flat reading is a purpose: ${d.flatMeaning}")
         assertFalse(d.flatMeaning.contains("cannot"), "…and is not phrased as a failure: ${d.flatMeaning}")
-        assertTrue(d.help.contains(d.framedLabel) && d.help.contains("array original"), "got: ${d.help}")
+        assertTrue(d.help.render().contains(d.framedLabel.render()) && d.help.render().contains("array original"), "got: ${d.help}")
 
         // a tool takes no frame: an instance is *placed* by its anchor input (OP-6), which is a different idea
         ed.cancelCreate()

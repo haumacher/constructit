@@ -15,6 +15,7 @@ import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.Section3
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.abs
 import kotlin.test.Test
@@ -524,7 +525,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val why = assertNotNull(ed.doc.hideRefusal(entry))
         assertTrue("not a picture" in why && "Press Delete" in why, "and it says why and what to do: $why")
         // …and the gesture says it out loud rather than leaving "Nothing to hide" to read as a bug
-        assertEquals(why, ed.statusHint, "the status line carries the refusal: ${ed.statusHint}")
+        assertEquals(why.render(), ed.statusHint, "the status line carries the refusal: ${ed.statusHint}")
         assertTrue(DocumentFormat.save(ed.doc).lines().none { it.startsWith("hide ") }, "and nothing was recorded")
     }
 }

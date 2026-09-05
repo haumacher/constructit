@@ -31,6 +31,7 @@ import constructit.geom.SweepProfile
 import constructit.geom.Turn3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.test.Test
@@ -368,14 +369,14 @@ class EdgeAdjacencyTest {
         // two faces that do not meet, and a face that does not exist, each refuse by name
         val (none, whyNone) = Section3.edgeBetween(f, FaceName.Side(0), FaceName.Side(5))
         assertNull(none)
-        assertTrue("do not meet" in assertNotNull(whyNone), whyNone)
+        assertTrue("do not meet" in assertNotNull(whyNone), "$whyNone")
         val (gone, whyGone) = Section3.edgesOfFace(f, FaceName.Side(99))
         assertNull(gone)
-        assertTrue("has no" in assertNotNull(whyGone), whyGone)
+        assertTrue("has no" in assertNotNull(whyGone), "$whyGone")
         // …and a feature with no face list refuses in the words it always used
         val (noEdges, whyNoEdges) = Section3.edgesOfFace(Feature3.MeshBoolean(BoolOp.UNION), FaceName.Side(0))
         assertNull(noEdges)
-        assertTrue("mesh-only" in assertNotNull(whyNoEdges), whyNoEdges)
+        assertTrue("mesh-only" in assertNotNull(whyNoEdges), "$whyNoEdges")
     }
 
     /**
@@ -432,7 +433,7 @@ class EdgeAdjacencyTest {
         val faces = assertNotNull(Section3.faces(f).first)
         val patch = faces[arc]
         assertNull(patch.plane, "a cylinder is no plane, so it still declines a sketch")
-        assertTrue("cylinder" in assertNotNull(patch.reason), patch.reason!!)
+        assertTrue("cylinder" in assertNotNull(patch.reason), "${patch.reason!!}")
         val surface = assertNotNull(patch.surface, "…and now it says so in the vocabulary too")
         val band = assertNotNull(surface.band as? Revolve3.Band.Cylinder)
         assertClose(band.r, 10.0, tol = 1e-9, msg = "the fillet's own radius")
@@ -501,7 +502,7 @@ class EdgeAdjacencyTest {
         assertNull(patch.surface, "no name means no surface, not an approximate one")
         val why = assertNotNull(patch.reason)
         assertTrue("elliptic cylinder" in why, "it refuses by the name of the surface it is: $why")
-        assertTrue("no name for" in why, why)
+        assertTrue("no name for" in why, "$why")
     }
 
     /** A **planar** side face has no axis to name, so its exact statement stays its plane and its outline. */
@@ -600,12 +601,12 @@ class EdgeAdjacencyTest {
         for ((f, why) in listOf(prism to prismOnly, sweep to sweepOnly, imported to importOnly, boolean to meshOnly)) {
             val (es, reason) = Section3.edges(f)
             assertNull(es, "${f::class.simpleName} has no constructed edges")
-            assertEquals(why, reason, "${f::class.simpleName} refuses in its own words")
+            assertEquals(why, reason?.render(), "${f::class.simpleName} refuses in its own words")
         }
         // a prism *does* name faces (one whole side per boundary piece, for sketching on) and still has no
         // edges, which is the recorded asymmetry and not a gap this slice may close
         assertNotNull(Section3.faces(prism).first, "a prism names faces to sketch on")
-        assertEquals(prismOnly, Section3.edgesOfFace(prism, FaceName.Side(0)).second)
+        assertEquals(prismOnly, Section3.edgesOfFace(prism, FaceName.Side(0)).second?.render())
     }
 
     // ---- nothing here is stored ----

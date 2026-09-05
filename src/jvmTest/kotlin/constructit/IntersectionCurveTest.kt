@@ -23,6 +23,8 @@ import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -206,7 +208,7 @@ class IntersectionCurveTest {
         assertEquals(1, curves.size)
         assertTrue(!curves[0].fitted, "a circle has a case in the space vocabulary now, so nothing is fitted")
         assertTrue(!curves[0].sampled, "and it is not chords of anything")
-        assertEquals("exact", curves[0].exactnessWord, "and it says so")
+        assertEquals("exact", curves[0].exactnessWord.render(), "and it says so")
         assertTrue(
             curves[0].path.elements.all { it is Curve3Element.Arc3 },
             "the piece is the arc it is: ${curves[0].path.elements}",
@@ -398,7 +400,7 @@ class IntersectionCurveTest {
         // An open run needs a face that is cut without the cut closing — an *open shell*, which is what an
         // imported open body is (session 34).
         val src = plate()
-        val open = Solid3.of(Feature3.Imported("lid.jt", openShell = "the lid is one face"), openTop(src))
+        val open = Solid3.of(Feature3.Imported("lid.jt", openShell = Msg.text("the lid is one face")), openTop(src))
         val plane = Plane3(Vec3(0.0, 30.0, 0.0), Vec3.X, Vec3.Z)
         val curves = curvesOf(open, plane)
         assertTrue(curves.isNotEmpty(), "the plane cuts the lid")

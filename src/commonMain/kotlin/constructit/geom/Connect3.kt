@@ -1,5 +1,8 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
+
 /**
  * Which **end** of a curve in space a connection is made at (OP-26, step 7) — the one discrete choice the
  * *Connect* gesture carries, and structural for OP-1's own reason.
@@ -16,7 +19,7 @@ enum class CurveEnd {
     ;
 
     /** The word a refusal and a status line use. */
-    val word: String get() = if (this == START) "start" else "end"
+    val word: Msg get() = if (this == START) Msgs.wordEndStart() else Msgs.wordEndEnd()
 
     /** The parameter of this end on the piece that owns it. */
     val t: Double get() = if (this == START) 0.0 else 1.0
@@ -40,13 +43,13 @@ enum class Continuity(
     /** How many cubic pieces the joining run is made of — see [Connect3]. */
     val spans: Int,
     /** The word a status line uses. */
-    val word: String,
+    val word: Msg,
 ) {
     /** Position and **tangent** matched at both ends: one cubic. */
-    G1(1, "G1"),
+    G1(1, Msg.text("G1")),
 
     /** Position, tangent and **curvature** matched at both ends: three cubics, C2 among themselves. */
-    G2(3, "G2"),
+    G2(3, Msg.text("G2")),
 }
 
 /**
@@ -177,7 +180,7 @@ object Connect3 {
         endB: CurveEnd,
         tensionB: Double,
         mode: Continuity,
-    ): Pair<Path3?, String?> {
+    ): Pair<Path3?, Msg?> {
         val (la, whyA) = landingOf(a, endA, "first")
         if (la == null) return null to whyA
         val (lb, whyB) = landingOf(b, endB, "second")
@@ -185,16 +188,13 @@ object Connect3 {
         for ((t, which) in listOf(tensionA to "first", tensionB to "second")) {
             if (t <= 0.0) {
                 return null to
-                    "the $which tension is ${Frames3.mm(t)}, and a tension is how far the join runs on along " +
-                    "that curve's own direction before it turns — nothing, or backwards, is no join at all; " +
-                    "1 leaves it a third of the gap, which is a straight run when the two ends face each other"
+                    Msgs.refusalConnectTensionIsTensionIsHow(which = which, mm = Frames3.mm(t))
             }
         }
         val gap = (lb.at - la.at).length()
         if (gap <= Vec3.EPS) {
             return null to
-                "the two ends being joined are in the same place, so there is no gap to bridge — move one of " +
-                "the runs, or join their other ends"
+                Msgs.refusalConnectTwoEndsBeingJoinedAre()
         }
         // the speed at each end in the joining run's own parameterization over [0, 1]: a tension is a
         // fraction of the gap, so the whole construction scales with the drawing
@@ -238,19 +238,17 @@ object Connect3 {
         path: Path3,
         end: CurveEnd,
         which: String,
-    ): Pair<Landing?, String?> {
-        if (path.isEmpty) return null to "the $which curve has no pieces, so it has no end to join"
+    ): Pair<Landing?, Msg?> {
+        if (path.isEmpty) return null to Msgs.refusalConnectCurveHasNoPiecesSo(which = which)
         if (path.closed) {
             return null to
-                "the $which curve is a closed run — it comes back to where it started, so it has no end to " +
-                "join; connect two open runs, or open this one"
+                Msgs.refusalConnectCurveIsClosedRunIt(which = which)
         }
         val el = if (end == CurveEnd.START) path.elements.first() else path.elements.last()
         val tangent =
             Curves3.tangentAt(el, end.t)
                 ?: return null to
-                    "the $which curve has no direction at its ${end.word}, so there is nothing for the join to " +
-                    "leave along"
+                    Msgs.refusalConnectCurveHasNoDirectionIts(which = which, word = end.word)
         return Landing(
             at = if (end == CurveEnd.START) el.start else el.end,
             out = tangent * end.outSign,
@@ -261,7 +259,6 @@ object Connect3 {
     private fun curvatureless(
         which: String,
         end: CurveEnd,
-    ): String =
-        "the $which curve has no curvature at its ${end.word} — it stands still there, so there is nothing " +
-            "for a curvature-continuous join to match; connect them G1 instead"
+    ): Msg =
+        Msgs.refusalConnectCurveHasNoCurvatureIts(which = which, word = end.word)
 }

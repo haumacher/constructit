@@ -2943,6 +2943,24 @@ class BrowserE2ETest {
                 // **A select, through the same engine**: the tree's note about a hidden element
                 page.click("#tree .item")
                 page.click("#s-hide")
+
+                // …and **the status line of that gesture is German too** (OP-29's slice 2): the note the
+                // hide just produced is a *value*, so it reads in whatever language the picker is on — and
+                // switching the picker re-reads it with no gesture repeated, which is the whole of
+                // "rendered at the edge". Slice 1 had to clear the line on a switch.
+                fun status(): String = page.querySelector("#status").textContent()
+                assertTrue(
+                    status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "de")),
+                    "the gesture's own note is German; got '${status()}'",
+                )
+                page.selectOption("#v-lang", "en")
+                assertTrue(
+                    status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "en")),
+                    "…and the same note, unrepeated, in English; got '${status()}'",
+                )
+                page.selectOption("#v-lang", "de")
+                assertTrue(status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "de")), status())
+
                 page.click("#v-hidden")
                 val hidden = page.querySelectorAll("#tree .item").map { it.getAttribute("title") ?: "" }
                 assertTrue(

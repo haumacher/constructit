@@ -3,6 +3,8 @@ package constructit.geom
 import constructit.expr.Expr
 import constructit.expr.ExprError
 import constructit.expr.ExprEval
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -63,7 +65,7 @@ data class SizeLaw(
         // the parameter **shadows** a drawing scalar of the same name: it is a binder, the way a lambda's
         // argument is — the function curves' own rule ([constructit.geom.FuncCurves]), read one feature on
         val q = ExprEval.eval(expr) { n -> if (n == param) p else env[n] }
-        if (q.dim != dim) throw DimensionError("${subjectWord()} must be ${word()}, and this is ${q.dim}")
+        if (q.dim != dim) throw DimensionError(Msgs.refusalDimensionMustBe(what = subjectWord(), kind = word(), dim = q.dim.toString()))
         return q.base
     }
 
@@ -81,18 +83,18 @@ data class SizeLaw(
             else -> "scale"
         }
 
-    private fun word(): String =
+    private fun word(): Msg =
         when (dim) {
-            Dimension.LENGTH -> "a length"
-            Dimension.ANGLE -> "an angle"
-            else -> "a plain number"
+            Dimension.LENGTH -> Msgs.wordLawLength()
+            Dimension.ANGLE -> Msgs.refusalSweepAngle()
+            else -> Msgs.refusalSweepPlainNumber()
         }
 
     /** What the dimension refusal is *about* — a size for the two size laws, a turn for the twist. */
-    private fun subjectWord(): String = if (dim == Dimension.ANGLE) "the run's own twist" else "a section's size"
+    private fun subjectWord(): Msg = if (dim == Dimension.ANGLE) Msgs.refusalSweepRunOwnTwist() else Msgs.wordLawSectionSize()
 
     /** The word a refusal uses for the thing that has to stay positive. */
-    internal fun subject(): String = if (dim == Dimension.LENGTH) "a tube needs a positive radius" else "a swept section needs a positive scale"
+    internal fun subject(): Msg = if (dim == Dimension.LENGTH) Msgs.refusalSweepTubeNeedsPositiveRadius() else Msgs.refusalSweepSweptSectionNeedsPositiveScale()
 
     /** How a value of this law prints in a refusal — with its unit where it has one. */
     internal fun value(v: Double): String =
@@ -140,19 +142,19 @@ object SizeLaws {
          * either way round). What is asked of both is that they can be *read*, which is [unreadable].
          */
         positive: Boolean = true,
-    ): String? {
+    ): Msg? {
         for (i in 0..STEPS) {
             val t = i.toDouble() / STEPS
             val v =
                 try {
                     law.at(t)
                 } catch (e: DimensionError) {
-                    return "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                    return Msgs.refusalSweepCannotBeRead(what = law.what(), param = law.param, mm = Frames3.mm(t), message = e.message ?: "")
                 } catch (e: ExprError) {
-                    return "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                    return Msgs.refusalSweepCannotBeRead(what = law.what(), param = law.param, mm = Frames3.mm(t), message = e.message ?: "")
                 }
             if (positive && v <= Geom3.WELD_TOL) {
-                return "${law.subject()} — ${law.what()} is ${law.value(v)} at ${law.param} = ${Frames3.mm(t)} along the run"
+                return Msgs.refusalSweepIsAlongRun(subject = law.subject(), what = law.what(), theValue = law.value(v), param = law.param, mm = Frames3.mm(t))
             }
         }
         return null
@@ -162,7 +164,7 @@ object SizeLaws {
      * Why [law] cannot be **read** over the whole run — the dimension and the arithmetic and nothing about
      * the sign, for the law that is a turn rather than a size (OP-26, session 79).
      */
-    fun unreadable(law: SizeLaw): String? = invalidity(law, positive = false)
+    fun unreadable(law: SizeLaw): Msg? = invalidity(law, positive = false)
 
     /**
      * The total **turn** a twist law asks for, in radians — the sum of its own steps' absolute changes on the
@@ -380,7 +382,7 @@ object SizeLaws {
     fun scalesAlong(
         profile: SweepProfile,
         frame: MovingFrame,
-    ): Pair<List<Double>?, String?> {
+    ): Pair<List<Double>?, Msg?> {
         val law = profile.law ?: return null to null
         val span = if (frame.length > Geom3.WELD_TOL) frame.length else 1.0
         val out = ArrayList<Double>(frame.stations.size)
@@ -390,14 +392,13 @@ object SizeLaws {
                 try {
                     profile.scaleAt(t)
                 } catch (e: DimensionError) {
-                    return null to "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                    return null to Msgs.refusalSweepCannotBeRead(what = law.what(), param = law.param, mm = Frames3.mm(t), message = e.message ?: "")
                 } catch (e: ExprError) {
-                    return null to "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                    return null to Msgs.refusalSweepCannotBeRead(what = law.what(), param = law.param, mm = Frames3.mm(t), message = e.message ?: "")
                 }
             if (v <= 0.0) {
                 return null to
-                    "${law.subject()} — ${law.what()} is ${law.value(law.at(t))} at ${law.param} = " +
-                    "${Frames3.mm(t)} along the run"
+                    Msgs.refusalSweepIsAlongRun(subject = law.subject(), what = law.what(), theValue = law.value(law.at(t)), param = law.param, mm = Frames3.mm(t))
             }
             out.add(v)
         }
@@ -681,7 +682,7 @@ enum class CarryMode {
     ;
 
     /** The word a status line and a refusal use. */
-    val word: String get() = if (this == ROTATING) "rotating" else "translational"
+    val word: Msg get() = if (this == ROTATING) Msgs.wordCarryRotating() else Msgs.wordCarryTranslational()
 }
 
 /**
@@ -981,8 +982,8 @@ object Frames3 {
          * makes a blade's wash an ordinary parameter of the run rather than a feature of its own.
          */
         twistLaw: SizeLaw? = null,
-    ): Pair<MovingFrame?, String?> {
-        if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nothing to sweep along"
+    ): Pair<MovingFrame?, Msg?> {
+        if (path.elements.isEmpty()) return null to Msgs.refusalSweepThisCurveHasNoPieces()
         // the sampling reads how much the section **turns** over the run: the stated angle, or — for a law —
         // its own total variation, which is that number for every linear law and more for one that turns back
         val turn = if (twistLaw == null) twistRad else SizeLaws.totalTurn(twistLaw)
@@ -1000,7 +1001,7 @@ object Frames3 {
         val curvatures = sampled.curvatures
         val params = sampled.params
         val n = points.size
-        if (n < 2) return null to "this curve has no length, so there is nothing to sweep along"
+        if (n < 2) return null to Msgs.refusalSweepThisCurveHasNoLength()
 
         // the chords: one direction per span, plus the closing one when the path comes back to its start
         val spans = if (path.closed) n else n - 1
@@ -1013,7 +1014,7 @@ object Frames3 {
             cum.add(cum[k] + d.length())
         }
         val length = cum[spans]
-        if (length <= Geom3.WELD_TOL) return null to "this curve has no length, so there is nothing to sweep along"
+        if (length <= Geom3.WELD_TOL) return null to Msgs.refusalSweepThisCurveHasNoLength()
 
         // the transport: one reference per span, carried away from where it is stated, introducing no rotation
         // about the tangent — forward from the start, or both ways from a seed part-way along
@@ -1054,9 +1055,9 @@ object Frames3 {
                 try {
                     if (twistLaw == null) twistRad else twistLaw.at(1.0) - twistLaw.at(0.0)
                 } catch (e: DimensionError) {
-                    return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                    return null to Msgs.refusalSweepCannotBeRead2(what = twistLaw!!.what(), message = e.message ?: "")
                 } catch (e: ExprError) {
-                    return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                    return null to Msgs.refusalSweepCannotBeRead2(what = twistLaw!!.what(), message = e.message ?: "")
                 }
             seam = wrapAngle(atan2(r0.cross(back).dot(dirs[0]), r0.dot(back)) + round)
         }
@@ -1086,9 +1087,9 @@ object Frames3 {
                         try {
                             twistAt(sTwist)
                         } catch (e: DimensionError) {
-                            return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                            return null to Msgs.refusalSweepCannotBeRead2(what = twistLaw!!.what(), message = e.message ?: "")
                         } catch (e: ExprError) {
-                            return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                            return null to Msgs.refusalSweepCannotBeRead2(what = twistLaw!!.what(), message = e.message ?: "")
                         },
                 )
             stations.add(
@@ -1130,9 +1131,8 @@ object Frames3 {
         return found.coerceIn(0, spans - 1)
     }
 
-    private fun reversalRefusal(s: Double): String =
-        "this curve doubles back on itself ${mm(s)} mm along, and a sweep has no section there — a run that " +
-            "reverses is two runs, so split it or move the point that folds it"
+    private fun reversalRefusal(s: Double): Msg =
+        Msgs.refusalSweepThisCurveDoublesBackItself(mm = mm(s))
 
     /**
      * [r] carried from chord direction [from] to chord direction [to] — the transport step, and null when
@@ -1467,7 +1467,7 @@ object Frames3 {
  */
 class EmbeddingReport(
     /** Why the swept body would pass through itself, in the words a refusal uses — or null when it would not. */
-    val defect: String?,
+    val defect: Msg?,
     /**
      * The closest **bottleneck** among the pairs the grid offered, in mm — `Double.MAX_VALUE` when the run
      * has none within reach of its own section, which is every run that is comfortably clear of itself.
@@ -1625,11 +1625,11 @@ object Embedding {
     private fun bendAt(
         frame: MovingFrame,
         i: Int,
-    ): String =
+    ): Msg =
         when (i) {
-            0 -> "the run starts with"
-            frame.stations.lastIndex -> "the run ends with"
-            else -> "part-way along it"
+            0 -> Msgs.refusalSweepRunStarts()
+            frame.stations.lastIndex -> Msgs.refusalSweepRunEnds()
+            else -> Msgs.refusalSweepPartWayAlongIt()
         }
 
     /**
@@ -1662,11 +1662,11 @@ object Embedding {
     fun check(
         frame: MovingFrame,
         reach: Double,
-        what: String,
-        subject: String = "the sweep",
-        cure: String = "thin the section, or open the run out",
+        what: Msg,
+        subject: Msg = Msgs.refusalSweepSweep(),
+        cure: Msg = Msgs.refusalSweepThinSectionOpenRunOut(),
         section: List<Vec2>? = null,
-        inward: ((Double) -> String)? = null,
+        inward: ((Double) -> Msg)? = null,
         scales: List<Double>? = null,
         /**
          * **The section at each station**, where the section is a *family* rather than one outline (OP-26,
@@ -1686,9 +1686,7 @@ object Embedding {
             val into = if (scales == null) bare else bare * (scales.getOrNull(i) ?: 1.0)
             if (st.curvature * into >= 1.0) {
                 return EmbeddingReport(
-                    "${inward?.invoke(into) ?: what} is larger than the bend ${bendAt(frame, i)} " +
-                        "(radius ${Frames3.mm(1.0 / st.curvature)} mm, " +
-                        "${Frames3.mm(st.s)} mm along the path), so $subject would pass through itself",
+                    Msgs.refusalSweepIsLargerThanBendRadius(invoke = inward?.invoke(into) ?: what, bendAt = bendAt(frame, i), mm = Frames3.mm(1.0 / st.curvature), mm2 = Frames3.mm(st.s), subject = subject),
                     Double.MAX_VALUE,
                     0,
                 )
@@ -1753,9 +1751,7 @@ object Embedding {
 
         if (worst > 2.0 * GeomMath.TESS_TOL_MM) {
             return EmbeddingReport(
-                "the run passes within ${Frames3.mm(bestD)} mm of itself, between ${Frames3.mm(bestA)} mm and " +
-                    "${Frames3.mm(bestB)} mm along the path, while $what needs ${Frames3.mm(bestNeed)} mm " +
-                    "between them — so $subject would cut into itself; $cure",
+                Msgs.refusalSweepRunPassesWithinMmItself(mm = Frames3.mm(bestD), mm2 = Frames3.mm(bestA), mm3 = Frames3.mm(bestB), what = what, mm4 = Frames3.mm(bestNeed), subject = subject, cure = cure),
                 bestD,
                 examined,
             )
@@ -1846,8 +1842,8 @@ object Embedding {
         frame: MovingFrame,
         reach: Double,
         section: List<Vec2>? = null,
-        subject: String = "the sweep",
-        cure: String = "thin the section, move it towards the outside of the turn, or open the corners out",
+        subject: Msg = Msgs.refusalSweepSweep(),
+        cure: Msg = Msgs.refusalSweepThinSectionMoveItTowards(),
         /**
          * The section's own size at each station (OP-26, session 77), or null for a section of one size.
          *
@@ -1869,7 +1865,7 @@ object Embedding {
          * this same maximum over one outline.
          */
         sectionAt: ((Int) -> List<Vec2>)? = null,
-    ): String? {
+    ): Msg? {
         val st = frame.stations
         if (st.size < 2) return null
         val corners = st.indices.filter { st[it].corner }
@@ -1967,12 +1963,12 @@ object Embedding {
         frame: MovingFrame,
         reach: Double,
         section: List<Vec2>?,
-        subject: String,
-        cure: String,
+        subject: Msg,
+        cure: Msg,
         scales: List<Double>? = null,
         /** The ring at each station, for a family section (OP-26, session 79) — see [cornerFold]. */
         sectionAt: ((Int) -> List<Vec2>)? = null,
-    ): String? {
+    ): Msg? {
         val path = frame.path ?: return null
         val els = path.elements
         val st = frame.stations
@@ -2099,12 +2095,10 @@ object Embedding {
         s: Double,
         trim: Double,
         bend: Double,
-        subject: String,
-        cure: String,
-    ): String =
-        "the corner ${Frames3.mm(s)} mm along the path mitres ${Frames3.mm(trim)} mm of run, and the path " +
-            "bends ${Frames3.mm(bend)} mm off the straight line that cut is made on within that — so $subject " +
-            "would fold back on itself; $cure"
+        subject: Msg,
+        cure: Msg,
+    ): Msg =
+        Msgs.refusalSweepCornerMmAlongPathMitres(mm = Frames3.mm(s), mm2 = Frames3.mm(trim), mm3 = Frames3.mm(bend), subject = subject, cure = cure)
 
     /**
      * What one corner **bites** off each of its two legs, as a 2D vector in that station's own axes:
@@ -2172,20 +2166,28 @@ object Embedding {
         b: Int,
         need: Double,
         len: Double,
-        subject: String,
-        cure: String,
-    ): String {
-        fun tail(where: String) =
-            "off the ${Frames3.mm(len)} mm of run $where, which is more than there is — so $subject would " +
-                "fold back on itself; $cure"
+        subject: Msg,
+        cure: Msg,
+    ): Msg {
         if (a < 0 || b < 0) {
             val i = if (a < 0) b else a
-            val side = if (a < 0) "before" else "after"
-            return "the corner ${Frames3.mm(st[i].s)} mm along the path mitres ${Frames3.mm(need)} mm " +
-                tail("$side it")
+            return Msgs.refusalSweepFoldOneCorner(
+                at = Frames3.mm(st[i].s),
+                need = Frames3.mm(need),
+                len = Frames3.mm(len),
+                side = if (a < 0) "before" else "after",
+                subject = subject,
+                cure = cure,
+            )
         }
-        return "the corners ${Frames3.mm(st[a].s)} mm and ${Frames3.mm(st[b].s)} mm along the path mitre " +
-            "${Frames3.mm(need)} mm " + tail("between them")
+        return Msgs.refusalSweepFoldTwoCorners(
+            at = Frames3.mm(st[a].s),
+            at2 = Frames3.mm(st[b].s),
+            need = Frames3.mm(need),
+            len = Frames3.mm(len),
+            subject = subject,
+            cure = cure,
+        )
     }
 
     /**

@@ -15,6 +15,7 @@ import constructit.editor.SvgDrawTarget
 import constructit.editor.Tools
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -178,7 +179,7 @@ class SphereLocusProbeTest {
     fun theDrawingHasAWordForALocus() {
         val ed = twoLoci()
         val locus = ed.loci().first()
-        assertEquals("a sphere locus", ed.doc.kindWord(locus), "the drawing's own word for it")
+        assertEquals("a sphere locus", ed.doc.kindWord(locus).render(), "the drawing's own word for it")
         val name = ed.doc.nameOf(locus)
         assertTrue(DocumentFormat.save(ed.doc).contains("-> $name"), "and the file names it the same: $name")
 

@@ -9,6 +9,7 @@ import constructit.editor.ElementKind
 import constructit.editor.PointerButton
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -86,7 +87,7 @@ class SelectionTest {
 
         ed.click(Vec2(0.0, 0.0), additive = true)
         assertTrue(ed.selectionFields().isEmpty(), "no single handle to show")
-        assertEquals("2 elements", ed.selectionLabel())
+        assertEquals("2 elements", ed.selectionLabel().render())
         assertFalse(ed.writeSelectionField(0, 10.0), "and nothing to write either")
 
         ed.click(Vec2(0.0, 0.0))

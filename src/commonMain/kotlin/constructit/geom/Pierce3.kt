@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -248,19 +250,15 @@ object Pierce3 {
         plane: Plane3,
         index: Int,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<InPlaceReading?, String?> {
+    ): Pair<InPlaceReading?, Msg?> {
         val all = crossings(path, plane, tolMm)
         if (index < 0 || index >= all.size) {
             return null to
-                "this section rides the run where it crosses the section's own plane, at crossing ${index + 1} — " +
-                (
-                    if (all.isEmpty()) {
-                        "and the run does not cross that plane at all any more"
-                    } else {
-                        "and the run crosses it only ${count(all.size)} now"
-                    }
-                ) +
-                "; move the run or the plane back, or sweep the section again to ride another crossing"
+                if (all.isEmpty()) {
+                    Msgs.refusalPierceNoCrossingLeft(index = index + 1)
+                } else {
+                    Msgs.refusalPierceFewerCrossings(index = index + 1, count = count(all.size))
+                }
         }
         val hit = all[index]
         val n = plane.normal.normalized()
@@ -268,9 +266,7 @@ object Pierce3 {
         val dot = n.dot(t)
         if (abs(dot) <= GRAZE_EPS) {
             return null to
-                "the run lies in the section's own plane where it crosses it ${Frames3.mm(hit.s)} mm along, so " +
-                "there is no direction to stand the section across — turn the plane, or pick the point of the " +
-                "section that is to ride the run"
+                Msgs.refusalPierceRunLiesSectionOwnPlane(mm = Frames3.mm(hit.s))
         }
         // the seed: the plane's own x axis carried onto the run by the **least** rotation there is — about
         // `normal × tangent`, by the angle between them, and by nothing else. Taking the crossing's own sense
@@ -280,8 +276,7 @@ object Pierce3 {
         val ref =
             Frames3.transport(plane.u.normalized(), n, facing)
                 ?: return null to
-                    "the section's plane cannot be turned onto the run where it crosses it ${Frames3.mm(hit.s)} mm " +
-                    "along — turn the plane, or pick the point of the section that is to ride the run"
+                    Msgs.refusalPierceSectionPlaneCannotBeTurned(mm = Frames3.mm(hit.s))
         return InPlaceReading(
             plane.toLocal(hit.at),
             dot < 0.0,

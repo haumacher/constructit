@@ -154,6 +154,10 @@ abstract class GenerateMessagesTask : DefaultTask() {
             when (arbType) {
                 "int" -> "Int"
                 "num", "double" -> "Double"
+                // OP-29 slice 2: an argument that is itself a message — a face's name inside a refusal, the
+                // word for what an element is inside a note. Not an ARB standard type; the ARB spec leaves
+                // the vocabulary open and the translator copies `placeholders` through untouched.
+                "message" -> "Msg"
                 else -> "String"
             }
 
@@ -260,11 +264,52 @@ abstract class GenerateMessagesTask : DefaultTask() {
                     sb.append("    public fun $name(\n")
                     sb.append(params)
                     sb.append("        locale: String = L10n.locale,\n")
-                    sb.append("    ): String = formatMessage(locale, text(${quote(key)}, locale), mapOf($args))\n\n")
+                    val pass = placeholders.joinToString(", ") { (n, _) -> n }
+                    sb.append("    ): String = Msgs.$name($pass).render(locale)\n\n")
+                }
+            }
+            sb.append("}\n\n")
+            renderValues(sb, keys, english)
+            return sb.toString()
+        }
+
+        /**
+         * The same keys as **values** (OP-29 slice 2): one factory per key returning a [Msg] rather than a
+         * sentence, so the engine and the editor can *carry* what they will say and the shell decides, at
+         * the moment it paints, which language it is said in.
+         *
+         * `Messages` is now a thin rendering face over this: `Messages.foo(a, b, locale)` is
+         * `Msgs.foo(a, b).render(locale)`. One table, one signature, two ways to ask.
+         */
+        private fun renderValues(
+            sb: StringBuilder,
+            keys: List<String>,
+            english: Map<String, Any?>,
+        ) {
+            sb.append("/**\n")
+            sb.append(" * Every message of ConstructIt as a **value** — a key and its arguments (OP-29).\n")
+            sb.append(" *\n")
+            sb.append(" * One factory per ARB key, its parameters the key's declared placeholders; a `Msg` parameter is an\n")
+            sb.append(" * argument that is itself a message, which is how a refusal names a face in the reader's language.\n")
+            sb.append(" * Nothing here renders: see [Msg.render].\n")
+            sb.append(" */\n")
+            sb.append("public object Msgs {\n")
+            for (key in keys) {
+                val placeholders = placeholdersOf(english, key)
+                val name = accessorName(key)
+                val description = metaOf(english, key)["description"] as? String
+                if (description != null) sb.append("    /** ${description.replace("*/", "* /")} */\n")
+                if (placeholders.isEmpty()) {
+                    sb.append("    public fun $name(): Msg = Msg(${quote(key)})\n\n")
+                } else {
+                    val params = placeholders.joinToString("") { (n, t) -> "        $n: $t,\n" }
+                    val args = placeholders.joinToString(", ") { (n, _) -> "${quote(n)} to $n" }
+                    sb.append("    public fun $name(\n")
+                    sb.append(params)
+                    sb.append("    ): Msg = Msg(${quote(key)}, mapOf($args))\n\n")
                 }
             }
             sb.append("}\n")
-            return sb.toString()
         }
     }
 }

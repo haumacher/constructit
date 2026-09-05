@@ -1,5 +1,6 @@
 package constructit.dsl
 
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.deg
@@ -228,8 +229,7 @@ val spurGear =
         val land =
             requirePositive(
                 sub(pitchAngle, scale(rootHalf, 2.0)),
-                "at this pressure angle a tooth of a $z-tooth gear is wider at its foot than half the pitch, " +
-                    "so the flanks meet before the root land begins — use a smaller pressure angle",
+                Msgs.refusalShapeThisPressureAngleToothTooth(z = z),
             )
 
         val pieces = ArrayList<Ref<*>>(z * (2 * FLANK_SAMPLES + 4))
@@ -261,8 +261,7 @@ val spurGear =
         val web =
             requirePositive(
                 sub(rootR, a.boreRadius),
-                "the bore is as wide as the gear's root circle, so no material is left between it and the " +
-                    "teeth — the bore radius must stay below m(z/2 − 1.25)",
+                Msgs.refusalShapeBoreIsWideGearRoot(),
             )
         val bore = loop(circleCR(a.center, sub(rootR, web)))
         SpurGear(region(outer, bore), outer, bore, pitchR, baseR, tipR, rootR, centres)

@@ -20,6 +20,7 @@ import constructit.geom.MeshBool
 import constructit.geom.Plane3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.math.PI
@@ -162,7 +163,7 @@ class StationToolTest {
         assertVec3(p.v, Vec3(0.0, -1.0, 0.0), 1e-9, "and v completes the frame")
         assertTrue(ed.statusHint.contains("station across"), "the view says where it is: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("120"), ed.statusHint)
-        assertTrue(ed.doc.spaceLabel(space).contains("120 mm along"), ed.doc.spaceLabel(space))
+        assertTrue(ed.doc.spaceLabel(space).contains("120 mm along"), "${ed.doc.spaceLabel(space)}")
     }
 
     /** **The distance is what the tool waits for** — a station is *stated* by it, so it has no default. */
@@ -585,8 +586,8 @@ class StationToolTest {
         val curve = run300(ed)
         val space = ed.stationOn(curve, "120")
         val label = ed.doc.spaceLabel(space)
-        assertTrue(label.startsWith("station1 ("), label)
-        assertTrue(label.contains("120 mm along"), label)
+        assertTrue(label.render().startsWith("station1 ("), "$label")
+        assertTrue(label.contains("120 mm along"), "$label")
         assertTrue(label.contains(ed.doc.nameOf(curve)), "and it names the run: $label")
     }
 }

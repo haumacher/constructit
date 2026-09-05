@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
@@ -129,11 +131,11 @@ object Revolve3 {
      */
     sealed interface Band {
         /** How this surface is spoken of in a refusal. */
-        val label: String
+        val label: Msg
 
         /** A piece lying **on** the axis: it sweeps nothing at all, which is the normal case for a turned part. */
         data object Degenerate : Band {
-            override val label: String get() = "nothing (it lies on the axis of revolution)"
+            override val label: Msg get() = Msgs.refusalRevolveNothingItLiesAxisRevolution()
         }
 
         /** A segment perpendicular to the axis: a flat annulus, disc or sector at axial coordinate [s]. */
@@ -143,12 +145,12 @@ object Revolve3 {
             val rHi: Double,
             val outward: Double,
         ) : Band {
-            override val label: String get() = if (rLo <= Geom3.WELD_TOL) "a flat disc" else "a flat annulus"
+            override val label: Msg get() = if (rLo <= Geom3.WELD_TOL) Msgs.refusalRevolveFlatDisc() else Msgs.refusalRevolveFlatAnnulus()
         }
 
         /** A segment parallel to the axis, at radius [r] over the axial interval `[s0, s1]`. */
         data class Cylinder(val r: Double, val s0: Double, val s1: Double) : Band {
-            override val label: String get() = "a cylinder"
+            override val label: Msg get() = Msgs.nameBandCylinder()
         }
 
         /** A segment at an angle to the axis: the cone with its apex at axial coordinate [sApex]. */
@@ -158,12 +160,12 @@ object Revolve3 {
             val s0: Double,
             val s1: Double,
         ) : Band {
-            override val label: String get() = "a cone"
+            override val label: Msg get() = Msgs.nameBandCone()
         }
 
         /** An arc whose centre lies **on** the axis, at axial coordinate [sc]: a band of a sphere. */
         data class Sphere(val sc: Double, val radius: Double) : Band {
-            override val label: String get() = "a sphere"
+            override val label: Msg get() = Msgs.nameBandSphere()
         }
 
         /** An arc whose centre lies off the axis: a band of the torus with those two radii. */
@@ -172,11 +174,11 @@ object Revolve3 {
             val rc: Double,
             val minor: Double,
         ) : Band {
-            override val label: String get() = "a torus"
+            override val label: Msg get() = Msgs.nameBandTorus()
         }
 
         /** A profile piece whose surface of revolution this vocabulary has no name for. */
-        data class Unnamed(override val label: String) : Band
+        data class Unnamed(override val label: Msg) : Band
     }
 
     // ---- the frame, and the family of one piece ----
@@ -248,14 +250,14 @@ object Revolve3 {
                 Band.Torus(c.x, c.y, e.circle.radius)
             }
             is ProfileElement.EllipseE, is ProfileElement.EllipticArcE ->
-                Band.Unnamed("a surface of revolution swept by an ellipse, which this drawing has no name for")
+                Band.Unnamed(Msgs.refusalRevolveSurfaceRevolutionSweptEllipseWhich())
             is ProfileElement.BezierE ->
-                Band.Unnamed("a surface of revolution swept by a spline, which this drawing has no name for")
+                Band.Unnamed(Msgs.refusalRevolveSurfaceRevolutionSweptSplineWhich())
             // the session-69 rule, one curve family on: a band swept by a curve the vocabulary cannot name
             // refuses **wholly and by name, dispatched here by predicate**, rather than being answered
             // half-exactly further down
             is ProfileElement.FuncE ->
-                Band.Unnamed("a surface of revolution swept by a function curve, which this drawing has no name for")
+                Band.Unnamed(Msgs.refusalRevolveSurfaceRevolutionSweptFunction())
         }
 
     // ---- the face family ----
@@ -272,8 +274,8 @@ object Revolve3 {
      * turn — the cap at the interval's **low** angle and the one at its **high** angle, which is
      * [Geom3.revolve]'s own reversed-bottom / upright-top rule read on the angle.
      */
-    fun faces(feature: Feature3.Revolution): Pair<List<FacePatch>?, String?> {
-        val f = frameOf(feature) ?: return null to "the axis of revolution has no direction"
+    fun faces(feature: Feature3.Revolution): Pair<List<FacePatch>?, Msg?> {
+        val f = frameOf(feature) ?: return null to Msgs.refusalRevolveAxisRevolutionHasNoDirection()
         val pieces = Geom3.boundaryPieces(feature)
         val out = ArrayList<FacePatch>(pieces.size + 2)
         for ((i, e) in pieces.withIndex()) out.add(bandPatch(f, e, FaceName.Side(i)))
@@ -303,9 +305,9 @@ object Revolve3 {
                 null,
                 emptyList(),
                 if (band is Band.Degenerate) {
-                    "that profile edge lies on the axis of revolution, so it sweeps no surface at all"
+                    Msgs.refusalRevolveThatProfileEdgeLiesAxis()
                 } else {
-                    "that profile edge sweeps ${band.label} and not a plane — put a datum plane where you want to sketch"
+                    Msgs.refusalRevolveThatProfileEdgeSweepsNot(name = band.label)
                 },
                 f.surfaceOf(band),
             )
@@ -438,26 +440,25 @@ object Revolve3 {
     fun facePatchOf(
         feature: Feature3.Revolution,
         piece: Int,
-    ): Pair<FacePatch?, String?> {
-        val f = frameOf(feature) ?: return null to "the axis of revolution has no direction"
+    ): Pair<FacePatch?, Msg?> {
+        val f = frameOf(feature) ?: return null to Msgs.refusalRevolveAxisRevolutionHasNoDirection()
         val pieces = Geom3.boundaryPieces(feature)
-        if (piece < 0) return null to "this solid has no face #${piece + 1}"
+        if (piece < 0) return null to Msgs.refusalRevolveThisSolidHasNoFace(piece = piece + 1)
         if (piece >= pieces.size) {
             if (f.full) {
                 return null to
-                    "this solid is a complete revolution, so it has no start and no end and therefore no cap faces — " +
-                    "put a datum plane where you want to sketch"
+                    Msgs.refusalRevolveThisSolidIsCompleteRevolution()
             }
             val which =
                 when (piece) {
                     pieces.size -> SolidFace.BOTTOM
                     pieces.size + 1 -> SolidFace.TOP
-                    else -> return null to "this solid has no face #${piece + 1} (it has ${pieces.size + 2})"
+                    else -> return null to Msgs.refusalRevolveThisSolidHasNoFace2(piece = piece + 1, count = pieces.size + 2)
                 }
             return capPatch(feature, f, which) to null
         }
         val patch = bandPatch(f, pieces[piece], FaceName.Side(piece))
-        if (patch.plane == null) return null to (patch.reason ?: "that face is not a plane")
+        if (patch.plane == null) return null to (patch.reason ?: Msgs.refusalRevolveThatFaceIsNotPlane())
         return patch to null
     }
 
@@ -480,8 +481,8 @@ object Revolve3 {
      * re-orients it (OP-14) and the outline's piece `i` is *not* profile piece `i` down there — which is what
      * this used to index against, silently.
      */
-    fun edges(feature: Feature3.Revolution): Pair<List<SolidEdge>?, String?> {
-        val f = frameOf(feature) ?: return null to "the axis of revolution has no direction"
+    fun edges(feature: Feature3.Revolution): Pair<List<SolidEdge>?, Msg?> {
+        val f = frameOf(feature) ?: return null to Msgs.refusalRevolveAxisRevolutionHasNoDirection()
         val pieces = Geom3.boundaryPieces(feature)
         val out = ArrayList<SolidEdge>()
         for ((i, e) in pieces.withIndex()) {

@@ -55,7 +55,7 @@ class ElementNameTest {
 
     private fun Editor.selectionLabelOf(el: constructit.editor.Element): String {
         selectElement(el)
-        return selectionLabel()
+        return selectionLabel().render()
     }
 
     @Test

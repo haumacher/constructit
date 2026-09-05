@@ -14,6 +14,7 @@ import constructit.editor.Tools
 import constructit.geom.Axis3
 import constructit.geom.Geom3
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -151,7 +152,7 @@ class SolidToolTest {
         ed.setTool(Tools.EXTRUDE)
         assertTrue(ed.currentHelp().contains("depth"), "it should name the parameter it wants: '${ed.currentHelp()}'")
         ed.setTool(Tools.REVOLVE)
-        assertTrue(ed.currentHelp().contains("angle"), ed.currentHelp())
+        assertTrue(ed.currentHelp().contains("angle"), "${ed.currentHelp()}")
     }
 
     // ---- revolve ----

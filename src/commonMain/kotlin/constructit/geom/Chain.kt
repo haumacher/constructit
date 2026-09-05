@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -111,13 +113,12 @@ object Chains {
      * spent stating a direction. Two points therefore give an infinite **line**, three a corner with two
      * rays, and so on.
      */
-    fun through(points: List<Vec2>): Pair<Chain.Open?, String?> {
-        if (points.size < 2) return null to "a chain needs at least two points — the first and the last become its rays"
+    fun through(points: List<Vec2>): Pair<Chain.Open?, Msg?> {
+        if (points.size < 2) return null to Msgs.refusalChaincutChainNeedsLeastTwoPoints()
         for (i in 0 until points.size - 1) {
             if ((points[i + 1] - points[i]).length() <= EPS) {
                 return null to
-                    "points ${i + 1} and ${i + 2} of this chain are in the same place, so the span between them has " +
-                    "no direction — move one of them"
+                    Msgs.refusalChaincutPointsThisChainAreSame(i = i + 1, i2 = i + 2)
             }
         }
         val pieces = (0 until points.size - 1).map { ProfileElement.Seg(Segment(points[it], points[it + 1])) }
@@ -155,9 +156,9 @@ object Chains {
      * Invalid with a reason that heals (OP-3) only for a line with no direction, which is a degenerate value
      * rather than a shape of chain.
      */
-    fun ofLine(line: Line): Pair<Chain.Open?, String?> {
+    fun ofLine(line: Line): Pair<Chain.Open?, Msg?> {
         if (line.dir.length() <= EPS) {
-            return null to "this line has no direction, so there is nothing for a cut to run along — move the points that define it"
+            return null to Msgs.refusalChaincutThisLineHasNoDirection()
         }
         val d = line.dir.normalized()
         val a = line.origin
@@ -203,7 +204,7 @@ object Chains {
     fun defect(
         chain: Chain,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): String? =
+    ): Msg? =
         when (chain) {
             is Chain.Open -> openDefect(chain, tolMm)
             is Chain.Closed -> closedDefect(chain, tolMm)
@@ -212,25 +213,22 @@ object Chains {
     private fun openDefect(
         chain: Chain.Open,
         tolMm: Double,
-    ): String? {
-        val pts = polyline(chain.pieces, tolMm) ?: return "the pieces of this chain do not join up end to end"
+    ): Msg? {
+        val pts = polyline(chain.pieces, tolMm) ?: return Msgs.refusalChaincutPiecesThisChainDoNot()
         polylineDefect(pts, closed = false)?.let { return it }
         // …and the two rays, which is the half a finite check would miss: an end sent back across the run
         // re-crosses it far from any piece, and the chain is then not embedded however tidy its corners are.
         val edges = pts.zipWithNext()
         for ((i, e) in edges.withIndex()) {
             if (i > 0 && rayMeetsSegment(chain.start, e.first, e.second)) {
-                return "this chain's first ray runs back across it, so it does not separate the plane — refused, " +
-                    "because \"which side\" then has no answer"
+                return Msgs.refusalChaincutThisChainFirstRayRuns()
             }
             if (i < edges.size - 1 && rayMeetsSegment(chain.end, e.first, e.second)) {
-                return "this chain's last ray runs back across it, so it does not separate the plane — refused, " +
-                    "because \"which side\" then has no answer"
+                return Msgs.refusalChaincutThisChainLastRayRuns()
             }
         }
         if (raysMeet(chain.start, chain.end)) {
-            return "this chain's two ends cross each other, so it does not separate the plane — refused, " +
-                "because \"which side\" then has no answer"
+            return Msgs.refusalChaincutThisChainTwoEndsCross()
         }
         return null
     }
@@ -238,17 +236,16 @@ object Chains {
     private fun closedDefect(
         chain: Chain.Closed,
         tolMm: Double,
-    ): String? {
+    ): Msg? {
         val (rings, why) = RegionBool.ringsOf(listOf(chain.area), tolMm)
-        if (rings == null) return why ?: "this closed chain cannot be read as a boundary"
+        if (rings == null) return why ?: Msgs.refusalChaincutThisClosedChainCannotBe()
         for (r in rings) polylineDefect(r + r.first(), closed = true)?.let { return it }
         for (i in rings.indices) {
             for (j in i + 1 until rings.size) {
                 for (ea in (rings[i] + rings[i].first()).zipWithNext()) {
                     for (eb in (rings[j] + rings[j].first()).zipWithNext()) {
                         if (segmentsMeet(ea.first, ea.second, eb.first, eb.second)) {
-                            return "two boundaries of this closed chain meet, so it does not separate the plane — " +
-                                "refused, because \"which side\" then has no answer"
+                            return Msgs.refusalChaincutTwoBoundariesThisClosedChain()
                         }
                     }
                 }
@@ -261,7 +258,7 @@ object Chains {
     private fun polylineDefect(
         pts: List<Vec2>,
         closed: Boolean,
-    ): String? {
+    ): Msg? {
         val edges = pts.zipWithNext()
         val n = edges.size
         for (i in 0 until n) {
@@ -274,8 +271,7 @@ object Chains {
                         segmentsMeet(edges[i].first, edges[i].second, edges[j].first, edges[j].second)
                     }
                 if (meets) {
-                    return "this chain meets itself, so it does not separate the plane into two sides — refused, " +
-                        "because \"which side\" then has no answer"
+                    return Msgs.refusalChaincutThisChainMeetsItselfSo()
                 }
             }
         }
@@ -317,8 +313,8 @@ object Chains {
         plane: Plane3,
         target: Mesh3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Pair<Solid3, Solid3>?, String?> {
-        if (target.vertices.isEmpty()) return null to "the solid to cut has no geometry to bound the cutting tool with"
+    ): Pair<Pair<Solid3, Solid3>?, Msg?> {
+        if (target.vertices.isEmpty()) return null to Msgs.refusalChaincutSolidCutHasNoGeometry()
         var lo = plane.toLocal(target.vertices[0])
         var hi = lo
         var nLo = plane.distanceTo(target.vertices[0])
@@ -347,9 +343,9 @@ object Chains {
         val base = Plane3(plane.origin + plane.normal.normalized() * (nLo - m), plane.u, plane.v)
         val depth = (nHi - nLo) + 2.0 * m
         val (left, whyL) = Geom3.extrude(Sketch3(base, sides.first), depth, tolMm)
-        if (left == null) return null to (whyL ?: "cannot build the cutting tool")
+        if (left == null) return null to (whyL ?: Msgs.refusalChaincutCannotBuildCuttingTool())
         val (right, whyR) = Geom3.extrude(Sketch3(base, sides.second), depth, tolMm)
-        if (right == null) return null to (whyR ?: "cannot build the cutting tool")
+        if (right == null) return null to (whyR ?: Msgs.refusalChaincutCannotBuildCuttingTool())
         return (left to right) to null
     }
 
@@ -409,12 +405,12 @@ object Chains {
         mode: CarryMode,
         target: Mesh3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Pair<Solid3, Solid3>?, String?> {
-        if (target.vertices.isEmpty()) return null to "the solid to cut has no geometry to bound the cutting tool with"
-        if (directrix.isEmpty) return null to "this route has no pieces, so there is nothing to carry the cut along"
+    ): Pair<Pair<Solid3, Solid3>?, Msg?> {
+        if (target.vertices.isEmpty()) return null to Msgs.refusalChaincutSolidCutHasNoGeometry()
+        if (directrix.isEmpty) return null to Msgs.refusalChaincutThisRouteHasNoPieces()
         if (straightAlong(directrix, plane.normal)) return tools(chain, plane, target, tolMm)
 
-        val (lo3, hi3) = Geom3.bounds(target) ?: return null to "the solid to cut has no geometry to bound the cutting tool with"
+        val (lo3, hi3) = Geom3.bounds(target) ?: return null to Msgs.refusalChaincutSolidCutHasNoGeometry()
         val corners = boxCorners(lo3, hi3)
         val centre = (lo3 + hi3) * 0.5
         val radius = (hi3 - lo3).length() * 0.5
@@ -436,17 +432,17 @@ object Chains {
         // normal` would be degenerate and fall back on a world axis (see [Frames3.startReference]). Where the
         // run leaves along *u* instead, *v* is perpendicular to it by construction, so the drawing still
         // answers and no world axis is ever consulted.
-        val t0 = Curves3.tangentAt(directrix.elements.first(), 0.0) ?: return null to "this route has no direction at its start"
+        val t0 = Curves3.tangentAt(directrix.elements.first(), 0.0) ?: return null to Msgs.refusalChaincutThisRouteHasNoDirection()
         val up = if ((plane.u - t0 * plane.u.dot(t0)).length() > 1e-6) plane.u else plane.v
         val carry = Carry(mode, plane, if (t0.dot(plane.normal.normalized()) < 0.0) -1.0 else 1.0)
 
         val (frame, whyFrame) = Frames3.along(directrix, up, tolMm = tolMm)
-        if (frame == null) return null to (whyFrame ?: "cannot build a moving frame along this route")
+        if (frame == null) return null to (whyFrame ?: Msgs.refusalChaincutCannotBuildMovingFrameAlong())
         // A closed route is cut open where it stands **furthest from the solid** — the one place a cut can
         // have its ends without them mattering — after which it is the open case exactly, caps and all. That
         // is what makes a revolved cut fall out of this operator instead of needing one of its own.
         val stations = if (directrix.closed) openedAwayFrom(frame.stations, lo3, hi3) else frame.stations
-        if (stations.size < 2) return null to "this route has no length, so there is nothing to carry the cut along"
+        if (stations.size < 2) return null to Msgs.refusalChaincutThisRouteHasNoLength()
         val startRay = Ray3(stations.first().at, -stations.first().tangent)
         val endRay = Ray3(stations.last().at, stations.last().tangent)
         val rays = if (directrix.closed) null else (startRay to endRay)
@@ -481,14 +477,13 @@ object Chains {
                 k0--
             }
         }
-        if (k0 < 0) return null to "this route is a single station, so there is nothing to carry the cut along"
+        if (k0 < 0) return null to Msgs.refusalChaincutThisRouteIsSingleStation()
         val run = ArrayList(stations.subList(k0, k1 + 1))
         val nearStart = boxDistance(run.first().at, lo3, hi3) <= reach + m
         val nearEnd = boxDistance(run.last().at, lo3, hi3) <= reach + m
         if (directrix.closed && (nearStart || nearEnd)) {
             return null to
-                "this closed route never leaves the solid's reach, so the cut has no clear end — state the " +
-                "route as an open run through the body, or move it clear of the solid where it should stop"
+                Msgs.refusalChaincutThisClosedRouteNeverLeaves()
         }
         if (nearStart) run.add(0, runOn(run.first(), backwards = true, d = reach + 2.0 * m + (run.first().at - centre).length() + radius))
         if (nearEnd) run.add(runOn(run.last(), backwards = false, d = reach + 2.0 * m + (run.last().at - centre).length() + radius))
@@ -503,9 +498,9 @@ object Chains {
             Embedding.check(
                 MovingFrame(run, length, closed = false, seam = 0.0, startRef = run.first().ref),
                 reach,
-                "the cut's reach across this solid (${Frames3.mm(reach)} mm)",
-                subject = "the cutting surface",
-                cure = "open the run out, or bring the cut nearer to it",
+                Msgs.refusalChaincutCutReachAcrossThisSolid(mm = Frames3.mm(reach)),
+                subject = Msgs.refusalChaincutCuttingSurface(),
+                cure = Msgs.refusalChaincutOpenRunOutBringCut(),
             )
         report.defect?.let { return null to it }
         // **The corner fold, in the tool's own words** ([Embedding.cornerFold]). The route rides the sweep's
@@ -521,8 +516,8 @@ object Chains {
                     reach,
                     listOf(boxLo, Vec2(boxHi.x, boxLo.y), boxHi, Vec2(boxLo.x, boxHi.y))
                         .map { Vec2(it.x, carry.handed * it.y) },
-                    subject = "the cutting surface",
-                    cure = "open the corner out, or bring the cut nearer to the run",
+                    subject = Msgs.refusalChaincutCuttingSurface(),
+                    cure = Msgs.refusalChaincutOpenCornerOutBringCut(),
                 )?.let { return null to it }
         }
         foldDefect(run, carry)?.let { return null to it }
@@ -538,9 +533,9 @@ object Chains {
                 CarryMode.TRANSLATIONAL -> (run.last().at - run.first().at).dot(plane.normal.normalized()) < 0.0
             }
         val (left, whyL) = sweptShell(sides.first, run, carry, reversed, up, tolMm)
-        if (left == null) return null to (whyL ?: "cannot build the cutting tool")
+        if (left == null) return null to (whyL ?: Msgs.refusalChaincutCannotBuildCuttingTool())
         val (right, whyR) = sweptShell(sides.second, run, carry, reversed, up, tolMm)
-        if (right == null) return null to (whyR ?: "cannot build the cutting tool")
+        if (right == null) return null to (whyR ?: Msgs.refusalChaincutCannotBuildCuttingTool())
         return (left to right) to null
     }
 
@@ -834,15 +829,13 @@ object Chains {
     private fun foldDefect(
         run: List<Frame3>,
         carry: Carry,
-    ): String? {
+    ): Msg? {
         if (carry.mode != CarryMode.TRANSLATIONAL) return null
         val n = carry.plane.normal.normalized()
         val ahead = if ((run.last().at - run.first().at).dot(n) < 0.0) -n else n
         for (k in 0 until run.size - 1) {
             if ((run[k + 1].at - run[k].at).dot(ahead) > Geom3.WELD_TOL) continue
-            return "the route stops advancing through the chain's own plane ${Frames3.mm(run[k].s)} mm along it, " +
-                "so a section carried without turning would fold back through the one before it — " +
-                "carry it rotating instead, or keep the route going the way it started"
+            return Msgs.refusalChaincutRouteStopsAdvancingThroughChain(mm = Frames3.mm(run[k].s))
         }
         return null
     }
@@ -864,12 +857,12 @@ object Chains {
         reversed: Boolean,
         up: Vec3,
         tolMm: Double,
-    ): Pair<Solid3?, String?> {
-        if (regions.isEmpty()) return null to "this chain cuts nothing off the solid's extent"
+    ): Pair<Solid3?, Msg?> {
+        if (regions.isEmpty()) return null to Msgs.refusalChaincutThisChainCutsNothingOff()
         val tess = ArrayList<Geom3.TessRegion>(regions.size)
         for (r in regions) {
             val (t, why) = Geom3.tessellateRegion(r, tolMm)
-            if (t == null) return null to (why ?: "cannot tessellate the cutting chain's own side")
+            if (t == null) return null to (why ?: Msgs.refusalChaincutCannotTessellateCuttingChainOwn())
             tess.add(t)
         }
         // No [Region]s handed over, so this body has one level (see [Geom3.sweptShells]): a cutting tool's
@@ -899,7 +892,7 @@ object Chains {
         lo: Vec2,
         hi: Vec2,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Pair<List<Region>, List<Region>>?, String?> {
+    ): Pair<Pair<List<Region>, List<Region>>?, Msg?> {
         val box = listOf(lo, Vec2(hi.x, lo.y), hi, Vec2(lo.x, hi.y))
         return when (chain) {
             is Chain.Closed -> {
@@ -914,13 +907,13 @@ object Chains {
                 (a to b) to null
             }
             is Chain.Open -> {
-                val run = polyline(chain.pieces, tolMm) ?: return null to "the pieces of this chain do not join up end to end"
-                val entry = exitOf(chain.start, lo, hi) ?: return null to "this chain's first ray does not leave the solid's extent"
-                val leave = exitOf(chain.end, lo, hi) ?: return null to "this chain's last ray does not leave the solid's extent"
+                val run = polyline(chain.pieces, tolMm) ?: return null to Msgs.refusalChaincutPiecesThisChainDoNot()
+                val entry = exitOf(chain.start, lo, hi) ?: return null to Msgs.refusalChaincutThisChainFirstRayDoes()
+                val leave = exitOf(chain.end, lo, hi) ?: return null to Msgs.refusalChaincutThisChainLastRayDoes()
                 val sIn = perimeterAt(entry, lo, hi)
                 val sOut = perimeterAt(leave, lo, hi)
                 if (abs(((sOut - sIn) + 4.0) % 4.0) <= 1e-9) {
-                    return null to "this chain's two ends leave the solid's extent at the same place, so it cuts nothing off"
+                    return null to Msgs.refusalChaincutThisChainTwoEndsLeave()
                 }
                 val cut = listOf(entry) + run + listOf(leave)
                 val left = cut + walk(sOut, sIn, lo, hi)

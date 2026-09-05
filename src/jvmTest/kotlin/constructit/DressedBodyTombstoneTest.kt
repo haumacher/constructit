@@ -18,6 +18,7 @@ import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.Section3
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.abs
 import kotlin.test.Test
@@ -162,7 +163,7 @@ class DressedBodyTombstoneTest {
         val after = assertNotNull(Section3.faces(featureOf(body)).first, "the faces after")
         assertEquals(named, after[slot].name, "slot $slot still names the same band")
         assertNotNull(after[slot].surface, "…and it is still the band's own surface")
-        assertTrue("was removed" !in (after[slot].reason ?: ""), "…and not a tombstone: ${after[slot].reason}")
+        assertTrue("was removed" !in after[slot].reason, "…and not a tombstone: ${after[slot].reason}")
     }
 
     // ---- 2. a rounding chained on the removed entry's own rail ----

@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import org.khronos.webgl.Float32Array
 import org.khronos.webgl.Uint32Array
 import org.khronos.webgl.get
@@ -34,7 +36,7 @@ actual object MeshBool {
     private var wasm: dynamic = null
 
     /** Why [available] is false. Replaced as loading progresses, so the reason is always current. */
-    private var failure: String = "Manifold's WASM module (OP-9) is still starting up"
+    private var failure: String = Msgs.refusalMeshboolManifoldWasmModuleOpIs().render()
 
     private var started = false
 
@@ -74,17 +76,17 @@ actual object MeshBool {
                     wasm = top
                     onReady(true)
                 },
-                { e: Throwable -> fail("Manifold's WASM module could not be instantiated ($e)") },
+                { e: Throwable -> fail(Msgs.refusalMeshboolManifoldWasmModuleCouldNot(e = e.toString()).render()) },
             )
         }
 
         try {
             importModule(jsUrl).then<Unit>(
                 { module: dynamic -> instantiate(module) },
-                { e: Throwable -> fail("Manifold's WASM module could not be loaded from $jsUrl ($e)") },
+                { e: Throwable -> fail(Msgs.refusalMeshboolManifoldWasmModuleCouldNot2(jsUrl = jsUrl, e = e.toString()).render()) },
             )
         } catch (t: Throwable) {
-            fail("Manifold could not be started (${t.message})")
+            fail(Msgs.refusalMeshboolManifoldCouldNotBeStarted(message = t.message ?: "").render())
         }
     }
 
@@ -92,9 +94,9 @@ actual object MeshBool {
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, String?> {
+    ): Pair<Mesh3?, Msg?> {
         val w = wasm ?: return null to meshBoolUnavailable(failure)
-        if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to "a general boolean needs two closed meshes"
+        if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanNeedsTwoClosed()
         var ma: dynamic = null
         var mb: dynamic = null
         var result: dynamic = null
@@ -109,14 +111,14 @@ actual object MeshBool {
                 }
             val state = result.status() as String
             if (state != "NoError") {
-                null to "the general boolean failed (Manifold status $state)"
+                null to Msgs.refusalMeshboolGeneralBooleanFailedManifoldStatus2(state = state)
             } else if (result.isEmpty() as Boolean) {
-                null to "the boolean leaves nothing of the solid"
+                null to Msgs.refusalMeshboolBooleanLeavesNothingSolid()
             } else {
                 MeshCanon.finish(mesh3(result.getMesh()))
             }
         } catch (t: Throwable) {
-            null to "the general boolean engine failed (${t.message})"
+            null to Msgs.refusalMeshboolGeneralBooleanEngineFailed2(message = t.message ?: "")
         } finally {
             // WASM heap objects are not garbage-collected for us — a boolean per recompute would leak
             for (p in listOf(ma, mb, result)) if (p != null) p.delete()

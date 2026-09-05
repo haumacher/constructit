@@ -19,6 +19,7 @@ import constructit.editor.PointerButton
 import constructit.editor.SvgDrawTarget
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.test.Test
@@ -1055,7 +1056,7 @@ class EditorTest {
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(20.0, 0.0))
         assertTrue(ed.selection === path.legs[0], "clicking a leg selects it")
-        assertEquals("leg ${ed.doc.nameOf(path.legs[0])}", ed.selectionLabel())
+        assertEquals("leg ${ed.doc.nameOf(path.legs[0])}", ed.selectionLabel().render())
         assertEquals(listOf("y", "length (move end)", "length (move start)"), ed.selectionFields().map { it.label })
 
         // typing into "length (move end)" is the same write as dragging V1 along the leg

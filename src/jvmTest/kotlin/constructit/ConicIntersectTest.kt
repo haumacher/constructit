@@ -18,6 +18,8 @@ import constructit.geom.Conics
 import constructit.geom.Ellipse
 import constructit.geom.Line
 import constructit.geom.Vec2
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -210,7 +212,7 @@ class ConicIntersectTest {
         assertEquals(0, Conics.intersect(e, e).points.size)
         val c = Construction()
         val set = c.intersectEE(c.ellipseCAB(c.freePoint("o", 0.0.mm, 0.0.mm), c.freePoint("e", 60.0.mm, 0.0.mm), c.parameter("b", 30.0.mm)), c.ellipseCAB(c.freePoint("o2", 0.0.mm, 0.0.mm), c.freePoint("e2", 60.0.mm, 0.0.mm), c.parameter("b2", 30.0.mm)))
-        val why = Evaluator().eval(c.selectAt(set, 0, "these two conics coincide, so they have no crossing").node)
+        val why = Evaluator().eval(c.selectAt(set, 0, Msg.text("these two conics coincide, so they have no crossing")).node)
         assertTrue(why is EvalResult.Invalid && why.reason.contains("coincide"), "$why")
     }
 

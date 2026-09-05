@@ -20,6 +20,7 @@ import constructit.geom.Curves3
 import constructit.geom.Path3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import de.haumacher.kotlinjt.scene.LengthUnit
 import de.haumacher.kotlinjt.scene.PolylineSet
 import de.haumacher.kotlinjt.scene.Scene
@@ -427,7 +428,7 @@ class JtWireframeTest {
         ed.click(Vec2(30.0, 0.0))
         val space = ed.doc.activeSpace
         assertTrue(space.isWire, "the view is now on the wireframe's own plane: ${ed.doc.spaceLabel(space)}")
-        assertTrue(ed.doc.spaceLabel(space).contains("plane of centreline"), ed.doc.spaceLabel(space))
+        assertTrue(ed.doc.spaceLabel(space).contains("plane of centreline"), "${ed.doc.spaceLabel(space)}")
 
         val pts = ed.doc.elements.filter { it.kind == ElementKind.POINT && it.space == space.name }
         val segs = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.space == space.name }

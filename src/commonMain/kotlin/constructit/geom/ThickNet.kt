@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -254,12 +256,12 @@ private const val WELD = 1e-6
 fun thickNetwork(
     curves: List<CarrierCurve>,
     thickness: Double,
-): Pair<ThickBody?, String?> {
-    if (curves.isEmpty()) return null to "a wall needs at least one carrier curve"
-    if (thickness <= Vec2.EPS) return null to "a thick path needs a non-zero thickness"
+): Pair<ThickBody?, Msg?> {
+    if (curves.isEmpty()) return null to Msgs.refusalWallWallNeedsLeastOneCarrier()
+    if (thickness <= Vec2.EPS) return null to Msgs.refusalWallThickPathNeedsNonZero()
     for ((i, c) in curves.withIndex()) {
         if (c.piece is ProfileElement.CircleE) {
-            return null to "carrier ${i + 1} is a whole circle, which has no ends to join — break it into arcs first"
+            return null to Msgs.refusalWallCarrierIsWholeCircleWhich(i = i + 1)
         }
     }
 
@@ -267,7 +269,7 @@ fun thickNetwork(
     val offsets = ArrayList<List<Double>>(curves.size)
     for ((i, c) in curves.withIndex()) {
         val len = carrierLength(c.piece)
-        if (len < Vec2.EPS) return null to "carrier ${i + 1} has zero length"
+        if (len < Vec2.EPS) return null to Msgs.refusalWallCarrierHasZeroLength(i = i + 1)
         lengths[i] = len
         offsets.add(c.side.offsets(thickness))
     }
@@ -295,7 +297,7 @@ fun thickNetwork(
         tail[e] = vertexId(GeomMath.startOf(edge.piece))
         head[e] = vertexId(GeomMath.endOf(edge.piece))
         if (tail[e] == head[e]) {
-            return null to "carrier ${edge.carrier + 1} starts and ends at the same point, so it closes on itself"
+            return null to Msgs.refusalWallCarrierStartsEndsSamePoint(carrier = edge.carrier + 1)
         }
     }
     disconnection(edges, tail, head, verts.size)?.let { return null to it }
@@ -313,7 +315,7 @@ fun thickNetwork(
         val off = if (forward) offsets[e.carrier][1] else -offsets[e.carrier][0]
         walls.add(
             offsetWall(piece, off)
-                ?: return null to "carrier ${e.carrier + 1} is thicker than the arc it follows, so it has no inner face",
+                ?: return null to Msgs.refusalWallCarrierIsThickerThanArc(carrier = e.carrier + 1),
         )
     }
 
@@ -383,8 +385,8 @@ fun thickNetwork(
             }
             h = g
         }
-        if (h != start) return null to "the wall boundary does not close at this network's junctions"
-        if (chain.size < 2) return null to "a wall face of this network is degenerate"
+        if (h != start) return null to Msgs.refusalWallWallBoundaryDoesNotClose()
+        if (chain.size < 2) return null to Msgs.refusalWallWallFaceThisNetworkIs()
         // the walk's last step re-enters the ring's first piece, so its pass-through belongs to that piece
         if (chain.isNotEmpty()) continues[0] = through
         // The walk keeps material on its **right** — a half-edge's left wall is the boundary the material
@@ -422,13 +424,13 @@ fun thickNetwork(
     // The kernel route (OP-22): the nonzero-winding interior of the tangle, which is what the union *is*.
     // Taking it demotes the footprint to OP-15's approximated class, because the kernel is polygonal.
     val rings = loops.map { Geom3.tessellateLoop(it) }.filter { it.size >= 3 }
-    if (rings.isEmpty()) return null to "the wall footprint encloses no area"
+    if (rings.isEmpty()) return null to Msgs.refusalWallWallFootprintEnclosesNoArea()
     val (merged, why) = RegionBool.combine(rings, rings, BoolOp.UNION)
-    if (merged == null) return null to (why ?: "the wall footprint cannot be resolved")
+    if (merged == null) return null to (why ?: Msgs.refusalWallWallFootprintCannotBeResolved())
     val (regions, whyNest) = RegionBool.regionsOf(merged)
-    if (regions == null) return null to (whyNest ?: "the wall footprint cannot be resolved")
+    if (regions == null) return null to (whyNest ?: Msgs.refusalWallWallFootprintCannotBeResolved())
     if (regions.size != 1) {
-        return null to "this wall's footprint falls into ${regions.size} separate areas — thicken them separately"
+        return null to Msgs.refusalWallThisWallFootprintFallsSeparate(count = regions.size)
     }
     return ThickBody(legs, joins, regions.single(), true) to null
 }
@@ -441,7 +443,7 @@ fun thickNetwork(
  * that merely *happened* to agree here would be a claim with nothing to check it; reusing the code is a
  * guarantee that every stored `wall` step replays to the identical region.
  */
-fun thickBodyOf(f: ThickFaces): Pair<ThickBody?, String?> {
+fun thickBodyOf(f: ThickFaces): Pair<ThickBody?, Msg?> {
     val (region, why) = GeomMath.thickRegion(f)
     if (region == null) return null to why
     val legs =
@@ -1093,7 +1095,7 @@ private fun disconnection(
     tail: IntArray,
     head: IntArray,
     vertices: Int,
-): String? {
+): Msg? {
     val count = edges.size
     val parent = IntArray(vertices) { it }
 
@@ -1120,8 +1122,7 @@ private fun disconnection(
             (0 until count).filter { find(tail[it]) == r }.map { edges[it].carrier }.distinct().sorted()
                 .joinToString("+") { "curve ${it + 1}" }
         }
-    return "these curves are not connected — they form ${roots.size} separate runs (${runs.joinToString(" / ")}); " +
-        "a wall's carrier is one connected network"
+    return Msgs.refusalWallTheseCurvesAreNotConnected(count = roots.size, list = runs.joinToString(" / "))
 }
 
 /**

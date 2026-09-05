@@ -23,6 +23,7 @@ import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.abs
 import kotlin.test.Test
@@ -282,7 +283,7 @@ tool extrude els=e3 clicks=20,0 scalar="depth" -> e9
     fun aFilletMeetingADrawnProfileIsStillRefusedByName() {
         val doc = DocumentFormat.load(chainOf(listOf(8 to 3.0)).lines().dropLast(4).joinToString("\n") + "\n")
         val body = (Evaluator().valueOf(doc.elements.last { it.kind == ElementKind.SOLID }.ref) as SolidValue).solid
-        val top = assertNotNull(Section3.faces(body.feature).first, "the plate's faces").first { it.name.label == "the top face" }.name
+        val top = assertNotNull(Section3.faces(body.feature).first, "the plate's faces").first { it.name.label.render() == "the top face" }.name
 
         val fillet = BlendSection(BlendKind.FILLET, 4.0)
         val drawn = BlendSection(BlendKind.PROFILE, 0.0, listOf(ProfileElement.Seg(Segment(Vec2(0.0, 4.0), Vec2(4.0, 0.0)))))

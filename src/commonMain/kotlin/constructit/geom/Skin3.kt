@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -87,10 +89,8 @@ object Skin3 {
      * sentence, one feature along ([Section3] cites it, and so do the prismatic and the horizontal-section
      * routes).
      */
-    const val LOFT_ONLY =
-        "this solid is a skin over drawn sections (OP-26), whose strips are ruled or faired bands rather than " +
-            "an analytic surface — its section draws from the mesh and offers no construction inputs; sketch on " +
-            "one of its own faces, or put a datum plane where you want to sketch"
+    val LOFT_ONLY =
+        Msgs.refusalSkinThisSolidIsSkinOver()
 
     /**
      * How many rows a **faired** interval is drawn with — deterministic and never adaptive (OP-15's rule for
@@ -207,7 +207,7 @@ object Skin3 {
         row: SkinRow,
         matches: List<SkinMatch> = emptyList(),
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val (plan, why) = plan(sections, row, matches, tolMm)
         if (plan == null) return null to why
         return shell(plan, matches)
@@ -222,15 +222,14 @@ object Skin3 {
         row: SkinRow,
         matches: List<SkinMatch>,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<SkinPlan?, String?> {
+    ): Pair<SkinPlan?, Msg?> {
         if (sections.size < 2) {
-            return null to "a loft needs at least two sections drawn on stations of one run"
+            return null to Msgs.refusalSkinLoftNeedsLeastTwoSections()
         }
         for (k in 0 until sections.size - 1) {
             if (abs(sections[k + 1].at - sections[k].at) <= Geom3.WELD_TOL) {
                 return null to
-                    "sections ${k + 1} and ${k + 2} stand at the same distance along the run " +
-                    "(${Frames3.mm(sections[k].at)} mm), so there is no run between them — slide one station"
+                    Msgs.refusalSkinSectionsStandSameDistanceAlong(k = k + 1, k2 = k + 2, mm = Frames3.mm(sections[k].at))
             }
         }
         val preps = ArrayList<Prep>(sections.size)
@@ -276,7 +275,7 @@ object Skin3 {
                 val sampled = resample(piece.pts, n)
                 for (j in 0 until n) pts.add(sampled[j])
             }
-            if (pts.size < 3) return null to "section ${k + 1} gives fewer than three corners to run the skin over"
+            if (pts.size < 3) return null to Msgs.refusalSkinSectionGivesFewerThanThree(k = k + 1)
             ring2.add(pts)
             starts.add(st)
         }
@@ -319,22 +318,21 @@ object Skin3 {
         s: SkinSection,
         k: Int,
         tolMm: Double,
-    ): Pair<Prep?, String?> {
+    ): Pair<Prep?, Msg?> {
         if (s.sketch.regions.size != 1) {
-            return null to "a loft's section is one area, and section ${k + 1} has ${s.sketch.regions.size}"
+            return null to Msgs.refusalSkinLoftSectionIsOneArea(k = k + 1, count = s.sketch.regions.size)
         }
         val region = s.sketch.regions[0]
         if (region.holes.isNotEmpty()) {
             return null to
-                "section ${k + 1} has a hole, and a skin pairs one outline with one outline — loft the outer " +
-                "outlines and subtract a loft of the holes"
+                Msgs.refusalSkinSectionHasHoleSkinPairs(k = k + 1)
         }
         val loop = region.outer
-        if (loop.elements.isEmpty()) return null to "section ${k + 1} has no boundary to run the skin over"
+        if (loop.elements.isEmpty()) return null to Msgs.refusalSkinSectionHasNoBoundaryRun(k = k + 1)
         val drawn = loop.elements.map { GeomMath.tessellatePiece(it, tolMm) }
-        if (drawn.any { it.size < 2 }) return null to "a piece of section ${k + 1}'s outline has no length"
+        if (drawn.any { it.size < 2 }) return null to Msgs.refusalSkinPieceSectionOutlineHasNo(k = k + 1)
         val area = Geom3.polygonArea(Geom3.tessellateLoop(loop, tolMm))
-        if (abs(area) <= 1e-12) return null to "section ${k + 1} encloses no area"
+        if (abs(area) <= 1e-12) return null to Msgs.refusalSkinSectionEnclosesNoArea(k = k + 1)
         // **Orientation is a fact, not a guess** (the user's rule): every station's normal is the run's own
         // tangent, so a loop turned counter-clockwise in its own frame turns the same way about the run as
         // every other section's, and the mirrored correspondence cannot arise at all.
@@ -357,7 +355,7 @@ object Skin3 {
         upper: Prep,
         interval: Int,
         matches: List<SkinMatch>,
-    ): Pair<List<Pair<Int?, Int?>>?, String?> {
+    ): Pair<List<Pair<Int?, Int?>>?, Msg?> {
         val nA = lower.pieces.size
         val nB = upper.pieces.size
         val stated = ArrayList<Pair<Int, Int>>()
@@ -366,8 +364,7 @@ object Skin3 {
             val b = upper.positionOf(m.b)
             if (a < 0 || b < 0) {
                 return null to
-                    "a stated match names a curve that is no longer a piece of section " +
-                    "${if (a < 0) interval + 1 else interval + 2}'s outline — match the curves again"
+                    Msgs.refusalSkinStatedMatchNamesCurveThat(ifWord = if (a < 0) interval + 1 else interval + 2)
             }
             stated.add(a to b)
         }
@@ -375,16 +372,13 @@ object Skin3 {
             for (j in i + 1 until stated.size) {
                 if (stated[i].first == stated[j].first || stated[i].second == stated[j].second) {
                     return null to
-                        "one curve of section ${interval + 1} or ${interval + 2} is matched twice, and a piece " +
-                        "runs to one piece — un-match one of the two pairs"
+                        Msgs.refusalSkinOneCurveSectionIsMatched(interval = interval + 1, interval2 = interval + 2)
                 }
             }
         }
         if (stated.isEmpty() && nA != nB) {
             return null to
-                "section ${interval + 1} has $nA pieces and section ${interval + 2} has $nB, and with no stated " +
-                "pair there is nothing to line them up by — match one curve of each with *Match sections*, or " +
-                "split a curve with *Break* so the counts agree"
+                Msgs.refusalSkinSectionHasPiecesSectionHas(interval = interval + 1, nA = nA, interval2 = interval + 2, nB = nB)
         }
         val anchors = if (stated.isEmpty()) listOf(0 to 0) else stated
         // **The first stated pair is the seam**: the walk starts there, so a Match twists an equal-count skin
@@ -396,10 +390,7 @@ object Skin3 {
             val here = (order[i].second - seam.second).mod(nB)
             if (here <= prev) {
                 return null to
-                    "the stated matches cross: piece #${order[i - 1].first + 1} of section ${interval + 1} runs " +
-                    "to piece #${order[i - 1].second + 1} of section ${interval + 2} while piece " +
-                    "#${order[i].first + 1} runs to piece #${order[i].second + 1}, and a crossed mapping is a " +
-                    "skin that passes through itself — un-match one of the two pairs"
+                    Msgs.refusalSkinStatedMatchesCrossPieceSection(first = order[i - 1].first + 1, interval = interval + 1, second = order[i - 1].second + 1, interval2 = interval + 2, first2 = order[i].first + 1, second2 = order[i].second + 1)
             }
         }
         val out = ArrayList<Pair<Int?, Int?>>()
@@ -493,11 +484,10 @@ object Skin3 {
     private fun advances(
         plan: SkinPlan,
         k: Int,
-    ): String? {
+    ): Msg? {
         val d = centre(plan.ringW[k + 1]) - centre(plan.ringW[k])
         if (d.length() <= Geom3.WELD_TOL) {
-            return "the stations ${Frames3.mm(plan.sections[k].at)} mm and ${Frames3.mm(plan.sections[k + 1].at)} mm " +
-                "along the run put sections ${k + 1} and ${k + 2} in the same place, so the skin has no direction to run in"
+            return Msgs.refusalSkinStationsMmMmAlongRun(mm = Frames3.mm(plan.sections[k].at), mm2 = Frames3.mm(plan.sections[k + 1].at), k = k + 1, k2 = k + 2)
         }
         val dir = d.normalized()
         val lo = ArrayList<Vec3>()
@@ -512,23 +502,20 @@ object Skin3 {
                 // a collapsing strip legitimately has every ruling ending at one point, so the advance is
                 // asked of the rulings that still have length
                 if ((b - a).length() > Geom3.WELD_TOL && (b - a).dot(dir) <= 0.0) {
-                    return fold(plan, k, "run backwards")
+                    return fold(plan, k, Msgs.refusalSkinRunBackwards())
                 }
             }
         }
-        if (Geom3.crossingRails(lo, hi) != null) return fold(plan, k, "cross")
+        if (Geom3.crossingRails(lo, hi) != null) return fold(plan, k, Msgs.wordSkinCrossingRails())
         return null
     }
 
     private fun fold(
         plan: SkinPlan,
         k: Int,
-        what: String,
-    ): String =
-        "the skin between the station ${Frames3.mm(plan.sections[k].at)} mm along the run and the one " +
-            "${Frames3.mm(plan.sections[k + 1].at)} mm along it would pass through itself — corresponding points " +
-            "of sections ${k + 1} and ${k + 2} $what. Slide a station, turn a section, or match the curves that " +
-            "should meet"
+        what: Msg,
+    ): Msg =
+        Msgs.refusalSkinSkinBetweenStationMmAlong(mm = Frames3.mm(plan.sections[k].at), mm2 = Frames3.mm(plan.sections[k + 1].at), k = k + 1, k2 = k + 2, what = what)
 
     private fun centre(ring: List<Vec3>): Vec3 {
         var s = Vec3.ZERO
@@ -569,7 +556,7 @@ object Skin3 {
     private fun shell(
         plan: SkinPlan,
         matches: List<SkinMatch>,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val caps = ArrayList<Triple<Prep, List<Geom3.Tri3>, Boolean>>(2)
         for (k in listOf(0, plan.sections.size - 1)) {
             val prep = plan.preps[k]
@@ -581,7 +568,7 @@ object Skin3 {
             // ring's points all lie **on** the section's boundary, so nothing about the shape is lost, and
             // the cap's own **face** still carries the region's exact outline, arcs included ([faces]).
             val (tris, why) = Geom3.triangulate(Geom3.TessRegion(plan.ring2[k], emptyList()))
-            if (tris == null) return null to "section ${k + 1}: ${why ?: "cannot be triangulated"}"
+            if (tris == null) return null to Msgs.refusalSectionOfIndex(k = k + 1, reason = why ?: Msgs.refusalSolidSectionCannotBeTriangulated())
             val split = tris
             val runDir =
                 if (k == 0) {
@@ -632,11 +619,7 @@ object Skin3 {
                 for (j in 0 until rows.size - 1) {
                     if (!Geom3.foldedQuad(rows[j][i], rows[j + 1][i], rows[j + 1][i + 1], rows[j][i + 1])) continue
                     return null to
-                        "the correspondence folds this skin's shell back on itself: the strip between " +
-                        "${Frames3.mm(rows[j][i].x)}, ${Frames3.mm(rows[j][i].y)}, ${Frames3.mm(rows[j][i].z)} and " +
-                        "its neighbour turns so far that the two triangles its own split makes of it face " +
-                        "against each other, so the band passes through the run rather than running along it. " +
-                        "State the pair at another vertex, or leave the pieces to pair by traversal order"
+                        Msgs.refusalSkinCorrespondenceFoldsThisSkinShell(mm = Frames3.mm(rows[j][i].x), mm2 = Frames3.mm(rows[j][i].y), mm3 = Frames3.mm(rows[j][i].z))
                 }
             }
         }
@@ -667,8 +650,7 @@ object Skin3 {
         // correspondence that folds in a way no single quad does ([MeshCanon.fault], flap and hollow)
         MeshCanon.fault(shell)?.let {
             return null to
-                "the correspondence folds this skin's shell back on itself — $it. State the pair at another " +
-                "vertex, or leave the pieces to pair by traversal order"
+                Msgs.refusalSkinCorrespondenceFoldsThisSkinShell2(itWord = it)
         }
         return Solid3.derivedFine(feature) { shell } to null
     }
@@ -707,7 +689,7 @@ object Skin3 {
      * ([Section3.faceAddressCount]) — and every one of those addresses was a refusal before this feature
      * existed, so no stored byte changes meaning (OP-18).
      */
-    fun faces(f: Feature3.Skin): Pair<List<FacePatch>?, String?> {
+    fun faces(f: Feature3.Skin): Pair<List<FacePatch>?, Msg?> {
         val (plan, why) = plan(f.sections, f.row, f.matches)
         if (plan == null) return null to why
         val out = ArrayList<FacePatch>()
@@ -751,21 +733,19 @@ object Skin3 {
         for (j in 0..f.count) ring.add(plan.railPoint(strip.family, j, interval))
         for (j in f.count downTo 0) ring.add(plan.railPoint(strip.family, j, interval + 1))
         val pts = dedupe(ring)
-        if (pts.size < 3) return FacePatch(name, null, emptyList(), "that face collapses to a line")
-        val plane = planeThrough(pts) ?: return FacePatch(name, null, emptyList(), "that face is degenerate")
+        if (pts.size < 3) return FacePatch(name, null, emptyList(), Msgs.refusalSkinThatFaceCollapsesLine())
+        val plane = planeThrough(pts) ?: return FacePatch(name, null, emptyList(), Msgs.refusalSkinThatFaceIsDegenerate())
         val off = pts.maxOf { abs(plane.distanceTo(it)) }
         if (off > FLAT_TOL) {
             return FacePatch(
                 name,
                 null,
                 emptyList(),
-                "that face is a ruled band rather than flat (its corners are " +
-                    "${kotlin.math.round(off * 1000.0) / 1000.0} mm out of plane) — put a datum plane where you " +
-                    "want to sketch",
+                Msgs.refusalSkinThatFaceIsRuledBand(round = (kotlin.math.round(off * 1000.0) / 1000.0).toString()),
             )
         }
         val local = dedupe2(pts.map { plane.toLocal(it) })
-        if (local.size < 3) return FacePatch(name, null, emptyList(), "that face encloses no area")
+        if (local.size < 3) return FacePatch(name, null, emptyList(), Msgs.refusalSkinThatFaceEnclosesNoArea())
         return FacePatch(name, plane, ringPieces(oriented(local)), null)
     }
 

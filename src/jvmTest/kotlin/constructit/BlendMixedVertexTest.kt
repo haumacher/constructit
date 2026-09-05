@@ -211,9 +211,9 @@ class BlendMixedVertexTest {
     ): SolidRef {
         val body = Evaluator().solid(on)
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyTargets)
+        assertNotNull(targets, whyTargets?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(on, on, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 
@@ -648,9 +648,9 @@ class BlendMixedVertexTest {
         val addr = uprightAt(rounded, inside, 0.0, height)
         val on = Evaluator().solid(rounded)
         val (targets, whyT) = Blend3.targets(on.feature, false, addr)
-        assertNotNull(targets, whyT)
+        assertNotNull(targets, whyT?.render())
         val (choices, whyC) = Blend3.choicesFor(on, targets, BlendSection(BlendKind.FILLET, r))
-        assertNotNull(choices, whyC)
+        assertNotNull(choices, whyC?.render())
         val out = cx.blend(fused, rounded, cx.planeXY(), cx.const(r.mm), BlendKind.FILLET, false, addr, choices)
         val why = assertNotNull(refusalOf(out), "the re-turn is refused when there is no chain to rebuild")
         assertTrue(why.contains("re-turns a corner an earlier rounding made"), "…by name: $why")

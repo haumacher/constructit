@@ -33,6 +33,8 @@ import constructit.geom.Solid3
 import constructit.geom.SweepProfile
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import constructit.units.Dimension
 import constructit.units.mm
 import kotlin.math.PI
@@ -172,7 +174,7 @@ class SectionFamilyTest {
         path: Path3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         rigid: SizeLaw? = null,
-    ): Pair<Solid3?, String?> {
+    ): Pair<Solid3?, Msg?> {
         val length = path.elements.sumOf { Curves3.arcLength(it) }
         val (built, why) =
             SectionFamilies.build(fam, emptyList(), 0, length, tolMm) { region, at ->
@@ -648,7 +650,7 @@ class SectionFamilyTest {
                     "(t = ${Frames3.mm(1.0)}), where tip = ${Frames3.mm(0.0)} mm — a family carries one section " +
                     "through the whole run, and a piece that vanishes part-way along leaves it with fewer. Hold " +
                     "that piece off zero, or draw the two sections you want and skin them with *Loft (ruled)*",
-                why,
+                why?.render(),
                 "and the words are the same words at tol $tol",
             )
         }

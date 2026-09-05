@@ -98,7 +98,7 @@ attach e9 e19
         reach: Double,
     ): List<Vec3> {
         val (frame, why) = Frames3.along(path, Vec3.Z, reach = reach)
-        return assertNotNull(frame, why).stations.filter { it.corner }.map { it.at }
+        return assertNotNull(frame, why?.render()).stations.filter { it.corner }.map { it.at }
     }
 
     // ---- the ground truth: does the surface actually pass through itself? ----
@@ -247,7 +247,7 @@ attach e9 e19
                 Geom3
                     .sweptShells(
                         listOf(tess),
-                        assertNotNull(frame, noFrame).stations,
+                        assertNotNull(frame, noFrame?.render()).stations,
                         closed = true,
                         regions = listOf(profile.region),
                     ) { st, p -> st.place(p) }.first,
@@ -319,7 +319,7 @@ attach e9 e19
                 ),
             )
         val (frame, why) = Frames3.along(corner, Vec3.Z, reach = 20.0)
-        assertNull(Embedding.cornerFold(assertNotNull(frame, why), 20.0), "a right-angled elbow of straights mitres exactly")
+        assertNull(Embedding.cornerFold(assertNotNull(frame, why?.render()), 20.0), "a right-angled elbow of straights mitres exactly")
         val solid = assertNotNull(Geom3.sweep(corner, Vec3.Z, SweepProfile.Round(20.0)).first, "…and builds")
         assertManifold(solid.mesh, "the mitred elbow")
     }

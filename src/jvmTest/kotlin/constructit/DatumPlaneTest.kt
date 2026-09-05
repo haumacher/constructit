@@ -14,6 +14,7 @@ import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.MeshBool
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.Quantity
 import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -669,11 +670,11 @@ class DatumPlaneTest {
         val ed = plate()
         ed.sketchPlaneOn(Vec2(40.0, 0.0), "45")
         val labels = ed.doc.spaces.map { ed.doc.spaceLabel(it) }
-        assertEquals("plan", labels[0])
+        assertEquals("plan", labels[0].render())
         val hinge = assertNotNull(ed.activeSpace.hinge)
         assertEquals(
             "plane1 (45° on ${ed.doc.nameOf(hinge)}, front toward 270°)",
-            labels[1],
+            labels[1].render(),
             "the angle, the line it turns about — and which way it fronts, as a bearing in the plan (session 64)",
         )
 
@@ -682,7 +683,7 @@ class DatumPlaneTest {
         ed.click(Vec2(0.0, 10.0))
         ed.click(Vec2(50.0, 10.0))
         ed.sketchPlaneOn(Vec2(25.0, 10.0), "30")
-        assertTrue(ed.doc.spaceLabel(ed.activeSpace).endsWith(", from plane1)"), ed.doc.spaceLabel(ed.activeSpace))
+        assertTrue(ed.doc.spaceLabel(ed.activeSpace).render().endsWith(", from plane1)"), "${ed.doc.spaceLabel(ed.activeSpace)}")
     }
 
     /** An **ortho leg** carries a sketch plane like any other line — the ordinary carrier coercion. */

@@ -1,5 +1,8 @@
 package constructit.units
 
+import constructit.l10n.Msg
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -34,7 +37,9 @@ data class Dimension(val length: Int, val angle: Int) {
 }
 
 /** Raised when an operation combines incompatible dimensions (caught -> node invalid, OP-3). */
-class DimensionError(message: String) : RuntimeException(message)
+class DimensionError(why: Msg) : MsgError(why) {
+    constructor(message: String) : this(Msg.text(message))
+}
 
 /**
  * A dimensioned quantity stored in canonical base units (mm, rad).
@@ -61,17 +66,19 @@ data class Quantity(val base: Double, val dim: Dimension) {
 
     fun requireDim(
         expected: Dimension,
-        what: String,
+        what: Msg,
     ): Quantity {
-        if (dim != expected) throw DimensionError("$what requires $expected but got $dim")
+        if (dim != expected) {
+            throw DimensionError(Msgs.refusalDimensionRequires(what = what, expected = expected.toString(), got = dim.toString()))
+        }
         return this
     }
 
     /** Value expressed in millimetres (length only). */
-    val mm: Double get() = requireDim(Dimension.LENGTH, "millimetres").base
+    val mm: Double get() = requireDim(Dimension.LENGTH, Msg.text("millimetres")).base
 
     /** Value expressed in degrees (angle only). */
-    val deg: Double get() = requireDim(Dimension.ANGLE, "degrees").base * 180.0 / PI
+    val deg: Double get() = requireDim(Dimension.ANGLE, Msg.text("degrees")).base * 180.0 / PI
 
     /** Raw dimensionless value. */
     val value: Double get() = base
@@ -98,8 +105,8 @@ val Int.mm get() = Quantity.mm(this.toDouble())
 val Int.deg get() = Quantity.deg(this.toDouble())
 
 // Dimension-aware transcendental helpers (angle -> dimensionless).
-fun sin(q: Quantity): Quantity = Quantity(sin(q.requireDim(Dimension.ANGLE, "sin").base), Dimension.NONE)
+fun sin(q: Quantity): Quantity = Quantity(sin(q.requireDim(Dimension.ANGLE, Msg.text("sin")).base), Dimension.NONE)
 
-fun cos(q: Quantity): Quantity = Quantity(cos(q.requireDim(Dimension.ANGLE, "cos").base), Dimension.NONE)
+fun cos(q: Quantity): Quantity = Quantity(cos(q.requireDim(Dimension.ANGLE, Msg.text("cos")).base), Dimension.NONE)
 
-fun tan(q: Quantity): Quantity = Quantity(tan(q.requireDim(Dimension.ANGLE, "tan").base), Dimension.NONE)
+fun tan(q: Quantity): Quantity = Quantity(tan(q.requireDim(Dimension.ANGLE, Msg.text("tan")).base), Dimension.NONE)

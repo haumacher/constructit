@@ -20,6 +20,7 @@ import constructit.geom.GeomMath
 import constructit.geom.Section3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -106,9 +107,9 @@ class BlendCornerTest {
     ): SolidRef {
         val body = Evaluator().solid(base)
         val (targets, whyT) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyT)
+        assertNotNull(targets, whyT?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 
@@ -117,7 +118,7 @@ class BlendCornerTest {
         label: String,
     ): Int {
         val faces = assertNotNull(Section3.faces(Evaluator().solid(ref).feature).first, "the solid names its faces")
-        val i = faces.indexOfFirst { it.name.label == label }
+        val i = faces.indexOfFirst { it.name.label.render() == label }
         assertTrue(i >= 0, "the solid has $label — it has ${faces.map { it.name.label }}")
         return i
     }
@@ -306,7 +307,7 @@ tool filletedge els=e12 clicks=3.392929260632428,51.410033777603246 scalar="r" s
         val targets = listOf(7, 6)
         val choices = assertNotNull(Blend3.choicesFor(body, targets, BlendSection(BlendKind.FILLET, r)).first, "the pair scores its choices")
         val (chain, whyChain) = Blend3.blended(body, body, targets, BlendSection(BlendKind.FILLET, r), choices)
-        assertNotNull(chain, whyChain)
+        assertNotNull(chain, whyChain?.render())
         assertManifold(chain.mesh, "the two-edge chain in one gesture")
         val together = Geom3.volume(chain.mesh)
 

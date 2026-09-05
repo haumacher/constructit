@@ -4,6 +4,8 @@ import constructit.core.EvalResult
 import constructit.core.Node
 import constructit.core.ScalarValue
 import constructit.core.Value
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.DimensionError
 import constructit.units.Quantity
 
@@ -39,7 +41,7 @@ class ExprNode(
     override fun compute(args: List<Value>): EvalResult {
         val env = HashMap<String, Quantity>(names.size)
         for ((k, n) in names.withIndex()) {
-            val q = (args[k] as? ScalarValue)?.q ?: return EvalResult.Invalid("$text: $n is not a number")
+            val q = (args[k] as? ScalarValue)?.q ?: return EvalResult.Invalid(Msgs.refusalExprNotANumber(text = text, name = n))
             env[n] = q
         }
         // both error kinds end here, as OP-3 invalidity with the reason in the drawing's own words: a
@@ -47,9 +49,9 @@ class ExprNode(
         return try {
             EvalResult.Ok(ScalarValue(ExprEval.eval(ast) { env[it] }))
         } catch (e: DimensionError) {
-            EvalResult.Invalid("$text: ${e.message}")
+            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = Msg.text(e.message ?: "")))
         } catch (e: ExprError) {
-            EvalResult.Invalid("$text: ${e.message}")
+            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = Msg.text(e.message ?: "")))
         }
     }
 }

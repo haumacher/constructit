@@ -14,6 +14,7 @@ import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Section3
 import constructit.geom.SolidFace
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -83,7 +84,7 @@ class EdgeBlendTest {
         label: String,
     ): Int {
         val faces = assertNotNull(Section3.faces(ev.solid(ref).feature).first, "the solid names its faces")
-        val i = faces.indexOfFirst { it.name.label == label }
+        val i = faces.indexOfFirst { it.name.label.render() == label }
         assertTrue(i >= 0, "the solid has $label — it has ${faces.map { it.name.label }}")
         return i
     }
@@ -125,9 +126,9 @@ class EdgeBlendTest {
     ): SolidRef {
         val body = ev.solid(base)
         val (targets, whyT) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyT)
+        assertNotNull(targets, whyT?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 
@@ -311,7 +312,7 @@ class EdgeBlendTest {
         assertTrue(said.contains("largest that fits"), "and what to type instead: $said")
         // …and it heals the moment the radius comes down (OP-3), with the very same stored choice
         val (ok, whyOk) = Blend3.blended(body, body, targets, BlendSection(BlendKind.FILLET, 2.0), choices)
-        assertNotNull(ok, whyOk)
+        assertNotNull(ok, whyOk?.render())
         assertManifold(ok.mesh, "the healed blend")
     }
 
@@ -376,7 +377,7 @@ class EdgeBlendTest {
         val d = 2.0
         val choice = assertNotNull(Blend3.choicesFor(body, targets!!, BlendSection(BlendKind.CHAMFER, d)).first)
         val (out, why) = Blend3.blended(body, body, targets, BlendSection(BlendKind.CHAMFER, d), choice)
-        val bevelled = assertNotNull(out, why)
+        val bevelled = assertNotNull(out, why?.render())
         assertManifold(bevelled.mesh, "the bevelled bore mouth")
         val loss = before - Geom3.volume(bevelled.mesh)
 
@@ -391,7 +392,7 @@ class EdgeBlendTest {
         // ...and it takes **more** than the fillet of the same size does, which is what a bevel is
         val round = assertNotNull(Blend3.choicesFor(body, targets, BlendSection(BlendKind.FILLET, d)).first)
         val (rounded, whyRound) = Blend3.blended(body, body, targets, BlendSection(BlendKind.FILLET, d), round)
-        assertNotNull(rounded, whyRound)
+        assertNotNull(rounded, whyRound?.render())
         assertManifold(rounded.mesh, "the rounded bore mouth")
         assertTrue(loss > before - Geom3.volume(rounded.mesh), "a chamfer of $d takes more than a round of $d")
     }

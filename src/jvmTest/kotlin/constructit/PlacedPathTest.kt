@@ -14,6 +14,7 @@ import constructit.editor.OrthoPath
 import constructit.editor.PointerButton
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.cos
@@ -733,11 +734,11 @@ class PlacedPathTest {
         ed.click(mid)
         ed.click(mid)
         assertEquals(1, ed.selectionCount)
-        assertEquals("leg ${ed.doc.nameOf(path(ed).legs[0])}", ed.selectionLabel())
+        assertEquals("leg ${ed.doc.nameOf(path(ed).legs[0])}", ed.selectionLabel().render())
         // and *not* where it used to be before the turn
         ed.click(Vec2(-300.0, -300.0))
         ed.click(Vec2(50.0, 0.0))
-        assertTrue(ed.selectionCount == 0 || ed.selectionLabel() != "leg ${ed.doc.nameOf(path(ed).legs[0])}")
+        assertTrue(ed.selectionCount == 0 || ed.selectionLabel().render() != "leg ${ed.doc.nameOf(path(ed).legs[0])}")
     }
 
     /**

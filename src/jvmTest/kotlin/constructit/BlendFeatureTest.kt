@@ -30,6 +30,7 @@ import constructit.geom.Segment
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
@@ -91,9 +92,9 @@ class BlendFeatureTest {
     ): SolidRef {
         val body = ev.solid(base)
         val (targets, whyT) = Blend3.targets(body.feature, whole, address)
-        assertNotNull(targets, whyT)
+        assertNotNull(targets, whyT?.render())
         val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
-        assertNotNull(choices, why)
+        assertNotNull(choices, why?.render())
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
 
@@ -145,7 +146,7 @@ class BlendFeatureTest {
 
         val dressed = Evaluator().solid(rounded).feature
         assertTrue(dressed is Feature3.Blend, "the blend is a feature of its own, not a mesh boolean: $dressed")
-        val faces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second)
+        val faces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second?.render())
         assertEquals(baseFaces.size + 1, faces.size, "one band appended per blended edge")
         assertEquals(baseFaces.map { it.name }, faces.dropLast(1).map { it.name }, "every base face keeps its index")
 
@@ -177,7 +178,7 @@ class BlendFeatureTest {
         assertEquals(Revolve3.Band.Cylinder(r, 0.0, 10.0), assertNotNull(band.surface).band, "a straight-edge fillet is a cylinder band")
         assertNull(band.plane, "and it is not a plane")
         val why = assertNotNull(band.reason, "so it says so, in the blend's own words")
-        assertTrue("rounded band" in why && "cylinder" in why, why)
+        assertTrue("rounded band" in why && "cylinder" in why, "$why")
     }
 
     /** The edge list is the same law: consumed edges keep their index and say so, rails append. */
@@ -195,7 +196,7 @@ class BlendFeatureTest {
         assertEquals(baseEdges.size + 2, edges.size, "two tangent rails appended, nothing removed")
         assertEquals(baseEdges.map { it.name }, edges.dropLast(2).map { it.name }, "no base edge renumbered")
         val gone = assertNotNull(edges[i].reason, "the blended edge is flagged rather than dropped")
-        assertTrue("rounded away" in gone && "rounded band along edge #${i + 1}" in gone, gone)
+        assertTrue("rounded away" in gone && "rounded band along edge #${i + 1}" in gone, "$gone")
         assertEquals(EdgeName.BlendRail(i, 0), edges[baseEdges.size].name)
         assertEquals(EdgeName.BlendRail(i, 1), edges[baseEdges.size + 1].name)
         for (k in baseEdges.indices) if (k != i) assertNull(edges[k].reason, "${edges[k].name.label} is untouched")
@@ -219,7 +220,7 @@ class BlendFeatureTest {
         assertTrue(after < before, "four convex edges lose material: $after vs $before")
 
         val dressed = Evaluator().solid(rounded).feature
-        val dressedFaces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second)
+        val dressedFaces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second?.render())
         assertEquals(faces.size + 4, dressedFaces.size, "one band per piece of the chain")
         assertEquals(faces.map { it.name }, dressedFaces.take(faces.size).map { it.name }, "and no base index moved")
         // the cap is gone from *every* side by the radius: its outline no longer reaches any of its old corners
@@ -262,12 +263,12 @@ class BlendFeatureTest {
         assertEquals(seg(4.0, 20.0, 30.0, 20.0), dressed.edges[5].curve, "the dressed one starts at the setback")
         // …and the bevel itself is a named input
         assertEquals(seg(0.0, 16.0, 4.0, 20.0), dressed.edges.last().curve, "the bevel is a face of the body")
-        assertTrue("rounded band" in dressed.edges.last().provenance, dressed.edges.last().provenance)
+        assertTrue("rounded band" in dressed.edges.last().provenance, "${dressed.edges.last().provenance}")
 
         // corners: the consumed edge says why it is not one, and the two rails are
         val consumed = dressed.corners[i]
         assertNull(consumed.at, "the rounded-away edge is not a corner of this body")
-        assertTrue("rounded away" in assertNotNull(consumed.reason), consumed.reason!!)
+        assertTrue("rounded away" in assertNotNull(consumed.reason), "${consumed.reason!!}")
         val rails = dressed.corners.takeLast(2).mapNotNull { it.at }
         assertEquals(2, rails.size, "both tangent rails cross the plane")
         assertTrue(rails.any { (it - Vec2(4.0, 20.0)).length() <= 1e-9 } && rails.any { (it - Vec2(0.0, 16.0)).length() <= 1e-9 }, "$rails")
@@ -417,7 +418,7 @@ class BlendFeatureTest {
 
         val f2 = Evaluator().solid(second).feature
         assertTrue(f2 is Feature3.Blend && f2.base === f1, "the second blend's base is the first blend")
-        val faces2 = assertNotNull(Section3.faces(f2).first, Section3.faces(f2).second)
+        val faces2 = assertNotNull(Section3.faces(f2).first, Section3.faces(f2).second?.render())
         val edges2 = assertNotNull(Section3.edges(f2).first)
         assertEquals(faces1.size + 1, faces2.size, "one more band")
         assertEquals(faces1.map { it.name }, faces2.dropLast(1).map { it.name }, "and every index of the *dressed* list survives")

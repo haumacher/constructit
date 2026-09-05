@@ -15,6 +15,7 @@ import constructit.editor.Tools
 import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.Vec2
+import constructit.l10n.contains
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -241,9 +242,9 @@ class SeamDownToolTest {
     fun theNewToolsAskForTheirScalarFirst() {
         val ed = Editor()
         ed.setTool(Tools.SECTION)
-        assertTrue(ed.currentHelp().contains("height"), ed.currentHelp())
+        assertTrue(ed.currentHelp().contains("height"), "${ed.currentHelp()}")
         ed.setTool(Tools.EXTRUDE_ON_FACE)
-        assertTrue(ed.currentHelp().contains("depth"), ed.currentHelp())
+        assertTrue(ed.currentHelp().contains("depth"), "${ed.currentHelp()}")
     }
 
     /** A section is an area like any other, so the plain *Extrude* tool takes it. */

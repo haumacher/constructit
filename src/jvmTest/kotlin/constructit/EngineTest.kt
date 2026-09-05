@@ -7,6 +7,8 @@ import constructit.dsl.isValid
 import constructit.dsl.point
 import constructit.dsl.resultOf
 import constructit.dsl.scalar
+import constructit.l10n.Msg
+import constructit.l10n.contains
 import constructit.units.cm
 import constructit.units.deg
 import constructit.units.mm
@@ -96,7 +98,7 @@ class EngineTest {
     fun requirePositiveStatesADomainAndHeals() {
         val c = Construction()
         val gap = c.parameter("gap", 5.mm)
-        val checked = c.requirePositive(gap, "the gap must be positive")
+        val checked = c.requirePositive(gap, Msg.text("the gap must be positive"))
         val circle = c.circleCR(c.freePoint("O", 0.mm, 0.mm), checked)
         assertClose(Evaluator().circle(circle).radius, 5.0)
 

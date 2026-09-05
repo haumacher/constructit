@@ -8,6 +8,7 @@ import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.l10n.contains
 import constructit.units.deg
 import kotlin.math.PI
 import kotlin.test.Test
@@ -91,8 +92,8 @@ class PlaneFacingTest {
             east.statusHint.contains("that is where a positive Extrude or Revolve builds"),
             "the note says what the bearing is *for*: ${east.statusHint}",
         )
-        assertTrue(east.doc.spaceLabel(east.activeSpace).endsWith(", front toward 270°)"), east.doc.spaceLabel(east.activeSpace))
-        assertTrue(west.doc.spaceLabel(west.activeSpace).endsWith(", front toward 90°)"), west.doc.spaceLabel(west.activeSpace))
+        assertTrue(east.doc.spaceLabel(east.activeSpace).render().endsWith(", front toward 270°)"), "${east.doc.spaceLabel(east.activeSpace)}")
+        assertTrue(west.doc.spaceLabel(west.activeSpace).render().endsWith(", front toward 90°)"), "${west.doc.spaceLabel(west.activeSpace)}")
     }
 
     /** A datum that lies **flat** on its base has no bearing at all, and says the honest thing instead. */
@@ -110,8 +111,8 @@ class PlaneFacingTest {
         assertEquals(null, b.bearingDeg, "flat on its base: there is no side to lean toward")
         assertTrue(a.outward, "0° fronts the way the plan does")
         assertFalse(b.outward, "180° fronts the other way")
-        assertTrue(flat.doc.spaceLabel(flat.activeSpace).endsWith(", front with plan)"), flat.doc.spaceLabel(flat.activeSpace))
-        assertTrue(over.doc.spaceLabel(over.activeSpace).endsWith(", front against plan)"), over.doc.spaceLabel(over.activeSpace))
+        assertTrue(flat.doc.spaceLabel(flat.activeSpace).render().endsWith(", front with plan)"), "${flat.doc.spaceLabel(flat.activeSpace)}")
+        assertTrue(over.doc.spaceLabel(over.activeSpace).render().endsWith(", front against plan)"), "${over.doc.spaceLabel(over.activeSpace)}")
         assertTrue(flat.statusHint.contains("It lies flat on plan, fronting the same way"), flat.statusHint)
         assertTrue(over.statusHint.contains("It lies flat on plan, fronting the opposite way"), over.statusHint)
     }
@@ -124,7 +125,7 @@ class PlaneFacingTest {
     fun thePlanGainsNoFacingWords() {
         val ed = hinged(Vec2(0.0, 0.0), Vec2(100.0, 0.0), "90")
         ed.setActiveSpace("plan")
-        assertEquals("plan", ed.doc.spaceLabel(ed.doc.activeSpace), "the plan's label is the one word it was")
+        assertEquals("plan", ed.doc.spaceLabel(ed.doc.activeSpace).render(), "the plan's label is the one word it was")
         assertFalse(ed.statusHint.contains("front"), "the plan's note says nothing about facing: ${ed.statusHint}")
         assertEquals(null, ed.doc.spaceFacing(ed.doc.activeSpace), "the question is not asked of the plan")
     }
@@ -138,7 +139,7 @@ class PlaneFacingTest {
         ed.doc.setParameter(angle, (-90.0).deg)
         assertEquals(1.0, normalOf(ed).y, 1e-9, "a negative angle turns the plane over")
         assertEquals(90.0, assertNotNull(ed.doc.spaceFacing(ed.activeSpace)).bearingDeg!!, 1e-9, "and the words follow it")
-        assertTrue(ed.doc.spaceLabel(ed.activeSpace).endsWith(", front toward 90°)"), ed.doc.spaceLabel(ed.activeSpace))
+        assertTrue(ed.doc.spaceLabel(ed.activeSpace).render().endsWith(", front toward 90°)"), "${ed.doc.spaceLabel(ed.activeSpace)}")
     }
 
     // ---- 2. the tick ----

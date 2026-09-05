@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.floor
 
@@ -39,7 +41,7 @@ expect object MeshBool {
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, String?>
+    ): Pair<Mesh3?, Msg?>
 }
 
 /**
@@ -49,8 +51,8 @@ expect object MeshBool {
  * Manifold present the same operands succeed, so the refusal has to be about availability (OP-3's rule
  * that a reason is a statement about *this* state, not a permanent verdict).
  */
-fun meshBoolUnavailable(status: String): String =
-    "these solids have no common axis, so this boolean needs the general engine — Manifold (OP-9) — which is not available here: $status"
+fun meshBoolUnavailable(status: String): Msg =
+    Msgs.refusalMeshboolTheseSolidsHaveNoCommon(status = status)
 
 /**
  * The **canonical form** of a mesh: welded vertices, sorted lexicographically, triangles rotated to their
@@ -186,9 +188,9 @@ object MeshCanon {
      * welds too, so "one vertex per position" is what a [Mesh3] means here, and a zero-thickness contact
      * has no representation in it either way.
      */
-    fun finish(mesh: Mesh3): Pair<Mesh3?, String?> {
+    fun finish(mesh: Mesh3): Pair<Mesh3?, Msg?> {
         val out = canonical(mesh)
-        if (out.triangles.isEmpty()) return null to "the general boolean produced no triangles"
+        if (out.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanProducedNoTriangles()
         val fault = fault(out)
         return if (fault == null) out to null else null to fault
     }
@@ -228,7 +230,7 @@ object MeshCanon {
      * session 82 found one: three rulings of a twisted triangular skin, each joining a corner to the
      * vertical of its neighbour, sweeping three quads through the axis whose contributions sum to **zero**.
      */
-    fun fault(mesh: Mesh3): String? = notClosed(mesh) ?: flap(mesh) ?: hollow(mesh)
+    fun fault(mesh: Mesh3): Msg? = notClosed(mesh) ?: flap(mesh) ?: hollow(mesh)
 
     /**
      * Why the shell **encloses no volume** — it passes through itself and what it bounds cancels — or null
@@ -245,7 +247,7 @@ object MeshCanon {
      * A **negative** volume is the same defect read the other way and is included: a shell wound inside out
      * bounds the complement of a body, which no consumer of this can use.
      */
-    fun hollow(mesh: Mesh3): String? {
+    fun hollow(mesh: Mesh3): Msg? {
         if (mesh.vertices.isEmpty()) return null
         var lo = mesh.vertices[0]
         var hi = mesh.vertices[0]
@@ -257,8 +259,7 @@ object MeshCanon {
         val floor = weldTol(mesh.vertices) * span * span
         val volume = Geom3.volume(mesh)
         if (volume > floor) return null
-        return "the general boolean's result encloses no volume ($volume mm³ against a floor of $floor mm³): " +
-            "the surface passes through itself, so what it bounds cancels and there is no inside to it"
+        return Msgs.refusalMeshboolGeneralBooleanResultEnclosesNo(volume = volume.toString(), floor = floor.toString())
     }
 
     /**
@@ -278,7 +279,7 @@ object MeshCanon {
      * the check that says it was opened everywhere: watertight or refused (OP-9), with *watertight* now
      * meaning what it always claimed to.
      */
-    fun flap(mesh: Mesh3): String? {
+    fun flap(mesh: Mesh3): Msg? {
         val owner = HashMap<Long, Int>(mesh.triangles.size * 4)
         for ((i, t) in mesh.triangles.withIndex()) {
             for (e in longArrayOf(edge(t.a, t.b), edge(t.b, t.c), edge(t.c, t.a))) owner[e] = i
@@ -291,9 +292,7 @@ object MeshCanon {
                 if (j <= i) continue
                 val m = normalOf(mesh, mesh.triangles[j]) ?: continue
                 if (n.dot(m) > FLAP_COS) continue
-                return "a zero-thickness flap at the edge between ${mesh.vertices[from]} and " +
-                    "${mesh.vertices[to]}: the two triangles that share it are coplanar and wound against " +
-                    "each other, so the surface folds back on itself and encloses nothing there"
+                return Msgs.refusalMeshboolZeroThicknessFlapEdgeBetween(from = mesh.vertices[from].toString(), to = mesh.vertices[to].toString())
             }
         }
         return null
@@ -310,7 +309,7 @@ object MeshCanon {
     }
 
     /** Why [mesh] is not a closed, consistently wound shell, or null when it is. */
-    fun notClosed(mesh: Mesh3): String? {
+    fun notClosed(mesh: Mesh3): Msg? {
         val uses = HashMap<Long, Int>(mesh.triangles.size * 4)
         for (t in mesh.triangles) {
             for (e in longArrayOf(edge(t.a, t.b), edge(t.b, t.c), edge(t.c, t.a))) {
@@ -323,9 +322,7 @@ object MeshCanon {
                 val forward = uses[edge(from, to)] ?: 0
                 val back = uses[edge(to, from)] ?: 0
                 if (forward != 1 || back != 1) {
-                    return "the general boolean's result is not a closed shell: the edge between " +
-                        "${mesh.vertices[from]} and ${mesh.vertices[to]} is used $forward times with $back " +
-                        "opposite uses (a tangent or self-touching contact has no watertight mesh)"
+                    return Msgs.refusalMeshboolGeneralBooleanResultIsNot(from = mesh.vertices[from].toString(), to = mesh.vertices[to].toString(), forward = forward, back = back)
                 }
             }
         }

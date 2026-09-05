@@ -1,5 +1,8 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
+
 /**
  * A **station**: one stated position along a curve in space, together with the plane the curve pierces there
  * (OP-26, step 4).
@@ -77,35 +80,31 @@ object Stations3 {
         up: Vec3,
         s: Double,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<Station3?, String?> {
-        if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nowhere along it to stand a plane"
+    ): Pair<Station3?, Msg?> {
+        if (path.elements.isEmpty()) return null to Msgs.refusalStationThisCurveHasNoPieces()
         val total = Curves3.length(path)
-        if (total <= Geom3.WELD_TOL) return null to "this curve has no length, so there is nowhere along it to stand a plane"
+        if (total <= Geom3.WELD_TOL) return null to Msgs.refusalStationThisCurveHasNoLength()
         if (s < 0.0) {
             return null to
-                "a station is measured from the start of the run, so it cannot stand ${Frames3.mm(-s)} mm before " +
-                "it — state a distance between 0 and ${Frames3.mm(total)} mm"
+                Msgs.refusalStationStationIsMeasuredStartRun(mm = Frames3.mm(-s), mm2 = Frames3.mm(total))
         }
         if (s > total) {
             return null to
-                "a station ${Frames3.mm(s)} mm along is past the end of this curve, which is ${Frames3.mm(total)} mm " +
-                "long — state a distance between 0 and ${Frames3.mm(total)} mm, or run the curve further"
+                Msgs.refusalStationStationMmAlongIsPast(mm = Frames3.mm(s), mm2 = Frames3.mm(total))
         }
         val (index, t) =
             Curves3.pieceAtLength(path, s)
-                ?: return null to "there is no piece of this curve ${Frames3.mm(s)} mm along it"
+                ?: return null to Msgs.refusalStationThereIsNoPieceThis(mm = Frames3.mm(s))
         val piece = path.elements[index]
         val at = Frames3.pointAt(piece, t)
         val tangent =
             Curves3.tangentAt(piece, t)
                 ?: return null to
-                    "this curve has no direction ${Frames3.mm(s)} mm along, so there is no plane across it there — " +
-                    "move the points that flatten it"
+                    Msgs.refusalStationThisCurveHasNoDirection(mm = Frames3.mm(s))
         val ref =
             reference(path, index, t, tangent, up, tolMm)
                 ?: return null to
-                    "this curve doubles back on itself before ${Frames3.mm(s)} mm, and a frame cannot be carried " +
-                    "through a reversal — a run that reverses is two runs, so split it or move the point that folds it"
+                    Msgs.refusalStationThisCurveDoublesBackItself(mm = Frames3.mm(s))
         return Station3(s, at, tangent, ref) to null
     }
 

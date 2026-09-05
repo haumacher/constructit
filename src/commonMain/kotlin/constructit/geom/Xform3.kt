@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 
 /**
@@ -235,11 +237,11 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
  * refusal is here, while the turned triangles are derived from the source's when somebody asks for them —
  * a placed body that nobody looks at moves for the price of one feature.
  */
-fun Solid3.movedBy(x: Xform3): Pair<Solid3?, String?> {
+fun Solid3.movedBy(x: Xform3): Pair<Solid3?, Msg?> {
     if (x.isIdentity) return this to null
     if (!x.isRigid()) {
         return null to
-            "a solid can only be placed by a rigid motion (a turn and a shift); this frame scales, shears or mirrors it"
+            Msgs.refusalPlaceSolidCanOnlyBePlaced()
     }
     // The placement mirrors its source's levels: a body that coarsens is turned at whichever quality is
     // asked for (and its own derivation stays deferred through this), while a one-level body stays one

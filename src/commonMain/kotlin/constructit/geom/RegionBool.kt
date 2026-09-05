@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.floor
@@ -91,11 +93,11 @@ object RegionBool {
     fun ringsOf(
         regions: List<Region>,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<List<List<Vec2>>?, String?> {
+    ): Pair<List<List<Vec2>>?, Msg?> {
         val out = ArrayList<List<Vec2>>()
         for (r in regions) {
             val (tess, why) = Geom3.tessellateRegion(r, tolMm)
-            if (tess == null) return null to (why ?: "cannot tessellate a region")
+            if (tess == null) return null to (why ?: Msgs.refusalAreaboolCannotTessellateRegion())
             out.add(tess.outer)
             out.addAll(tess.holes)
         }
@@ -111,7 +113,7 @@ object RegionBool {
      * valid area may share isolated points but never a stretch of edge, so an edge midpoint is provably
      * off every other loop and the test needs no tolerance at all.
      */
-    fun regionsOf(rings: List<List<Vec2>>): Pair<List<Region>?, String?> {
+    fun regionsOf(rings: List<List<Vec2>>): Pair<List<Region>?, Msg?> {
         val areas = rings.map { ringArea(it) }
         val outers = rings.indices.filter { areas[it] > 0.0 }
         val holes = rings.indices.filter { areas[it] < 0.0 }
@@ -122,7 +124,7 @@ object RegionBool {
                 outers
                     .filter { windingAt(listOf(rings[it]), probe) != 0 }
                     .minByOrNull { areas[it] }
-                    ?: return null to "a hole of the result lies outside every boundary"
+                    ?: return null to Msgs.refusalAreaboolHoleResultLiesOutsideEvery()
             holesOf.getOrPut(parent) { ArrayList() }.add(h)
         }
         return outers.map { o ->
@@ -209,7 +211,7 @@ object RegionBool {
         a: List<List<Vec2>>,
         b: List<List<Vec2>>,
         kind: BoolOp,
-    ): Pair<List<List<Vec2>>?, String?> {
+    ): Pair<List<List<Vec2>>?, Msg?> {
         // The trivial cases short-circuit for a reason beyond speed: they hand the operand's own rings
         // back unchanged, so a slab that meets nothing in the other solid stays *identical* to it and
         // the slab merge (OP-22) can recognise it.
@@ -233,7 +235,7 @@ object RegionBool {
                     if (u != v) edges.add(intArrayOf(u, v))
                 }
             }
-            if (edges.size - before < 3) return null to "an operand of the boolean encloses no area"
+            if (edges.size - before < 3) return null to Msgs.refusalAreaboolOperandBooleanEnclosesNoArea()
         }
         val weldedA = ringsA.map { r -> r.map { vt.points[it] } }
         val weldedB = ringsB.map { r -> r.map { vt.points[it] } }
@@ -271,7 +273,7 @@ object RegionBool {
         }
         val kept = ArrayList<IntArray>()
         for (g in groups) {
-            val delta = probeOffset(vt, edges, g) ?: return null to "two boundaries are closer together than the kernel can resolve"
+            val delta = probeOffset(vt, edges, g) ?: return null to Msgs.refusalAreaboolTwoBoundariesAreCloserTogether()
             val mid = (vt.points[g[0]] + vt.points[g[1]]) * 0.5
             val n = (vt.points[g[1]] - vt.points[g[0]]).normalized().perp()
             val left = mid + n * delta
@@ -285,7 +287,7 @@ object RegionBool {
 
         // 4. chain the surviving fragments into loops
         val (loops, why) = chain(vt, kept)
-        if (loops == null) return null to (why ?: "the boolean result does not close")
+        if (loops == null) return null to (why ?: Msgs.refusalAreaboolBooleanResultDoesNotClose())
         val rings = loops.filter { abs(ringArea(it)) > AREA_EPS }
         if (rings.isEmpty()) return emptyList<List<Vec2>>() to null
         return canonical(rings) to null
@@ -297,7 +299,7 @@ object RegionBool {
         b: List<Region>,
         kind: BoolOp,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Pair<List<Region>?, String?> {
+    ): Pair<List<Region>?, Msg?> {
         val (ra, whyA) = ringsOf(a, tolMm)
         if (ra == null) return null to whyA
         val (rb, whyB) = ringsOf(b, tolMm)
@@ -442,7 +444,7 @@ object RegionBool {
     private fun chain(
         vt: VertexTable,
         kept: List<IntArray>,
-    ): Pair<List<List<Vec2>>?, String?> {
+    ): Pair<List<List<Vec2>>?, Msg?> {
         val outOf = HashMap<Int, MutableList<Int>>()
         val inDegree = HashMap<Int, Int>()
         // the vertices in first-seen order, so the balance check below reports the same vertex every
@@ -456,7 +458,7 @@ object RegionBool {
         }
         for (v in touched) {
             if ((outOf[v]?.size ?: 0) != (inDegree[v] ?: 0)) {
-                return null to "the boolean result has an unbalanced boundary vertex"
+                return null to Msgs.refusalAreaboolBooleanResultHasUnbalancedBoundary()
             }
         }
         val used = BooleanArray(kept.size)
@@ -468,14 +470,14 @@ object RegionBool {
             val startVertex = kept[start][0]
             var guard = 0
             while (true) {
-                if (guard++ > kept.size + 1) return null to "the boolean result does not close"
+                if (guard++ > kept.size + 1) return null to Msgs.refusalAreaboolBooleanResultDoesNotClose()
                 used[cur] = true
                 ring.add(vt.points[kept[cur][0]])
                 val at = kept[cur][1]
                 if (at == startVertex && nextFrom(vt, kept, outOf, cur, used, allow = start) == start) break
                 val nxt =
                     nextFrom(vt, kept, outOf, cur, used, allow = -1)
-                        ?: return null to "the boolean result does not close"
+                        ?: return null to Msgs.refusalAreaboolBooleanResultDoesNotClose()
                 cur = nxt
             }
             // fewer than three corners is a doubled edge, which encloses nothing — the area filter in

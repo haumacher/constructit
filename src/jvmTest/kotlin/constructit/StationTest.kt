@@ -54,7 +54,7 @@ class StationTest {
     ): String {
         val (station, why) = Stations3.at(path, up, s)
         assertNull(station, "this station was expected to be refused")
-        return assertNotNull(why, "a refusal says why")
+        return assertNotNull(why, "a refusal says why").render()
     }
 
     private fun assertVec3(
@@ -360,7 +360,7 @@ class StationTest {
         val h = coil()
         val path = Path3(listOf(h))
         val (frame, why) = Frames3.along(path, up)
-        val moving = assertNotNull(frame, why)
+        val moving = assertNotNull(frame, why?.render())
         val chordAngle = 2.0 * kotlin.math.acos((1.0 - GeomMath.TESS_TOL_MM * h.curvature).coerceIn(-1.0, 1.0))
         assertTrue(chordAngle > 0.05, "the fixture is sampled coarsely enough for this to say something: $chordAngle")
         for (station in moving.stations.filter { it.s > 1.0 && it.s < moving.length - 1.0 }) {

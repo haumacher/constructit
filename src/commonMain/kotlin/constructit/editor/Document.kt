@@ -2,7 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
-import constructit.core.CASCADE_PREFIX
+import constructit.core.CASCADE_KEY
 import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
@@ -129,6 +129,9 @@ import constructit.geom.Vec3
 import constructit.geom.Xform3
 import constructit.geom.thickBodyOf
 import constructit.geom.thickNetwork
+import constructit.l10n.Messages
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.deg
@@ -721,7 +724,7 @@ class FrameCapture(
 }
 
 /** A free point of a placed group's closure that something *outside* the group also uses (OP-16). */
-class SharedPoint(val point: String, val consumer: Element)
+class SharedPoint(val point: Msg, val consumer: Element)
 
 /** How many shared positions a refusal names before it starts counting — see [summarizeNames]. */
 const val POINTS_NAMED = 5
@@ -738,12 +741,12 @@ const val CONSUMERS_NAMED = 3
  * the decision is.
  */
 fun summarizeNames(
-    names: List<String>,
+    names: List<Msg>,
     keep: Int,
-    tail: String = "more",
-): String {
-    if (names.size <= keep) return names.joinToString(", ")
-    return names.take(keep).joinToString(", ") + " and ${names.size - keep} $tail"
+    tail: Msg = Msgs.wordListMore(),
+): Msg {
+    if (names.size <= keep) return Msg.joined(names, ", ")
+    return Msgs.listSampleAndCount(head = Msg.joined(names.take(keep), ", "), count = names.size - keep, tail = tail)
 }
 
 /**
@@ -805,7 +808,7 @@ class Freedom internal constructor(
     val element: Element,
     val kind: FreedomKind,
     /** How the dialog names this row — the element's id plus what it rides, in the user's words. */
-    val label: String,
+    val label: Msg,
     /** Whether the selection *displays* this element, as opposed to merely depending on it. */
     val owned: Boolean,
     internal val rider: Document.RiderRecord? = null,
@@ -840,7 +843,7 @@ class Placement(
      */
     val rigid: List<Freedom> = emptyList(),
     /** Freedoms the placement cannot carry, each with the reason, in the user's words. */
-    val uncapturable: List<String> = emptyList(),
+    val uncapturable: List<Msg> = emptyList(),
 ) {
     /** Whether the frame would carry any freedom at all — else it would have nothing to move. */
     val carriesSomething: Boolean
@@ -1466,12 +1469,12 @@ class Replication internal constructor(
     val gesture: OrbitGesture?,
     /** How many copies each level contributes, outermost first — their product is the whole fan (#18). */
     val copies: List<Int>,
-    val refusal: String?,
+    val refusal: Msg?,
     /**
      * Why the gesture does **not** reach one level deeper, when it touches a nested pattern but cannot be
      * stamped round it (#18). Not a refusal: the levels above it still fan, and this says what was left out.
      */
-    val deeper: String? = null,
+    val deeper: Msg? = null,
 ) {
     /** The whole fan — the product over the levels. */
     val total: Int get() = copies.fold(1) { a, b -> a * b }
@@ -1538,11 +1541,24 @@ class Document {
      * a silent success is indistinguishable from a silent refusal. One channel rather than a per-tool case in
      * the controller, so the next such tool needs no work there either.
      */
-    var note: String? = null
+    var noteMsg: Msg? = null
         private set
 
+    /**
+     * [noteMsg] as a sentence in the **active language** (OP-29 slice 2).
+     *
+     * The note itself is a value — a key and its arguments — and stays one for the life of the document; this
+     * is the one place it becomes words, at the moment a reader asks. That is what makes a note *rendered at
+     * the edge* rather than composed in the engine: the same document, read after the language picker moves,
+     * says the same thing in the other language, and no operation is re-run for it.
+     */
+    val note: String? get() = noteMsg?.render()
+
     /** Read [note] and clear it: a note is about the operation that produced it, and only about that one. */
-    fun takeNote(): String? = note.also { note = null }
+    fun takeNote(): String? = note.also { noteMsg = null }
+
+    /** [takeNote] as the value rather than the sentence — what a shell that renders later asks for. */
+    fun takeNoteMsg(): Msg? = noteMsg.also { noteMsg = null }
 
     /**
      * Run [body] as one journal step. Nested calls are absorbed into the outermost one, so a tool that
@@ -1570,7 +1586,7 @@ class Document {
     ): T {
         if (recordDepth > 0) return body()
         recordDepth++
-        note = null // a note is about the operation being run now, never about the one before it
+        noteMsg = null // a note is about the operation being run now, never about the one before it
         pendingReparams.clear()
         pendingDofs.clear()
         pendingExprBinding = null
@@ -1887,9 +1903,12 @@ class Document {
     class InvalidElement(
         val element: Element,
         val name: String,
-        val reason: String,
+        val why: Msg,
         val own: Boolean,
-    )
+    ) {
+        /** [why] in the active language (OP-29) — what the panel and the status line put on screen. */
+        val reason: String get() = why.render()
+    }
 
     /**
      * Every element whose value is [EvalResult.Invalid] right now, in document order (OP-3).
@@ -1902,8 +1921,8 @@ class Document {
      */
     fun invalidElements(ev: Evaluator = Evaluator()): List<InvalidElement> =
         elements.mapNotNull { el ->
-            val reason = (ev.eval(el.ref.node) as? EvalResult.Invalid)?.reason ?: return@mapNotNull null
-            InvalidElement(el, nameOf(el), reason, own = !reason.startsWith(CASCADE_PREFIX))
+            val why = (ev.eval(el.ref.node) as? EvalResult.Invalid)?.why ?: return@mapNotNull null
+            InvalidElement(el, nameOf(el), why, own = why.key != CASCADE_KEY)
         }
 
     /**
@@ -2238,8 +2257,8 @@ class Document {
         val kind: SectionInput,
         val index: Int,
         val at: Vec2,
-        val provenance: String,
-        val refusal: String?,
+        val provenance: Msg,
+        val refusal: Msg?,
         /**
          * What kind of element taking this would create — asked *before* anything is created, so a slot that
          * cannot use an arc can decline without a node ever existing (the pick pipeline's own rule).
@@ -2310,9 +2329,9 @@ class Document {
                 if (HitTest.distanceToPiece(at, hit) > tol) continue
                 val why =
                     section.inputsRefusal
-                        ?: section.edges.firstNotNullOfOrNull { it.reason?.takeIf { r -> r.contains("separate pieces") } }
-                        ?: "that piece of the section has no single name to take as an input"
-                best = SectionCandidate(space, solid, SectionInput.EDGE, -1, at, "a piece of the section", why, ElementKind.SEGMENT)
+                        ?: section.edges.firstNotNullOfOrNull { e -> e.reason?.takeIf { r -> Messages.noteSectionInputsSeparatePieces() in r } }
+                        ?: Msgs.noteSectionInputsThatPieceSectionHasNo()
+                best = SectionCandidate(space, solid, SectionInput.EDGE, -1, at, Msgs.noteSectionInputsPieceSection(), why, ElementKind.SEGMENT)
                 break
             }
         }
@@ -2334,13 +2353,11 @@ class Document {
     private fun sectionEdgeRefusal(
         section: PlaneSection,
         index: Int,
-    ): String? {
-        val e = section.edges.getOrNull(index) ?: return "that curve is no longer part of the section"
+    ): Msg? {
+        val e = section.edges.getOrNull(index) ?: return Msgs.noteSectionInputsThatCurveIsNoLonger()
         e.reason?.let { return it }
         if (e.sampled != null) {
-            return "${e.provenance} is cut into a curve this drawing has no name for, so it draws but cannot be " +
-                "anchored on — an inclined cut of a cylinder is an exact ellipse and *can* be, but a cut that " +
-                "leaves the material through its ends, or one through a ruled face, cannot"
+            return Msgs.noteSectionInputsIsCutCurveThisDrawing(provenance = e.provenance)
         }
         return null
     }
@@ -2356,7 +2373,7 @@ class Document {
      */
     fun takeSectionInput(candidate: SectionCandidate): Element? {
         if (candidate.refusal != null || candidate.index < 0) {
-            note = candidate.refusal
+            noteMsg = candidate.refusal
             return null
         }
         return sectionInput(candidate.space, candidate.kind, candidate.index, candidate.solid)
@@ -2495,19 +2512,19 @@ class Document {
     ): Boolean {
         val anchorNode = space.originAnchor?.node as? SourceNode
         if (anchorNode == null) {
-            note = "the plan's origin is the world origin — it is what everything else is measured from"
+            noteMsg = Msgs.noteSpaceOriginPlanOriginIsWorldOrigin()
             return false
         }
         val of = solid ?: space.anchor
         if (corner != null) {
             val section = intrinsicSectionNode(space, of)
             if (section == null) {
-                note = "${space.name} has no part to take a corner from, so there is nothing to anchor its origin on"
+                noteMsg = Msgs.noteSpaceOriginHasNoPartTakeCorner(name = space.name)
                 return false
             }
             val at = (Evaluator().valueOf(section) as? SectionValue)?.section?.corners?.getOrNull(corner)
             if (at?.at == null) {
-                note = "${space.name}'s section has no corner #${corner + 1} to anchor on${at?.reason?.let { " — $it" } ?: ""}"
+                noteMsg = Msgs.noteSpaceOriginSectionHasNoCornerAnchor(name = space.name, corner = corner + 1, let = at?.reason?.let { Msgs.phraseDashReason(reason = it) } ?: Msg.EMPTY)
                 return false
             }
             anchorNode.boundTo = cx.sectionCorner(section, corner).node
@@ -2526,13 +2543,22 @@ class Document {
         // said out loud, because moving an origin moves a whole drawing and nothing on screen would
         // otherwise distinguish "anchored here" from "anchored here, 10 mm along" (OP-3's speaking rule)
         val shift = listOfNotNull(space.originDxEntry, space.originDyEntry)
-        note =
-            "${space.name}'s origin is now " +
-            // the solid is named only when it is *not* the space's own anchor, which is what a plane with more
-            // than one section made possible (GitHub #9) — the ordinary case reads as it always did
-            (corner?.let { "section corner #${it + 1}${if (of !== space.anchor) " of ${of?.let { s -> nameOf(s) }}" else ""}" } ?: "the frame's own origin") +
-            (if (shift.isEmpty()) "" else ", offset by ${shift.joinToString(", ") { it.name }}") +
-            " — everything drawn here moved with the frame"
+        // the solid is named only when it is *not* the space's own anchor, which is what a plane with more
+        // than one section made possible (GitHub #9) — the ordinary case reads as it always did
+        val where =
+            corner?.let {
+                if (of !== space.anchor) {
+                    Msgs.noteSpaceSectionCornerOf(n = it + 1, solid = of?.let { s -> nameOf(s) } ?: "")
+                } else {
+                    Msgs.noteSpaceSectionCorner(n = it + 1)
+                }
+            } ?: Msgs.noteSpaceOriginFrameOwnOrigin()
+        noteMsg =
+            Msgs.noteSpaceOriginIsNow(
+                name = space.name,
+                where = where,
+                offset = if (shift.isEmpty()) Msg.EMPTY else Msgs.noteSpaceOriginOffset(list = shift.joinToString(", ") { it.name }),
+            )
         return true
     }
 
@@ -2553,9 +2579,8 @@ class Document {
         val space = activeSpace
         val addr = sectionInputAddress[at.id]
         if (addr == null || addr.space != space.name || addr.kind != SectionInput.CORNER) {
-            note =
-                "${nameOf(at)} cannot fix ${space.name}'s origin: anchor on a corner of a section on this plane — " +
-                "a point drawn on this plane moves with the frame it would define"
+            noteMsg =
+                Msgs.noteSpaceOriginCannotFixOriginAnchorCorner(name = nameOf(at), name2 = space.name)
             return false
         }
         return setSpaceOrigin(space, addr.index, dx, dy, addr.solid)
@@ -2666,7 +2691,7 @@ class Document {
      * same story would be wrong about most of them (refusals and notes both name what a thing is — OP-3's
      * rule, applied to the status line).
      */
-    fun faceFrameNote(space: SketchSpace): String {
+    fun faceFrameNote(space: SketchSpace): Msg {
         val whole = space.anchor?.let { (Evaluator().valueOf(it.ref) as? SolidValue)?.solid?.feature }
         val feature = whole?.let { Section3.undressed(it) }
         val piece = space.piece
@@ -2674,23 +2699,19 @@ class Document {
         // base's own ends and every sentence below would read it as one of those: a shelled revolve's inner
         // faces are not the caps a partial turn has, and a shelled plate's pocket floor is not its own cap.
         if (whole != null && Section3.facePatchOfFootprintPiece(whole, piece).first?.name is FaceName.ShellInner) {
-            return "the coordinates the footprint was drawn in, standing on the inside of this wall — so what you " +
-                "draw here lines up with the plan, one wall thickness in"
+            return Msgs.noteSpaceOriginCoordinatesFootprintWasDrawn()
         }
         if (feature is Feature3.Revolution) {
             val n = Geom3.boundaryPieces(feature).size
             if (piece >= n) {
-                return "the profile itself, standing at the ${if (piece == n) "start" else "end"} of the sweep, " +
-                    "with the axis of revolution along v and the origin where the profile was drawn from"
+                return Msgs.noteSpaceOriginProfileItselfStandingSweepAxis(ifWord = if (piece == n) "yes" else "other")
             }
-            return "u along the radius the profile is drawn at, the origin where the axis of revolution pierces " +
-                "the face — so a circle at (0, 0) is concentric with the turned part"
+            return Msgs.noteSpaceOriginUAlongRadiusProfileIs()
         }
         if (whole != null && piece >= Geom3.boundaryPieces(whole).size) {
-            return "the coordinates the footprint was drawn in, standing on this face — the origin under the " +
-                "drawing's own, so what you draw here lines up with the plan"
+            return Msgs.noteSpaceOriginCoordinatesFootprintWasDrawn2()
         }
-        return "u along the edge you picked, v up into the face, the origin at that edge's middle"
+        return Msgs.noteSpaceOriginUAlongEdgeYouPicked()
     }
 
     /**
@@ -2710,21 +2731,31 @@ class Document {
         along: Vec3,
         tol: Double,
         ev: Evaluator = Evaluator(),
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val feature =
             (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature
-                ?: return null to "${nameOf(solid)} has no solid to take a face from"
+                ?: return null to Msgs.noteSpaceOriginHasNoSolidTakeFace(name = nameOf(solid))
         val (pick, why) = Section3.faceAt(feature, at, along, tol)
-        if (pick == null) return null to "${nameOf(solid)}: ${why ?: "nothing here is a named face"}"
+        if (pick == null) return null to Msgs.refusalQualified(name = Msg.text(nameOf(solid)), reason = why ?: Msgs.noteSpaceNothingIsNamedFace())
         val piece = pick.piece
         if (piece == null) {
             return null to
-                "${pick.patch.name.label} of ${nameOf(solid)} has no address a sketch can be stored at" +
-                (pick.patch.reason?.let { " — $it" } ?: "") + flatFacesNote(solid, feature)
+                Msgs.noteSpaceNoSketchAddress(
+                    name = pick.patch.name.label,
+                    name2 = nameOf(solid),
+                    reason = pick.patch.reason?.let { Msgs.phraseDashReason(reason = it) } ?: Msg.EMPTY,
+                    flat = flatFacesNote(solid, feature),
+                )
         }
         val refusal = Section3.facePatchOfFootprintPiece(feature, piece).second
         if (refusal != null) {
-            return null to "${pick.patch.name.label} of ${nameOf(solid)}: $refusal${flatFacesNote(solid, feature)}"
+            return null to
+                Msgs.noteSpaceFaceRefusal(
+                    face = pick.patch.name.label,
+                    solid = nameOf(solid),
+                    reason = refusal,
+                    flat = flatFacesNote(solid, feature),
+                )
         }
         return piece to null
     }
@@ -2736,13 +2767,13 @@ class Document {
     private fun flatFacesNote(
         solid: Element,
         feature: Feature3,
-    ): String {
+    ): Msg {
         val flat =
             (0 until Section3.faceAddressCount(feature)).mapNotNull { p ->
                 Section3.facePatchOfFootprintPiece(feature, p).first?.let { p to it }
             }
-        if (flat.isEmpty()) return " ${nameOf(solid)} has no flat face at all — put a datum plane where you want to sketch."
-        return " The flat faces of ${nameOf(solid)} are ${flat.joinToString(", ") { it.second.name.label }}."
+        if (flat.isEmpty()) return Msgs.noteSpaceOriginHasNoFlatFaceAll(name = nameOf(solid))
+        return Msgs.noteSpaceOriginFlatFacesAre(name = nameOf(solid), list = Msg.joined(flat.map { it.second.name.label }, ", "))
     }
 
     /**
@@ -2756,7 +2787,7 @@ class Document {
         solid: Element,
         piece: Int,
         ev: Evaluator = Evaluator(),
-    ): String? {
+    ): Msg? {
         val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return null
         return Section3.facePatchOfFootprintPiece(feature, piece).first?.name?.label
     }
@@ -2772,8 +2803,8 @@ class Document {
         solid: Element,
         piece: Int,
         ev: Evaluator = Evaluator(),
-    ): String? {
-        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return "${nameOf(solid)} has no solid to take a face from"
+    ): Msg? {
+        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return Msgs.noteSpaceOriginHasNoSolidTakeFace(name = nameOf(solid))
         return Section3.facePatchOfFootprintPiece(feature, piece).second
     }
 
@@ -3023,7 +3054,7 @@ class Document {
         named: String? = null,
         part: Element? = null,
     ): SketchSpace? {
-        val runRef = spaceCurveRef(curve, "Station") ?: return null
+        val runRef = spaceCurveRef(curve, Msgs.noteSpaceOriginStation()) ?: return null
         val name = named ?: nextStationName()
         if (spaceNamed(name) != null) return null
         val base = activeSpace
@@ -3150,25 +3181,29 @@ class Document {
      * what they are *of* is a fact about the model and not about the DOM (the same discipline [listedIn]
      * follows). The shell renders whatever this returns.
      */
-    fun spaceLabel(space: SketchSpace): String =
+    fun spaceLabel(space: SketchSpace): Msg =
         when {
-            space.isPlan -> "plan"
+            space.isPlan -> Msgs.wordSpacePlan()
             // a station (OP-26, step 4): the one number it is, and the run it is measured along
             space.isStation ->
-                "${space.name} (${Format.num(spaceAlongMm(space))} mm along ${space.station?.let { nameOf(it) }})"
+                Msgs.noteSpaceOriginMmAlong(name = space.name, num = Format.num(spaceAlongMm(space)), name2 = space.station?.let { nameOf(it) } ?: "")
             // the plane of an imported wireframe (OP-26, step 9): the run *is* the whole description
-            space.isWire -> "${space.name} (plane of ${space.wire?.let { displayName(it) }})"
+            space.isWire -> Msgs.noteSpaceOriginPlane(name = space.name, displayName = space.wire?.let { displayName(it) } ?: "")
             // the hinge-less parallel case (GitHub #9): a height, and the space it is a height above
-            space.parallel -> "${space.name} (${Format.num(spaceOffsetMm(space))} mm from ${space.from})"
+            space.parallel -> Msgs.noteSpaceOriginMm(name = space.name, num = Format.num(spaceOffsetMm(space)), from = space.from)
             space.isDatum ->
-                "${space.name} (${Format.num(spaceAngleDeg(space))}° on ${space.hinge?.let { nameOf(it) }}" +
-                    (space.offset?.let { ", ${Format.num(evalMm(it.ref))} mm off" } ?: "") +
-                    // …and which way it fronts, because a label that says everything about *where* a plane is
-                    // and nothing about which way it faces describes only half of what a feature built on it
-                    // will do ([spaceFacing])
-                    facingSuffix(space) +
-                    (if (space.from == PLAN_SPACE) ")" else ", from ${space.from})")
-            else -> "${space.name} (face of ${space.anchor?.let { nameOf(it) }})"
+                // …and which way it fronts, because a label that says everything about *where* a plane is
+                // and nothing about which way it faces describes only half of what a feature built on it
+                // will do ([spaceFacing])
+                Msgs.noteSpaceDatumLabel(
+                    name = space.name,
+                    angle = Format.num(spaceAngleDeg(space)),
+                    hinge = space.hinge?.let { nameOf(it) }.toString(),
+                    offset = space.offset?.let { Msgs.noteSpaceOriginMmOff(num = Format.num(evalMm(it.ref))) } ?: Msg.EMPTY,
+                    facing = facingSuffix(space),
+                    from = if (space.from == PLAN_SPACE) Msg.EMPTY else Msgs.noteSpaceFromClause(from = space.from),
+                )
+            else -> Msgs.noteSpaceOriginFace(name = space.name, name2 = space.anchor?.let { nameOf(it) } ?: "")
         }
 
     /** A datum space's offset along its own normal in mm, as it stands (0 when it has none). */
@@ -3190,10 +3225,10 @@ class Document {
     }
 
     /** The facing clause a datum's label carries — short, because a label is a list entry ([spaceFacing]). */
-    private fun facingSuffix(space: SketchSpace): String {
-        val facing = spaceFacing(space) ?: return ""
-        val bearing = facing.bearingDeg ?: return if (facing.outward) ", front with ${space.from}" else ", front against ${space.from}"
-        return ", front toward ${Format.num(bearing)}°"
+    private fun facingSuffix(space: SketchSpace): Msg {
+        val facing = spaceFacing(space) ?: return Msg.EMPTY
+        val bearing = facing.bearingDeg ?: return if (facing.outward) Msgs.noteSpaceOriginFront(from = space.from) else Msgs.noteSpaceOriginFrontAgainst(from = space.from)
+        return Msgs.noteSpaceOriginFrontToward(num = Format.num(bearing))
     }
 
     /**
@@ -3410,8 +3445,7 @@ class Document {
             // its *file* unloadable — the scalar half's own probe lesson. Refused by name, with the cure, which
             // is the same answer a rename that would capture a curve's parameter gets.
             expressionsReading(el).takeIf { it.isNotEmpty() }?.let { reading ->
-                note = "Can't take ${nameOf(el)}'s name away: ${reading.joinToString(", ")} reads it as " +
-                    "'${userNameOf(el)}.x' or '.y' — change those formulas first, or rename it instead"
+                noteMsg = Msgs.noteUserFacingNameCanTTakeNameAway(name = nameOf(el), list = reading.joinToString(", "), userNameOf = userNameOf(el) ?: "")
                 return null
             }
             elementNames.remove(el.id)
@@ -3935,15 +3969,13 @@ class Document {
         // text into one that means something else — live and, worse, in the file. Refused by name, with the
         // cure, exactly as a hyphenated name is: a name a rename allows must keep its reading, for ever.
         if (funcCurves.values.any { c -> c.param == wanted && c.refs.any { r -> r.entry === e } }) {
-            note = "Can't rename ${e.name} to '$wanted': inside a function curve '$wanted' is the curve's own " +
-                "parameter, so the curve would read its parameter where it now reads ${e.name} — pick another name"
+            noteMsg = Msgs.noteFreePointsScalarsCanTRenameInsideFunction(name = e.name, wanted = wanted)
             return null
         }
         // …and the identical rule for a swept section's size law, whose `t` is the run parameter and outranks
         // every drawing scalar of that name (OP-26, session 77): a re-stamp may not capture a binder
         sweepLaws.values.firstOrNull { l -> l.param == wanted && l.refs.any { r -> r.entry === e } }?.let { l ->
-            note = "Can't rename ${e.name} to '$wanted': inside ${nameOf(l.element)}'s size law '$wanted' is the " +
-                "run's own parameter, so the law would read the station where it now reads ${e.name} — pick another name"
+            noteMsg = Msgs.noteFreePointsScalarsCanTRenameInsideSize(name = e.name, wanted = wanted, name2 = nameOf(l.element))
             return null
         }
         e.name = uniqueScalarName(wanted, except = e)
@@ -4187,7 +4219,7 @@ class Document {
         val owned = freedoms(members).filter { it.owned }
         val ridersToAnchor = ArrayList<Freedom>()
         val rigid = ArrayList<Freedom>()
-        val uncapturable = ArrayList<String>()
+        val uncapturable = ArrayList<Msg>()
         for (f in owned) {
             when (f.kind) {
                 FreedomKind.FREE_POINT -> {}
@@ -4198,9 +4230,9 @@ class Document {
                         rec.carrierRelative && rec.base?.let { it in memberSet || dependsOn(it.ref.node, rec.host.ref.node, HashSet()) } == true ->
                             rigid.add(f)
                         rec.host !in memberSet ->
-                            uncapturable.add("${nameOf(f.element)} rides ${nameOf(rec.host)}, which is not in the group")
+                            uncapturable.add(Msgs.notePlacedGroupsRidesWhichIsNotGroup(name = nameOf(f.element), name2 = nameOf(rec.host)))
                         carrierBaseFor(rec) == null ->
-                            uncapturable.add("${nameOf(f.element)} rides ${nameOf(rec.host)}, which has no point of its own to measure from")
+                            uncapturable.add(Msgs.notePlacedGroupsRidesWhichHasNoPoint(name = nameOf(f.element), name2 = nameOf(rec.host)))
                         else -> ridersToAnchor.add(f)
                     }
                 }
@@ -4210,7 +4242,7 @@ class Document {
                         rigid.add(f)
                     } else {
                         uncapturable.add(
-                            "${nameOf(f.element)} follows ${anchor?.let { nameOf(it) } ?: "a point"} outside the group, so it will not move with it",
+                            Msgs.notePlacedGroupsFollowsOutsideGroupSoIt(name = nameOf(f.element), name2 = anchor?.let { nameOf(it) } ?: "a point"),
                         )
                     }
                 }
@@ -4222,7 +4254,7 @@ class Document {
                     if (host != null && host in memberSet) {
                         rigid.add(f)
                     } else {
-                        uncapturable.add("${nameOf(f.element)} rides ${host?.let { nameOf(it) } ?: "a circle"}, which is not in the group")
+                        uncapturable.add(Msgs.notePlacedGroupsRidesWhichIsNotGroup(name = nameOf(f.element), name2 = host?.let { nameOf(it) } ?: "a circle"))
                     }
                 }
             }
@@ -4237,8 +4269,7 @@ class Document {
                 val recs = orthoRelatives[el.id] ?: continue
                 val a = recs.firstNotNullOfOrNull { elementFor(it.anchor)?.let { e -> nameOf(e) } } ?: "a point"
                 uncapturable.add(
-                    "${nameOf(el)} follows $a along ${recs.joinToString(" and ") { axisName(it.axis) }}, so its " +
-                        "path is not carried whole — free it (Make absolute) to place the group",
+                    Msgs.notePlacedGroupsFollowsAlongSoItsPath(name = nameOf(el), a = a, list = recs.joinToString(" and ") { axisName(it.axis) }),
                 )
             }
         }
@@ -4249,12 +4280,12 @@ class Document {
             when {
                 j.carrierRelative -> {}
                 junctionBaseFor(j) == null ->
-                    uncapturable.add("${junctionName(j)} meets ${nameOf(j.curve!!)}, which has no point of its own to measure from")
+                    uncapturable.add(Msgs.notePlacedGroupsMeetsWhichHasNoPoint(junctionName = junctionName(j), name = nameOf(j.curve!!)))
                 else -> junctionsToAnchor.add(j)
             }
         }
         for (j in outsideJunctions(memberSet)) {
-            uncapturable.add("${junctionName(j)} meets ${nameOf(j.curve!!)}, which is not in the group")
+            uncapturable.add(Msgs.notePlacedGroupsMeetsWhichIsNotGroup(junctionName = junctionName(j), name = nameOf(j.curve!!)))
         }
         val conflicts = ArrayList<SharedPoint>()
         // what the capture would take over: the free point sources, plus each captured path's vertices
@@ -4312,9 +4343,9 @@ class Document {
      * How to name a junction to the user: the member it drives, since a junction has no element of its own.
      * "e16 meets e15" is what the drawing shows; the junction's node id is not a thing the user has seen.
      */
-    private fun junctionName(j: Junction): String {
+    private fun junctionName(j: Junction): Msg {
         val el = elements.firstOrNull { it.isPoint && dependsOn(it.ref.node, j.point.node, HashSet()) }
-        return el?.let { nameOf(it) } ?: "a connection"
+        return el?.let { Msg.text(nameOf(it)) } ?: Msgs.noteConnectionUnnamed()
     }
 
     /**
@@ -4347,10 +4378,10 @@ class Document {
      * well as at placement time (OP-16's honest-failure rule): what a group cannot carry is invisible on the
      * canvas, so the report belongs to the gesture that decided it.
      */
-    fun placementWarnings(g: Group): List<String> {
+    fun placementWarnings(g: Group): List<Msg> {
         if (g.placed) return emptyList()
         val a = analysePlacement(g)
-        val out = ArrayList<String>()
+        val out = ArrayList<Msg>()
         // the positions the frame would *not* hold, named together with what holds them instead: this is what
         // an unticked candidate costs, and it is invisible on canvas until the group is moved
         val (stuck, pinned) = prospectiveDeformers(groupMembers(g))
@@ -4359,23 +4390,18 @@ class Document {
             // enumerates the whole drawing is a wall, not an answer (the user's message)
             val drivers = pinned.map { labelOf(it) }.distinct()
             out.add(
-                "this group cannot move independently — ${summarizeNames(stuck.map { nameOf(it) }, POINTS_NAMED)} " +
-                    "${if (stuck.size == 1) "is" else "are"} held by ${summarizeNames(drivers, CONSUMERS_NAMED)}, " +
-                    "shared with the drawing outside the group (tick those in, or group them too)",
+                Msgs.notePlacedGroupsThisGroupCannotMoveIndependently(name = summarizeNames(stuck.map { Msg.text(nameOf(it)) }, POINTS_NAMED), ifWord = if (stuck.size == 1) "one" else "other", summarizeNames = summarizeNames(drivers, CONSUMERS_NAMED)),
             )
         }
         if (a.conflicts.isNotEmpty()) {
             val points = a.conflicts.map { it.point }.distinct()
             val consumers = a.conflicts.map { nameOf(it.consumer) }.distinct()
             out.add(
-                "this group cannot move independently — ${summarizeNames(points, POINTS_NAMED)} " +
-                    "${if (points.size == 1) "is" else "are"} shared with " +
-                    "${summarizeNames(consumers, CONSUMERS_NAMED, "more of the drawing")} outside it " +
-                    "(tick ${if (points.size == 1) "it" else "them"} into the group, or group those too)",
+                Msgs.notePlacedGroupsThisGroupCannotMoveIndependently2(summarizeNames = summarizeNames(points, POINTS_NAMED), ifWord = if (points.size == 1) "one" else "other", summarizeNames2 = summarizeNames(consumers.map { Msg.text(it) }, CONSUMERS_NAMED, Msgs.wordListMoreOfDrawing()), ifWord2 = if (points.size == 1) "one" else "other"),
             )
         }
         out.addAll(a.uncapturable)
-        if (out.isEmpty() && !a.carriesSomething) out.add("it owns no degree of freedom, so a frame would have nothing to move")
+        if (out.isEmpty() && !a.carriesSomething) out.add(Msgs.notePlacedGroupsItOwnsNoDegreeFreedom())
         return out
     }
 
@@ -4421,7 +4447,11 @@ class Document {
                         Freedom(
                             el,
                             FreedomKind.ON_CIRCLE,
-                            "${nameOf(el)} — ${if (rec.form == RiderForm.HELIX_ANGLE) "on coil" else "on circle"} ${nameOf(rec.host)}",
+                            if (rec.form == RiderForm.HELIX_ANGLE) {
+                                Msgs.noteFreedomOnCoil(name = nameOf(el), host = nameOf(rec.host))
+                            } else {
+                                Msgs.noteFreedomOnCircle(name = nameOf(el), host = nameOf(rec.host))
+                            },
                             owned,
                             rider = rec,
                         ),
@@ -4431,7 +4461,12 @@ class Document {
                         Freedom(
                             el,
                             FreedomKind.RIDER,
-                            "${nameOf(el)} — " + (rec.base?.let { "${nameOf(it)} + distance along ${nameOf(rec.host)}" } ?: "slides on ${nameOf(rec.host)}"),
+                            Msgs.noteFreedomRiderWhat(
+                                name = nameOf(el),
+                                what =
+                                    rec.base?.let { Msgs.notePlacedGroupsDistanceAlong(name = nameOf(it), name2 = nameOf(rec.host)) }
+                                        ?: Msgs.notePlacedGroupsSlides(name = nameOf(rec.host)),
+                            ),
                             owned,
                             rider = rec,
                         ),
@@ -4441,14 +4476,14 @@ class Document {
                         Freedom(
                             el,
                             FreedomKind.RELATIVE,
-                            "${nameOf(el)} — relative to ${elementFor(rel.anchor)?.let { nameOf(it) } ?: "an anchor"}",
+                            Msgs.notePlacedGroupsRelative(name = nameOf(el), name2 = elementFor(rel.anchor)?.let { Msg.text(nameOf(it)) } ?: Msgs.notePlacedGroupsAnchor()),
                             owned,
                         ),
                     )
                 el.handle is RatioPointHandle ->
-                    out.add(Freedom(el, FreedomKind.SPAN_RATIO, "${nameOf(el)} — a ratio along its span", owned))
+                    out.add(Freedom(el, FreedomKind.SPAN_RATIO, Msgs.notePlacedGroupsRatioAlongItsSpan(name = nameOf(el)), owned))
                 el.kind == ElementKind.POINT && node?.boundTo == null && node != null ->
-                    out.add(Freedom(el, FreedomKind.FREE_POINT, el.id, owned))
+                    out.add(Freedom(el, FreedomKind.FREE_POINT, Msg.text(el.id), owned))
             }
         }
         return out.filter { it.owned } + out.filter { !it.owned }
@@ -4596,7 +4631,7 @@ class Document {
         // stated in the world too, and a run hanging on an un-carried junction is what tore the reported
         // drawing apart when its frame moved (GitHub issue #11)
         for ((j, base, d) in junctionOffsets) anchorJunctionTo(j, base, d)?.let { g.capturedJunctions.add(it) }
-        note = null // the capture's per-rider notes are not what the placement has to say
+        noteMsg = null // the capture's per-rider notes are not what the placement has to say
         return PlaceResult(
             g.captures.size,
             g.capturedPaths.size,
@@ -4854,7 +4889,7 @@ class Document {
      * Stated rather than approximated, and refused at the one place a rotation can enter (the angle field,
      * OP-13) rather than discovered afterwards as vanished geometry.
      */
-    fun turnRefusal(g: Group): String? {
+    fun turnRefusal(g: Group): Msg? {
         val frame = g.frameNode ?: return null
         val members = groupMembers(g).toHashSet()
         val stuck =
@@ -4865,8 +4900,7 @@ class Document {
             }
         if (stuck.isEmpty()) return null
         val names = stuck.mapNotNull { p -> p.vertices.firstNotNullOfOrNull { elementFor(it.ref) }?.let { nameOf(it) } }
-        return "${g.name} cannot be turned: the run at ${names.joinToString(", ")} follows the frame through the walls it " +
-            "meets, and its legs are aligned to the world's axes, not to the group's — move it, or unjoin that run first"
+        return Msgs.notePlacedGroupsCannotBeTurnedRunFollows(name = g.name, list = names.joinToString(", "))
     }
 
     /**
@@ -4976,15 +5010,15 @@ class Document {
      * - and, for a node no element publishes at all, **what it is** of the drawing that leans on it —
      *   "a shared coordinate of e12". Never the id.
      */
-    private fun labelOf(node: Node): String {
-        elementOwning(node)?.let { return nameOf(it) }
+    private fun labelOf(node: Node): Msg {
+        elementOwning(node)?.let { return Msg.text(nameOf(it)) }
         (node as? SourceNode)?.let { s ->
-            orthoCoordOwner(s)?.let { return nameOf(it) }
-            junctions.firstOrNull { it.param === s }?.let { return "the connection at ${junctionName(it)}" }
-            spaces.firstOrNull { it.originAnchor?.node === s }?.let { return "the origin of ${it.name}" }
+            orthoCoordOwner(s)?.let { return Msg.text(nameOf(it)) }
+            junctions.firstOrNull { it.param === s }?.let { return Msgs.notePlacedGroupsConnection(junctionName = junctionName(it)) }
+            spaces.firstOrNull { it.originAnchor?.node === s }?.let { return Msgs.notePlacedGroupsOrigin(name = it.name) }
         }
         val user = elements.firstOrNull { dependsOn(it.ref.node, node, HashSet()) }
-        return if (user == null) "a shared coordinate of the drawing" else "a shared coordinate of ${nameOf(user)}"
+        return if (user == null) Msgs.notePlacedGroupsSharedCoordinateDrawing() else Msgs.notePlacedGroupsSharedCoordinate(name = nameOf(user))
     }
 
     /**
@@ -5109,16 +5143,16 @@ class Document {
         val points = owned + free.filter { it !in memberSet }
         val parameters =
             scalars.filter { it.editable && (it.ref.node as? ParameterNode)?.boundTo == null && it.ref.node.id in closure }
-        val problems = ArrayList<String>()
+        val problems = ArrayList<Msg>()
         if (members.any { it.isAnnotation }) {
-            problems.add("A dimension can't be part of a tool yet — it annotates the drawing rather than being part of it")
+            problems.add(Msgs.noteUserDefinedMacrosDimensionCanTBePart())
         }
         // a placed group's positions live in its frame (OP-16), which an instance would have to carry a
         // copy of; until then the honest answer is to say so rather than stamp instances on top of it
         if (reachable.any { it is SourceNode && it.value is FrameValue }) {
-            problems.add("Unplace the group first: a tool can't carry a placement frame yet")
+            problems.add(Msgs.noteUserDefinedMacrosUnplaceGroupFirstToolCan())
         }
-        if (points.isEmpty()) problems.add("This selection reaches no free point, so an instance would have nowhere to be placed")
+        if (points.isEmpty()) problems.add(Msgs.noteUserDefinedMacrosThisSelectionReachesNoFree())
         return MacroAnalysis(points, parameters, problems, owned.mapTo(HashSet()) { it.id }, freedoms(members))
     }
 
@@ -5503,33 +5537,29 @@ class Document {
     }
 
     /** Why the dotted name [n] resolves to nothing, with the cure — see [resolveExprName] and [unknownName]. */
-    private fun unknownCoordinate(n: String): String {
+    private fun unknownCoordinate(n: String): Msg {
         val dot = n.lastIndexOf('.')
         val what = n.substring(0, dot)
         val suffix = n.substring(dot + 1)
         if (coordinateSuffixes.indexOf(suffix) < 0) {
-            return "there is no value named '$n' — a '.' in an expression reads a point's coordinate, and a " +
-                "point has ${coordinateSuffixes.joinToString(" and ") { ".$it" }}, not '.$suffix'"
+            return Msgs.noteExpressionsThereIsNoValueNamed(n = n, list = coordinateSuffixes.joinToString(" and ") { ".$it" }, suffix = suffix)
         }
         scalars.firstOrNull { it.name == n }?.let {
-            return "there is no value named '$n' — the value called '$n' cannot be written in an expression (a " +
-                "'.' in a name reads a point's coordinate), so rename it to one word of letters and digits first"
+            return Msgs.noteExpressionsThereIsNoValueNamed2(n = n)
         }
         val named = elements.firstOrNull { userNameOf(it) == what }
         if (named == null) {
-            return "there is no point named '$what' — '$n' reads the $suffix of a point, so name the point in " +
-                "the panel first (its script name is not a name you can spell here)"
+            return Msgs.noteExpressionsThereIsNoPointNamed(what = what, n = n, suffix = suffix)
         }
         // a point **in space** is the case worth its own sentence, and it is the one every route that reads
         // plane coordinates already speaks: `.x` would have to answer in *world* coordinates while every
         // `Vec2` here means "in some plane's own" (OP-17), so the two frames would silently mix
         notInThePlane(
             named,
-            "a coordinate read in a formula",
-            "read the '.x' or '.y' of a point of the plane; a point in space is followed by *building* on it",
+            Msgs.noteExpressionsCoordinateReadFormula(),
+            Msgs.noteExpressionsReadXYPointPlane(),
         )?.let { return it }
-        return "${displayName(named)} has no $suffix to read — '$n' reads a coordinate of a point of the plane, " +
-            "and ${nameOf(named)} is ${kindWord(named)}"
+        return Msgs.noteExpressionsHasNoReadReadsCoordinate(displayName = displayName(named), suffix = suffix, n = n, name = nameOf(named), kind = kindWord(named))
     }
 
     /**
@@ -5614,14 +5644,14 @@ class Document {
     ): Boolean {
         val node = e.ref.node as? ParameterNode
         if (node == null || !e.editable) {
-            note = "${e.name} is not a parameter that can be given a formula — it is measured by the construction (OP-4)"
+            noteMsg = Msgs.noteExpressionsIsNotParameterThatCan(name = e.name)
             return false
         }
         val ast =
             try {
                 ExprParser.parse(text)
             } catch (err: ExprError) {
-                note = "Can't read '${text.trim()}': ${err.message}"
+                noteMsg = Msgs.noteExpressionsCanTRead(text = text.trim(), message = err.message ?: "")
                 return false
             }
         // the drawing's own names win over the constants, so a parameter named `PI` is read as itself and
@@ -5632,7 +5662,7 @@ class Document {
             val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
-                note = "Can't bind ${e.name}: ${unknownName(n)}"
+                noteMsg = Msgs.noteExpressionsCanTBind(name = e.name, unknownName = unknownName(n))
                 return false
             }
             // one cycle rule for both reference kinds, over the same `dependsOn` walk every connection is
@@ -5640,7 +5670,7 @@ class Document {
             // (a rider on a circle of this very radius) would close a loop through *geometry*, and the DAG
             // refuses it here by name rather than as a hang
             if (dependsOn(target.node, node, HashSet())) {
-                note = "Can't bind ${e.name} to '$text': $n already follows ${e.name}, and a value cannot be derived from itself"
+                noteMsg = Msgs.noteExpressionsCanTBindAlreadyFollows(name = e.name, text = text, n = n)
                 return false
             }
             bound.add(n)
@@ -5666,15 +5696,14 @@ class Document {
      * - a **dotted** name, which reads a point's coordinate and has three ways of missing — see
      *   [unknownCoordinate].
      */
-    private fun unknownName(n: String): String {
+    private fun unknownName(n: String): Msg {
         if (n.contains('.')) return unknownCoordinate(n)
         val hidden = scalars.firstOrNull { it.name.startsWith("$n-") || it.name.startsWith("$n.") }
         return when {
             hidden != null ->
-                "there is no value named '$n' — '${hidden.name}' cannot be written in an expression (a '-' in a name reads as " +
-                    "a subtraction), so rename it to one word of letters and digits first"
-            n in EXPR_FUNCTIONS -> "there is no value named '$n' — '$n' is a function, so write '$n(…)' with its arguments"
-            else -> "there is no value named '$n'"
+                Msgs.noteExpressionsThereIsNoValueNamed3(n = n, name = hidden.name)
+            n in EXPR_FUNCTIONS -> Msgs.noteExpressionsThereIsNoValueNamed4(n = n)
+            else -> Msgs.noteExpressionsThereIsNoValueNamed5(n = n)
         }
     }
 
@@ -5801,11 +5830,10 @@ class Document {
         for (p in listOf(alias, master)) {
             notInThePlane(
                 p,
-                "a join",
-                "join two points of the plane; a point in space is followed by *building* on it — a curve " +
-                    "through it, or a height point over the base it stands on",
+                Msgs.noteWeldingAJoin(),
+                Msgs.noteWeldingJoinTwoPointsPlanePoint(),
             )?.let {
-                note = it
+                noteMsg = it
                 return false
             }
         }
@@ -5819,7 +5847,7 @@ class Document {
         noteEdit()
         // said here rather than only at the drag magnet's release, so the *Join points* tool speaks too
         // (GitHub #9's silent-success sweep) — one sentence, whichever route reached it
-        note = "Joined ${nameOf(alias)} onto ${nameOf(master)}"
+        noteMsg = Msgs.noteWeldingJoinedOnto(name = nameOf(alias), name2 = nameOf(master))
         return true
     }
 
@@ -5925,44 +5953,43 @@ class Document {
         // delegates to). A wrapper here would record a third kind whose replay could only guess which of the
         // two was meant. A refusal records nothing at all, since it rewires nothing.
         if (!pt.isPoint) {
-            note = "${nameOf(pt)} is ${kindWord(pt)}, not a point — Unlink frees a point that was joined to something"
+            noteMsg = Msgs.noteWeldingIsNotPointUnlinkFrees(name = nameOf(pt), kind = kindWord(pt))
             return false
         }
         val node = literalNode(pt)
         if (node != null && node.boundTo != null) {
             relativeOf(pt)?.let { r ->
-                note =
-                    "${nameOf(pt)} is not joined to anything: it is measured from ${nameOf(elementFor(r.anchor) ?: pt)} " +
-                    "(a distance and an angle of its own) — Make absolute gives it plain coordinates back"
+                noteMsg =
+                    Msgs.noteWeldingIsNotJoinedAnythingIt(name = nameOf(pt), name2 = nameOf(elementFor(r.anchor) ?: pt))
                 return false
             }
             if (isFramed(pt)) {
                 val g = placedGroupOf(pt) ?: allGroups.firstOrNull { grp -> grp.captures.any { it.original === node } }
-                note =
-                    "${nameOf(pt)} is placed by group ${g?.name ?: "it belongs to"}, not joined to another point — " +
-                    "move or unplace the group to free it"
+                noteMsg =
+                    Msgs.noteWeldingIsPlacedGroupNotJoined(name = nameOf(pt), name2 = g?.name?.let { Msg.text(it) } ?: Msgs.noteWeldingItBelongs())
                 return false
             }
             val to = node.boundTo?.let { labelOf(it) }
             unweld(pt, dofs)
-            note = "${nameOf(pt)} is a free point again, where it stands${if (to == null) "" else " — it no longer follows $to"}"
+            noteMsg = Msgs.noteWeldingIsFreePointAgainWhere(name = nameOf(pt), ifWord = if (to == null) Msg.EMPTY else Msgs.noteWeldingItNoLongerFollows(to = to))
             return true
         }
         // a rider the *tool* created: not welded, but the same request — see this function's note
         val rec = riderOf(pt)
         if (node == null && rec != null) {
             if (makeAbsolute(pt, dofs)) return true
-            note = note ?: "${nameOf(pt)} rides ${nameOf(rec.host)} and could not be freed"
+            noteMsg = noteMsg ?: Msgs.noteWeldingRidesCouldNotBeFreed(name = nameOf(pt), name2 = nameOf(rec.host))
             return false
         }
-        note =
+        noteMsg =
             if (node != null) {
-                "${nameOf(pt)} is already free — it is joined to nothing"
+                Msgs.noteWeldingIsAlreadyFreeItIs(name = nameOf(pt))
             } else {
                 val from = Dependencies.inputsOf(this, pt).map { nameOf(it.element) }
-                "${nameOf(pt)} is derived by the construction" +
-                    (if (from.isEmpty()) "" else " from ${from.joinToString(" and ")}") +
-                    ", so there is no bond to leave and no position of its own to hand back"
+                Msgs.noteWeldingDerivedNoBond(
+                    name = nameOf(pt),
+                    from = if (from.isEmpty()) Msg.EMPTY else Msgs.noteWeldingFromInputs(list = from.joinToString(" and ")),
+                )
             }
         return false
     }
@@ -5973,11 +6000,7 @@ class Document {
      * Public because healing speaks the same language as refusing (OP-3): the sentence that says a body is
      * back — *"e32 is a solid again"* — is the same sentence one word further on.
      */
-    fun kindWord(el: Element): String {
-        if (el.kind == ElementKind.FUNC_CURVE) return "a function curve"
-        val w = el.kind.name.lowercase().replace('_', ' ')
-        return (if (w.first() in "aeiou") "an " else "a ") + w
-    }
+    fun kindWord(el: Element): Msg = Msgs.wordKind(kind = el.kind.name)
 
     /**
      * Why [el] cannot stand where a point **of the working plane** is wanted, or null when it can — one
@@ -5995,13 +6018,13 @@ class Document {
      */
     private fun notInThePlane(
         el: Element,
-        what: String,
-        instead: String,
-    ): String? =
+        what: Msg,
+        instead: Msg,
+    ): Msg? =
         if (!el.inSpace) {
             null
         } else {
-            "${nameOf(el)} is a point in space, and $what is stated in the sketch plane's own coordinates — $instead"
+            Msgs.noteWeldingIsPointSpaceIsStated(name = nameOf(el), what = what, instead = instead)
         }
 
     // ---- relative points: re-parameterize a free point onto an anchor (OP-4 case b) ----
@@ -6067,9 +6090,9 @@ class Document {
      */
     fun orthoOffsetFields(corner: OrthoCornerHandle): List<HandleField> =
         orthoOffsetsOf(corner).map { o ->
-            val a = elementFor(o.anchor)?.let { nameOf(it) } ?: "anchor"
+            val a = elementFor(o.anchor)?.let { nameOf(it) } ?: Msgs.nameAnchorUnnamed().render()
             HandleField(
-                "offset from $a along ${axisName(o.axis)}",
+                Messages.noteRelativeOrthoVerticesOffsetAlong(a = a, axisName = axisName(o.axis)),
                 o.offset,
                 Dimension.LENGTH,
                 { ev -> ((ev.eval(o.offset) as? EvalResult.Ok)?.value as? ScalarValue)?.q },
@@ -6152,19 +6175,18 @@ class Document {
         val node = literalNode(pt)
         if (node == null || pt.kind != ElementKind.POINT || node.boundTo != null) {
             val rec = riderOf(pt)
-            note =
+            noteMsg =
                 if (rec?.base != null) {
                     // the same rule the polar form follows: one anchor at a time, freed before it is replaced
-                    "${nameOf(pt)} is already measured from ${rec.base?.let { nameOf(it) }} — free it first (Make absolute), then measure it from something else"
+                    Msgs.noteRelativeOrthoVerticesIsAlreadyMeasuredFreeIt(name = nameOf(pt), name2 = rec.base?.let { nameOf(it) } ?: "")
                 } else if (rec != null && rec.line != null && !rec.carrierRelative) {
                     // it *could* be re-anchored, but not to this point: the offset of a rider is a distance
                     // along its own carrier, so the base has to be a position on that carrier
-                    "${nameOf(pt)} rides ${nameOf(rec.host)}: to measure it from something, pick a point on ${nameOf(rec.host)} — " +
-                        "one of its ends, or another point riding it"
+                    Msgs.noteRelativeOrthoVerticesRidesMeasureItSomethingPick(name = nameOf(pt), name2 = nameOf(rec.host))
                 } else if (node?.boundTo != null) {
-                    "${nameOf(pt)} already follows something — free it first (Make absolute), then anchor it"
+                    Msgs.noteRelativeOrthoVerticesAlreadyFollowsSomethingFreeIt(name = nameOf(pt))
                 } else {
-                    "${nameOf(pt)} is not a free point: only a point that owns its coordinates can be re-anchored"
+                    Msgs.noteRelativeOrthoVerticesIsNotFreePointOnly(name = nameOf(pt))
                 }
             return false
         }
@@ -6174,20 +6196,20 @@ class Document {
         // in this plane at all.
         notInThePlane(
             anchor,
-            "the anchor an offset is measured from",
-            "measure ${nameOf(pt)} from a point of the plane — or give it a height, and it is a point in space too",
+            Msgs.noteRelativeOrthoVerticesAnchorOffsetIsMeasured(),
+            Msgs.noteRelativeOrthoVerticesMeasurePointPlaneGiveIt(name = nameOf(pt)),
         )?.let {
-            note = it
+            noteMsg = it
             return false
         }
         @Suppress("UNCHECKED_CAST")
         val anchorRef = anchor.ref as? PointRef
         if (anchorRef == null || !anchor.isPoint || anchor === pt) {
-            note = "${nameOf(anchor)} is not a point to anchor ${nameOf(pt)} to"
+            noteMsg = Msgs.noteRelativeOrthoVerticesIsNotPointAnchor(name = nameOf(anchor), name2 = nameOf(pt))
             return false
         }
         if (anchorRef.node === node || joinWouldCycle(pt, anchorRef.node)) {
-            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)}: ${nameOf(anchor)} already follows ${nameOf(pt)}"
+            noteMsg = Msgs.noteRelativeOrthoVerticesCanTAnchorAlreadyFollows(name = nameOf(pt), name2 = nameOf(anchor))
             return false
         }
         val ev = Evaluator()
@@ -6204,7 +6226,7 @@ class Document {
         pt.handle = RelativePointHandle(anchorRef, dNode, aNode)
         pt.style = Styles.ON_CURVE // derived-but-draggable, the same reading an attached point gets
         noteEdit()
-        note = "${nameOf(pt)} now follows ${nameOf(anchor)} — distance and angle are its degrees of freedom (drag it, or type them)"
+        noteMsg = Msgs.noteRelativeOrthoVerticesNowFollowsDistanceAngleAre(name = nameOf(pt), name2 = nameOf(anchor))
         return true
     }
 
@@ -6243,45 +6265,44 @@ class Document {
     ): Boolean {
         // one anchor at a time, freed before it is replaced — the polar form's own rule
         orthoRelativeOf(pt).firstOrNull()?.let { o ->
-            val was = elementFor(o.anchor)?.let { nameOf(it) } ?: "another point"
-            note = "${nameOf(pt)} already follows $was — free it first (Make absolute), then anchor it"
+            val was = elementFor(o.anchor)?.let { Msg.text(nameOf(it)) } ?: Msgs.noteRelativeOrthoVerticesAnotherPoint()
+            noteMsg = Msgs.noteRelativeOrthoVerticesAlreadyFollowsFreeItFirst(name = nameOf(pt), was = was)
             return false
         }
         // A **placed** path holds the group's own local coordinates (OP-16) while an anchor's are the
         // world's, so their sum would state a relation in neither space. Refused by name with the cure, the
         // same rule that stops a placed path being extended in place ([resumableEnd]).
         if (pathFrameOf(corner) != null) {
-            note = "${nameOf(pt)} belongs to a placed group: its coordinates are the group's own while an " +
-                "anchor's are the world's — take the path out of the group first, then anchor it"
+            noteMsg = Msgs.noteRelativeOrthoVerticesBelongsPlacedGroupItsCoordinates(name = nameOf(pt))
             return false
         }
         // …and a point in **space** cannot be the anchor, for the reason [notInThePlane] states: what would
         // be read off it is the plane point at its projection, which is a different point.
         notInThePlane(
             anchor,
-            "the anchor a coordinate is measured from",
-            "measure ${nameOf(pt)} from a point of the plane — or give it a height, and it is a point in space too",
+            Msgs.noteRelativeOrthoVerticesAnchorCoordinateIsMeasured(),
+            Msgs.noteRelativeOrthoVerticesMeasurePointPlaneGiveIt(name = nameOf(pt)),
         )?.let {
-            note = it
+            noteMsg = it
             return false
         }
 
         @Suppress("UNCHECKED_CAST")
         val anchorRef = anchor.ref as? PointRef
         if (anchorRef == null || !anchor.isPoint || anchor === pt) {
-            note = "${nameOf(anchor)} is not a point to anchor ${nameOf(pt)} to"
+            noteMsg = Msgs.noteRelativeOrthoVerticesIsNotPointAnchor(name = nameOf(anchor), name2 = nameOf(pt))
             return false
         }
         val ev = Evaluator()
         val here = pointOf(pt.ref.node, ev)
         val there = pointOf(anchorRef.node, ev)
         if (here == null || there == null) {
-            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)} yet — one of them has no position right now"
+            noteMsg = Msgs.noteRelativeOrthoVerticesCanTAnchorYetOne(name = nameOf(pt), name2 = nameOf(anchor))
             return false
         }
         val lengths = dofs.filter { it.dim == Dimension.LENGTH }
         val made = ArrayList<OrthoOffset>()
-        val reasons = ArrayList<String>()
+        val reasons = ArrayList<Msg>()
         for (axis in 0..1) {
             val name = axisName(axis)
             val node = if (axis == 0) corner.xNode else corner.yNode
@@ -6292,9 +6313,9 @@ class Document {
                 val already = orthoOffsetOf(node)?.takeIf { it.axis == axis }
                 reasons.add(
                     if (already != null) {
-                        "its $name already follows ${elementFor(already.anchor)?.let { nameOf(it) } ?: "another point"}"
+                        Msgs.noteRelativeOrthoVerticesItsAlreadyFollows(name = name, name2 = elementFor(already.anchor)?.let { Msg.text(nameOf(it)) } ?: Msgs.noteRelativeOrthoVerticesAnotherPoint2())
                     } else {
-                        "its $name is driven by the construction (a welded or attached end)"
+                        Msgs.noteRelativeOrthoVerticesItsIsDrivenConstructionWelded(name = name)
                     },
                 )
                 continue
@@ -6302,7 +6323,7 @@ class Document {
             val coord = if (axis == 0) cx.measureX(anchorRef) else cx.measureY(anchorRef)
             // the one test, doing both jobs — see the header
             if (dependsOn(coord.node, owner, HashSet())) {
-                reasons.add("${nameOf(anchor)}'s $name already follows ${nameOf(pt)}'s")
+                reasons.add(Msgs.noteRelativeOrthoVerticesAlreadyFollows(name = nameOf(anchor), name2 = name, name3 = nameOf(pt)))
                 continue
             }
             // read positionally off the axes that actually bind, which replay reproduces in the same order
@@ -6317,8 +6338,7 @@ class Document {
             made.add(rec)
         }
         if (made.isEmpty()) {
-            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)}: ${reasons.joinToString(", and ")} — there is " +
-                "nothing left to state. Pick an anchor whose coordinates ${nameOf(pt)}'s do not already follow."
+            noteMsg = Msgs.noteRelativeOrthoVerticesCanTAnchorThereIs(name = nameOf(pt), name2 = nameOf(anchor), list = Msg.joined(reasons, ", and "))
             return false
         }
         orthoRelatives[pt.id] = made
@@ -6327,13 +6347,11 @@ class Document {
         noteEdit()
         val axes = made.map { axisName(it.axis) }
         val names = made.joinToString(" and ") { it.entry.name }
-        note =
+        noteMsg =
             if (made.size == 1) {
-                "${nameOf(pt)} now follows ${nameOf(anchor)} along ${axes[0]} — the offset is its degree of " +
-                    "freedom (drag it, type it, or give $names a formula)"
+                Msgs.noteRelativeOrthoVerticesNowFollowsAlongOffsetIs(name = nameOf(pt), name2 = nameOf(anchor), axes = axes[0], names = names)
             } else {
-                "${nameOf(pt)} now follows ${nameOf(anchor)} along ${axes.joinToString(" and ")} — the offsets " +
-                    "are its degrees of freedom (drag it, type them, or give $names a formula)"
+                Msgs.noteRelativeOrthoVerticesNowFollowsAlongOffsetsAre(name = nameOf(pt), name2 = nameOf(anchor), list = axes.joinToString(" and "), names = names)
             }
         return true
     }
@@ -6356,15 +6374,14 @@ class Document {
         // coordinate takes the parameter with it, and a `wire` step naming a row that no longer exists is a
         // file that will not load. Refused by name, with the cure (session 65).
         recs.firstOrNull { offsetReaders(it).isNotEmpty() }?.let { o ->
-            note = "Can't free ${nameOf(pt)}: its offset ${o.entry.name} drives " +
-                "${offsetReaders(o).joinToString(", ")} — free that first, then free ${nameOf(pt)}"
+            noteMsg = Msgs.noteRelativeOrthoVerticesCanTFreeItsOffset(name = nameOf(pt), name2 = o.entry.name, list = offsetReaders(o).joinToString(", "))
             return false
         }
         val ev = Evaluator()
         val lengths = dofs.filter { it.dim == Dimension.LENGTH }
         val at = recs.mapIndexed { i, r -> lengths.getOrNull(i)?.mm ?: scalarOf(r.owner, ev)?.mm }
         if (at.any { it == null }) {
-            note = "Can't free ${nameOf(pt)} yet — its coordinates have no value right now"
+            noteMsg = Msgs.noteRelativeOrthoVerticesCanTFreeYetIts(name = nameOf(pt))
             return false
         }
         for ((i, r) in recs.withIndex()) {
@@ -6379,9 +6396,8 @@ class Document {
         noteReparam(pt)
         noteEdit()
         val axes = recs.map { axisName(it.axis) }
-        note =
-            "${nameOf(pt)} keeps its position and owns its ${axes.joinToString(" and ")} again — " +
-            "drag it, or type ${if (recs.size == 1) "it" else "them"}"
+        noteMsg =
+            Msgs.noteRelativeOrthoVerticesKeepsItsPositionOwnsIts(name = nameOf(pt), list = axes.joinToString(" and "), ifWord = if (recs.size == 1) "one" else "other")
         return true
     }
 
@@ -6416,24 +6432,23 @@ class Document {
         // absolute* frees it in place exactly as it frees a rider — see [detachProjected].
         if (node?.boundTo == null && projected.containsKey(pt.id)) return detachProjected(pt, dofs)
         if (node?.boundTo == null) {
-            note =
+            noteMsg =
                 if (node != null) {
-                    "${nameOf(pt)} is already a free point"
+                    Msgs.noteRelativeOrthoVerticesIsAlreadyFreePoint(name = nameOf(pt))
                 } else if (freedInSpace.containsKey(pt.id)) {
                     // it *is* free, in the two freedoms a point in space has here (OP-25): saying "derived by
                     // the construction" would be true of the formula and false about the point
-                    "${nameOf(pt)} is already free of the curve it rode: it is a height point now, so its own " +
-                        "freedoms are its base in ${pt.space} and its height — drag or type either"
+                    Msgs.noteRelativeOrthoVerticesIsAlreadyFreeCurveIt(name = nameOf(pt), space = pt.space)
                 } else {
                     // a path corner, an intersection: it has no literal of its own to hand back
-                    "${nameOf(pt)} is derived by the construction, not a point holding its own coordinates"
+                    Msgs.noteRelativeOrthoVerticesIsDerivedConstructionNotPoint(name = nameOf(pt))
                 }
             return false
         }
         val wasRelative = relativeOf(pt) != null
         riderOf(pt)?.takeIf { it.carrierRelative }?.let { releaseRiderNow(pt) }
         unweld(pt)
-        note = if (wasRelative) "${nameOf(pt)} keeps its position and is free again" else "${nameOf(pt)} is a free point again"
+        noteMsg = if (wasRelative) Msgs.noteRelativeOrthoVerticesKeepsItsPositionIsFree(name = nameOf(pt)) else Msgs.noteRelativeOrthoVerticesIsFreePointAgain(name = nameOf(pt))
         return true
     }
 
@@ -6470,7 +6485,7 @@ class Document {
         pt.handle = FreePointHandle(free)
         noteReparam(pt)
         noteEdit()
-        note = "${nameOf(pt)} keeps its position and is off ${nameOf(rec.host)} — it is an ordinary free point again"
+        noteMsg = Msgs.noteRelativeOrthoVerticesKeepsItsPositionIsOff(name = nameOf(pt), name2 = nameOf(rec.host))
         return true
     }
 
@@ -6516,9 +6531,8 @@ class Document {
         pt.handle = HeightPointHandle(planeRef, base, height)
         noteReparam(pt)
         noteEdit()
-        note =
-            "${nameOf(pt)} keeps its position and is off ${nameOf(rec.host)} — it is a height point on ${pt.space} " +
-            "now: drag its base ${nameOf(elementFor(base) ?: pt)} in the plan, or its height in the 3D view"
+        noteMsg =
+            Msgs.noteRelativeOrthoVerticesKeepsItsPositionIsOff2(name = nameOf(pt), name2 = nameOf(rec.host), space = pt.space, name3 = nameOf(elementFor(base) ?: pt))
         return true
     }
 
@@ -6598,7 +6612,7 @@ class Document {
         val here = ((ev.eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
         val there = ((ev.eval(baseParam.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
         if (here == null || there == null) {
-            note = "Can't measure ${nameOf(pt)} from ${nameOf(base)} yet — the carrier has no position of its own"
+            noteMsg = Msgs.noteRelativeSharedCarrierCanTMeasureYetCarrier(name = nameOf(pt), name2 = nameOf(base))
             return false
         }
         val offset = SourceNode(nextId("cd"), ScalarValue(Quantity.mm(d?.mm ?: (here - there))))
@@ -6606,7 +6620,7 @@ class Document {
         // the acyclicity every connection is checked for (OP-4): a base measured from *this* rider would put
         // the rider inside its own input cone, and a cyclic graph is a dead one rather than a wrong drawing
         if (dependsOn(bound.node, rec.param, HashSet())) {
-            note = "Can't measure ${nameOf(pt)} from ${nameOf(base)}: ${nameOf(base)} is already measured from ${nameOf(pt)}"
+            noteMsg = Msgs.noteRelativeSharedCarrierCanTMeasureIsAlready(name = nameOf(pt), name2 = nameOf(base))
             return false
         }
         rec.param.boundTo = bound.node
@@ -6617,9 +6631,8 @@ class Document {
         // its motion under an edit of the host is now fully stated, so there is nothing to compensate (OP-20)
         carrierRiders.removeAll { it.dof === rec.param }
         noteEdit()
-        note =
-            "${nameOf(pt)} is now ${Format.num(abs(here - there))} mm from ${nameOf(base)} along ${nameOf(rec.host)} — " +
-            "that distance is its degree of freedom (drag it along, or type it)"
+        noteMsg =
+            Msgs.noteRelativeSharedCarrierIsNowMmAlongThat(name = nameOf(pt), num = Format.num(abs(here - there)), name2 = nameOf(base), name3 = nameOf(rec.host))
         return true
     }
 
@@ -6774,7 +6787,7 @@ class Document {
         val base = rec.base?.let { nameOf(it) } ?: return false
         if (!releaseRiderNow(pt)) return false
         noteEdit()
-        note = "${nameOf(pt)} keeps its place on ${nameOf(rec.host)} and is measured from the world again, not from $base"
+        noteMsg = Msgs.noteRelativeSharedCarrierKeepsItsPlaceIsMeasured(name = nameOf(pt), name2 = nameOf(rec.host), base = base)
         return true
     }
 
@@ -6999,10 +7012,10 @@ class Document {
      * Kept as a list on the document (and mirrored into [note]) because a load is one operation that may have
      * several such findings, and the user must be able to read all of them.
      */
-    val loadNotes = ArrayList<String>()
+    val loadNotes = ArrayList<Msg>()
 
     /** Record one migration finding — see [loadNotes]. */
-    internal fun noteLoad(message: String) {
+    internal fun noteLoad(message: Msg) {
         loadNotes.add(message)
     }
 
@@ -7013,7 +7026,7 @@ class Document {
      * a note is about the operation being performed — and a load is *one* operation from the user's chair.
      */
     internal fun publishLoadNotes() {
-        if (loadNotes.isNotEmpty()) note = loadNotes.joinToString(" · ")
+        if (loadNotes.isNotEmpty()) noteMsg = Msg.joined(loadNotes)
     }
 
     // ---- scored discrete choices: decided once from the clicks, then persisted (OP-1, OP-18) ----
@@ -7704,31 +7717,30 @@ class Document {
     fun connectRefusal(
         el: Element,
         target: Element,
-    ): String? {
-        if (el === target) return "${nameOf(el)} cannot be joined onto itself"
+    ): Msg? {
+        if (el === target) return Msgs.noteGestureTimeCompensationCannotBeJoinedOntoItself(name = nameOf(el))
         val corner = el.handle as? OrthoCornerHandle
         if (corner != null) {
             if (!corner.isEndpoint) {
-                return "${nameOf(el)} is already connected — a run that ends on something is a terminus, not a loose end"
+                return Msgs.noteGestureTimeCompensationIsAlreadyConnectedRunThat(name = nameOf(el))
             }
             if (pathFrameOf(corner) != null) {
-                return "${nameOf(el)}'s path is placed in a group, so its coordinates are the frame's local ones — unplace the group first"
+                return Msgs.noteGestureTimeCompensationPathIsPlacedGroupSo(name = nameOf(el))
             }
         } else if (isFramed(el)) {
-            return "${nameOf(el)} is held by a placed group's frame, so its position is already derived"
+            return Msgs.noteGestureTimeCompensationIsHeldPlacedGroupFrame(name = nameOf(el))
         }
-        val driver = (if (target.isPoint) target.ref.node else carrierNodeOf(target)) ?: return "${nameOf(target)} cannot carry a connection"
-        if (joinWouldCycle(el, driver)) return "${nameOf(target)} already follows ${nameOf(el)}"
+        val driver = (if (target.isPoint) target.ref.node else carrierNodeOf(target)) ?: return Msgs.noteGestureTimeCompensationCannotCarryConnection(name = nameOf(target))
+        if (joinWouldCycle(el, driver)) return Msgs.noteGestureTimeCompensationAlreadyFollows(name = nameOf(target), name2 = nameOf(el))
         if (corner != null) {
             val free = listOfNotNull(writableMaster(corner.xNode), writableMaster(corner.yNode)).distinct()
             if (free.isEmpty()) {
-                return "both of ${nameOf(el)}'s coordinates are already driven, so it has no freedom left to give"
+                return Msgs.noteGestureTimeCompensationBothCoordinatesAreAlreadyDriven(name = nameOf(el))
             }
             if (free.size < 2 && target.isPoint) {
                 val driven = if (writableMaster(corner.xNode) == null) 0 else 1
                 val axis = if (driven == 0) "x" else "y"
-                return "${nameOf(el)}'s $axis is already held by ${heldBy(corner, driven)}, and welding onto a point pins both — " +
-                    "reach the leg through that point instead, which needs only the one coordinate"
+                return Msgs.noteGestureTimeCompensationIsAlreadyHeldWeldingOnto(name = nameOf(el), axis = axis, heldBy = heldBy(corner, driven))
             }
         }
         return null
@@ -7738,9 +7750,9 @@ class Document {
     private fun heldBy(
         corner: OrthoCornerHandle,
         axis: Int,
-    ): String {
+    ): Msg {
         val j = junctionOf(if (axis == 0) corner.xNode else corner.yNode)
-        return j?.curve?.let { "the junction on ${nameOf(it)}" } ?: "another connection"
+        return j?.curve?.let { Msgs.noteGestureTimeCompensationJunction(name = nameOf(it)) } ?: Msgs.noteGestureTimeCompensationAnotherConnection()
     }
 
     /** The node a junction on [curve] would ride — its carrier line, or the circle itself. */
@@ -7925,8 +7937,8 @@ class Document {
         val ref = addConstrained(cx.pointAtRatio(a, b, t), RatioPointHandle(a, b, t.node))
         val f = ((Evaluator().eval(t.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.value
         if (f != null && (f < 0.0 || f > 1.0)) {
-            val end = if (f < 0.0) "the first point" else "the second"
-            note = "Factor ${Format.num(f)} is outside 0…1, so the point sits beyond $end — drag it back, or type a factor between 0 and 1"
+            val end = if (f < 0.0) Msgs.notePointsFirstPoint() else Msgs.notePointsSecond()
+            noteMsg = Msgs.notePointsFactorIsOutsideSoPoint(num = Format.num(f), end = end)
         }
         return ref
     }
@@ -8039,7 +8051,7 @@ class Document {
         val ref = addConstrained(cx.indirect(rider.point), rider.handle, rider.dof, value, rider.inSpace)
         elements.lastOrNull()?.let {
             noteRider(it, host, rider)
-            if (finding != null) noteLoad("${nameOf(it)} on ${nameOf(host)}: $finding")
+            if (finding != null) noteLoad(Msgs.noteLoadOnHost(name = nameOf(it), host = nameOf(host), finding = finding))
         }
         return ref
     }
@@ -8071,7 +8083,7 @@ class Document {
         rider: Rider<*>,
         at: Vec2?,
         dof: Quantity?,
-    ): Pair<Quantity?, String?> {
+    ): Pair<Quantity?, Msg?> {
         val version = replayingVersion ?: return dof to null
         if (version >= 2 || dof == null || at == null) return dof to null
         if (rider.form != RiderForm.ALONG_LINE || dof.dim != Dimension.LENGTH) return dof to null
@@ -8083,20 +8095,17 @@ class Document {
         val legacy = l.origin + l.dir * dof.mm
         val foot = l.origin + l.dir * (at - l.origin).dot(l.dir)
         val off = (at - foot).length()
-        val kept = "kept its stored distance along the carrier, read the way this build writes it"
+        val kept = Msgs.notePointsKeptItsStoredDistanceAlong()
         if (off > RIDER_MIGRATION_TOL) {
-            return dof to "its recorded position is ${Format.num(off)} mm off that carrier now, so it cannot say " +
-                "which anchor the file meant — $kept"
+            return dof to Msgs.notePointsItsRecordedPositionIsMm(num = Format.num(off), kept = kept)
         }
         if ((today - at).length() <= RIDER_MIGRATION_TOL) return dof to null
         if ((legacy - at).length() <= RIDER_MIGRATION_TOL) {
             // the same place, restated against the anchor that belongs to the line rather than to the host
             return Quantity.mm(dof.mm + l.origin.dot(l.dir)) to
-                "its distance was measured from the carrier's own end (format 1) — re-anchored to the carrier, " +
-                "in the place the file put it"
+                Msgs.notePointsItsDistanceWasMeasuredCarrier()
         }
-        return dof to "it has been moved since it was created, so its recorded position cannot say which " +
-            "anchor the file meant — $kept"
+        return dof to Msgs.notePointsItHasBeenMovedSince(kept = kept)
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -8203,23 +8212,20 @@ class Document {
         dof: Quantity? = null,
     ): Point3Ref? {
         if (curve.kind != ElementKind.SPACE_CURVE) {
-            note = "Point on helix: ${nameOf(curve)} is ${kindWord(curve)}, and a rider rides a coil — click a coil"
+            noteMsg = Msgs.notePointsPointHelixIsRiderRides(name = nameOf(curve), kind = kindWord(curve))
             return null
         }
         val ev = Evaluator()
         val path = (ev.valueOf(curve.ref) as? Path3Value)?.path
         val helix = path?.elements?.singleOrNull() as? Curve3Element.Helix3
         if (helix == null) {
-            note =
+            noteMsg =
                 if (path == null) {
-                    "Point on helix: ${nameOf(curve)} has no value right now, so there is no coil to put a point on — " +
-                        "${(ev.eval(curve.ref.node) as? EvalResult.Invalid)?.reason ?: "fix what it is built from"}"
+                    Msgs.notePointsPointHelixHasNoValue(name = nameOf(curve), eval = (ev.eval(curve.ref.node) as? EvalResult.Invalid)?.why ?: Msgs.notePointsFixWhatItIsBuilt())
                 } else {
                     // the scope, named as a scope rather than as a limit (DESIGN.md records it as a future
                     // extension): the angle exists because a helix *is* an angle about an axis
-                    "Point on helix: ${nameOf(curve)} is a curve in space but not a coil, and a point on it would " +
-                        "need a parameter measured from the points it is built through — which re-anchors " +
-                        "whenever they move. Use a Station to state a position along a run of any shape"
+                    Msgs.notePointsPointHelixIsCurveSpace(name = nameOf(curve))
                 }
             return null
         }
@@ -8246,10 +8252,8 @@ class Document {
                 dof,
             )
         val el = elements.lastOrNull()
-        note =
-            "${el?.let { nameOf(it) }}: ${Format.num(Quantity.rad(angle).deg)}° along ${nameOf(curve)} — " +
-            "winding ${1 + (angle / (2.0 * PI)).toInt()} of ${Format.num(helix.turns)}; drag it in the 3D view to " +
-            "slide it along the whole coil, in the plan to move it round the winding it is on, or type the angle"
+        noteMsg =
+            Msgs.notePointsAlongWindingDragItD(name = el?.let { nameOf(it) } ?: "", num = Format.num(Quantity.rad(angle).deg), name2 = nameOf(curve), toInt = 1 + (angle / (2.0 * PI)).toInt(), num2 = Format.num(helix.turns))
         return ref
     }
 
@@ -8396,9 +8400,7 @@ class Document {
                     // **cut whole, and named**: two arbitrary functions cross where a two-dimensional
                     // system of expressions vanishes, and seeding that honestly needs a subdivision this
                     // package did not build. What *does* exist is said, so the way forward is one click on:
-                    note = "Intersect: ${nameOf(a)} and ${nameOf(b)} are both function curves, and a crossing " +
-                        "of two of those is not built — a function curve meets a line, a circle, an arc or " +
-                        "an ellipse, so cross it with one of those"
+                    noteMsg = Msgs.notePointsIntersectAreBothFunctionCurves(name = nameOf(a), name2 = nameOf(b))
                 }
                 return null
             }
@@ -8490,7 +8492,7 @@ class Document {
             val region = regionOf(el)
             val n = region?.let { cx.regionCornerCount(it, Evaluator()) } ?: 0
             if (region == null || n == 0) {
-                note = "${nameOf(el)} has no corners to extract right now"
+                noteMsg = Msgs.notePointsHasNoCornersExtractRight(name = nameOf(el))
                 return emptyList()
             }
             return (0 until n).map { cx.regionCorner(region, it) }.onEach { addDerived(it) }
@@ -8526,10 +8528,8 @@ class Document {
         // no-op there is indistinguishable from a missed click. Named rather than guessed at, and stated once
         // for every kind that reaches here rather than per branch, so a kind added later cannot be silent.
         if (refs.isEmpty()) {
-            note =
-                "${nameOf(el)}: ${kindWord(el)} has no defining points to take — its own points are the ones " +
-                "it was drawn through, which are already in the drawing; a segment, an arc, a circle, a " +
-                "spline, a conic, a function curve, an outline or an area each hand back theirs"
+            noteMsg =
+                Msgs.notePointsHasNoDefiningPointsTake(name = nameOf(el), kind = kindWord(el))
             return emptyList()
         }
         refs.forEach { addDerived(it) }
@@ -8561,9 +8561,11 @@ class Document {
         val ev = Evaluator()
         val path = (ev.valueOf(ref) as? Path3Value)?.path
         if (path == null || path.isEmpty) {
-            note =
-                "${nameOf(el)} has no run to take key points from right now" +
-                ((ev.eval(el.ref.node) as? EvalResult.Invalid)?.let { " — ${it.reason}" } ?: "")
+            noteMsg =
+                Msgs.notePointsHasNoRunTakeKey(
+                    name = nameOf(el),
+                    why = (ev.eval(el.ref.node) as? EvalResult.Invalid)?.let { Msgs.phraseDashReason(reason = it.why) } ?: Msg.EMPTY,
+                )
             return emptyList()
         }
         val isHelix = path.elements.singleOrNull() is Curve3Element.Helix3
@@ -8575,8 +8577,8 @@ class Document {
             )
         refs.forEach { addSpacePoint(it, el.space) }
         val what =
-            (if (isHelix) "centre, " else "") + "start" + (if (path.closed) " (it is closed, so its end is its start)" else " and end")
-        note = "${nameOf(el)}: its $what — ${refs.size} point${if (refs.size == 1) "" else "s"} that follow the curve through every edit"
+            (if (isHelix) "centre, " else "") + "start" + (if (path.closed) Msgs.notePointsItIsClosedSoIts() else Msgs.notePointsEnd())
+        noteMsg = Msgs.notePointsItsPointThatFollowCurve(name = nameOf(el), what = what, count = refs.size)
         return refs
     }
 
@@ -9243,15 +9245,11 @@ class Document {
             // ...and a live gesture says what it did, for the reason every solid tool does (GitHub #9's
             // silent-success sweep): the arc looks the same either way, and what changed is the *loop*
             val cutWord = if (rounded) "radius" else "setback"
-            note =
-                "${nameOf(by)} is the corner $cutWord of ${nameOf(leg1)} and ${nameOf(leg2)} — the path's own " +
-                "loop is cut there, so an extrude, a wall and an outline over it follow this corner; " +
-                "the $cutWord stays an ordinary parameter"
+            noteMsg =
+                Msgs.noteLoopOrthoPathIsCornerPathOwnLoop(name = nameOf(by), cutWord = cutWord, name2 = nameOf(leg1), name3 = nameOf(leg2))
         } else if (replayingVersion!! < DocumentFormat.SUPERSEDING_FILLET_VERSION) {
             noteLoad(
-                "${nameOf(by)} ${if (rounded) "rounds" else "bevels"} the corner of ${nameOf(leg1)} and " +
-                    "${nameOf(leg2)} — it is now that corner's own ${if (rounded) "radius" else "setback"}, so " +
-                    "the path's loop and everything built on it (an extrude, a wall, an outline) follow it",
+                Msgs.noteLoopOrthoPathCornerItIsNowThat(name = nameOf(by), ifWord = if (rounded) "yes" else "other", name2 = nameOf(leg1), name3 = nameOf(leg2), ifWord2 = if (rounded) "yes" else "other"),
             )
         }
         // everything that already holds this path's loop follows the rounded one, with nothing rewired
@@ -9344,15 +9342,15 @@ class Document {
      * later **step naming it** without being built from it (a group's membership, a visibility decision).
      * The last counts because dropping the creating step would change what that step says.
      */
-    fun consumersOf(el: Element): List<String> {
+    fun consumersOf(el: Element): List<Msg> {
         // all three of them (GitHub #25): a rider took the leg's carrier, an outline took the leg itself
         val nodes = publishedNodes(el)
         val own = creatingStep(el)
-        val out = ArrayList<String>()
+        val out = ArrayList<Msg>()
         val reads = { n: Node -> nodes.any { dependsOn(n, it, HashSet()) } }
-        elements.filter { it !== el && publishedNodes(it).none { n -> n in nodes } && reads(it.ref.node) }.forEach { out.add(it.id) }
-        scalars.filter { reads(it.ref.node) }.forEach { out.add(it.name) }
-        if (journal.any { s -> s !== own && referencedElements(s).any { it === el } }) out.add("a later step")
+        elements.filter { it !== el && publishedNodes(it).none { n -> n in nodes } && reads(it.ref.node) }.forEach { out.add(Msg.text(it.id)) }
+        scalars.filter { reads(it.ref.node) }.forEach { out.add(Msg.text(it.name)) }
+        if (journal.any { s -> s !== own && referencedElements(s).any { it === el } }) out.add(Msgs.noteBreakPlainCurveLaterStep())
         return out.distinct()
     }
 
@@ -9371,11 +9369,11 @@ class Document {
         // a break *replaces* a curve, and a macro definition names its elements (OP-6) — the same refusal
         // [breakOrthoLeg] makes, for the same reason
         if (definesAMacro(listOf(el))) {
-            note = "${nameOf(el)} is part of a tool's definition — breaking it would replace it; retire the tool first"
+            noteMsg = Msgs.noteBreakPlainCurveIsPartToolDefinitionBreaking(name = nameOf(el))
             return null
         }
         if (creatingStep(el) == null) {
-            note = "${nameOf(el)} has no construction step, so a break has nothing to build the halves from"
+            noteMsg = Msgs.noteBreakPlainCurveHasNoConstructionStepSo(name = nameOf(el))
             return null
         }
         // A **placed** group holds its members' positions frame-relative (OP-16), and the freedom a break
@@ -9384,7 +9382,7 @@ class Document {
         // path in place is: membership is recorded in the group's step and a step's arguments are never
         // rewritten, so the new point cannot simply join the group.
         placedGroupOf(el)?.let { g ->
-            note = "${nameOf(el)} belongs to placed group ${g.name} — unplace it to break it, or the joint would not follow the frame"
+            noteMsg = Msgs.noteBreakPlainCurveBelongsPlacedGroupUnplaceIt(name = nameOf(el), name2 = g.name)
             return null
         }
         return when (el.kind) {
@@ -9396,12 +9394,11 @@ class Document {
             // extent **is** its domain, so narrowing `from`/`to` in its fields is the trim, and two pieces
             // are two curves over two domains (recorded as a future extension in DESIGN.md)
             ElementKind.FUNC_CURVE -> {
-                note = "${nameOf(el)} is a function curve — its extent is its domain, so change its from/to " +
-                    "fields instead of breaking it"
+                noteMsg = Msgs.noteBreakPlainCurveIsFunctionCurveItsExtent(name = nameOf(el))
                 null
             }
             else -> {
-                note = "${nameOf(el)} is not a segment, an arc, a Bézier or a conic"
+                noteMsg = Msgs.noteBreakPlainCurveIsNotSegmentArcB(name = nameOf(el))
                 null
             }
         }
@@ -9465,18 +9462,18 @@ class Document {
     ): BreakResult? {
         val seg =
             (Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: run {
-                note = "${nameOf(el)} has no position to split (its construction is invalid)"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoPositionSplitIts(name = nameOf(el))
                 return null
             }
         val ab = seg.seg.b - seg.seg.a
         if (ab.length() < Vec2.EPS) {
-            note = "${nameOf(el)} has no length to split"
+            noteMsg = Msgs.noteBreakPlainCurveHasNoLengthSplit(name = nameOf(el))
             return null
         }
         // the projection of the click onto the segment — so the two halves *are* the one segment, exactly
         val t = (world - seg.seg.a).dot(ab) / ab.dot(ab)
         if (t <= breakEndSlack || t >= 1.0 - breakEndSlack) {
-            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
+            noteMsg = Msgs.noteBreakPlainCurveClickAwayEndsBreakThere(name = nameOf(el))
             return null
         }
         val at = seg.seg.a + ab * t
@@ -9484,14 +9481,14 @@ class Document {
         val consumers = consumersOf(el)
         val ends =
             own ?: keyPointsOf(el, 2) ?: run {
-                note = "${nameOf(el)} has no endpoints to hang the halves on"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoEndpointsHangHalves(name = nameOf(el))
                 return null
             }
         val p = freePoint(Quantity.mm(at.x), Quantity.mm(at.y))
         val split = elementFor(p) ?: return null
         val h1 = runAsTool(Tools.SEGMENT, listOf(ends[0].ref as PointRef, p))?.single() ?: return null
         val h2 = runAsTool(Tools.SEGMENT, listOf(p, ends[1].ref as PointRef))?.single() ?: return null
-        return settle(el, split, listOf(h1, h2), consumers, detached = own != null, why = "the halves are built on it")
+        return settle(el, split, listOf(h1, h2), consumers, detached = own != null, why = Msgs.noteBreakPlainCurveHalvesAreBuiltIt())
     }
 
     /**
@@ -9507,30 +9504,30 @@ class Document {
     ): BreakResult? {
         val arc =
             ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? ArcValue)?.arc ?: run {
-                note = "${nameOf(el)} has no position to split (its construction is invalid)"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoPositionSplitIts(name = nameOf(el))
                 return null
             }
         val angle = (world - arc.center).angle()
         if (!GeomMath.arcContains(arc, angle)) {
-            note = "That point is not on ${nameOf(el)}'s sweep — click on the arc itself"
+            noteMsg = Msgs.noteBreakPlainCurveThatPointIsNotSweep(name = nameOf(el))
             return null
         }
         val sweep = abs(GeomMath.sweep(arc))
         val from = abs(atan2(sin(angle - arc.startAngle), cos(angle - arc.startAngle)))
         val to = abs(atan2(sin(angle - arc.endAngle), cos(angle - arc.endAngle)))
         if (sweep < Vec2.EPS || from / sweep <= breakEndSlack || to / sweep <= breakEndSlack) {
-            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
+            noteMsg = Msgs.noteBreakPlainCurveClickAwayEndsBreakThere(name = nameOf(el))
             return null
         }
         val consumers = consumersOf(el)
         val made =
             breakArc(el, Quantity.rad(angle), arc.ccw) ?: run {
-                note = "${nameOf(el)} could not be split there"
+                noteMsg = Msgs.noteBreakPlainCurveCouldNotBeSplitThere(name = nameOf(el))
                 return null
             }
         // an arc's halves are trims of *it* (OP-14: a trimmed circle is an arc), so the original is always a
         // consumer of the break — it is the carrier both halves share, and it therefore always stays
-        return settle(el, made[0], made.drop(1), consumers, detached = false, why = "the two arcs share it as their carrier")
+        return settle(el, made[0], made.drop(1), consumers, detached = false, why = Msgs.noteBreakPlainCurveTwoArcsShareItTheir())
     }
 
     /**
@@ -9556,7 +9553,7 @@ class Document {
         @Suppress("UNCHECKED_CAST")
         val ref = el.ref as ArcRef
         val arc = ((Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? ArcValue)?.arc ?: return null
-        val a = angle.requireDim(Dimension.ANGLE, "split angle").base
+        val a = angle.requireDim(Dimension.ANGLE, Msgs.noteBreakPlainCurveSplitAngle()).base
         val at = arc.center + Vec2(arc.radius * cos(a), arc.radius * sin(a))
         // a rider on the carrier circle: the click is *where*, the angle is *what it holds* — the same
         // split of choice and state every other rider's step makes (OP-18)
@@ -9591,31 +9588,31 @@ class Document {
                 is EllipticArcValue -> v.arc.ellipse
                 else -> null
             } ?: run {
-                note = "${nameOf(el)} has no position to split (its construction is invalid)"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoPositionSplitIts(name = nameOf(el))
                 return null
             }
         val t = Conics.paramOf(ellipse, world)
         val arcValue = (ev.valueOf(el.ref) as? EllipticArcValue)?.arc
         if (arcValue != null) {
             if (!Conics.contains(arcValue, t)) {
-                note = "That point is not on ${nameOf(el)}'s sweep — click on the arc itself"
+                noteMsg = Msgs.noteBreakPlainCurveThatPointIsNotSweep(name = nameOf(el))
                 return null
             }
             val sweep = abs(Conics.sweep(arcValue))
             val from = abs(atan2(sin(t - arcValue.startT), cos(t - arcValue.startT)))
             val to = abs(atan2(sin(t - arcValue.endT), cos(t - arcValue.endT)))
             if (sweep < Vec2.EPS || from / sweep <= breakEndSlack || to / sweep <= breakEndSlack) {
-                note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
+                noteMsg = Msgs.noteBreakPlainCurveClickAwayEndsBreakThere(name = nameOf(el))
                 return null
             }
         }
         val consumers = consumersOf(el)
         val made =
             breakEllipse(el, Quantity.rad(t), arcValue?.ccw ?: true) ?: run {
-                note = "${nameOf(el)} could not be split there"
+                noteMsg = Msgs.noteBreakPlainCurveCouldNotBeSplitThere(name = nameOf(el))
                 return null
             }
-        return settle(el, made[0], made.drop(1), consumers, detached = false, why = "the two pieces share it as their carrier")
+        return settle(el, made[0], made.drop(1), consumers, detached = false, why = Msgs.noteBreakPlainCurveTwoPiecesShareItTheir())
     }
 
     /**
@@ -9641,7 +9638,7 @@ class Document {
         val carrier = carrierEllipse(el)
         val ev = Evaluator()
         val ellipse = (ev.valueOf(carrier) as? EllipseValue)?.ellipse ?: return null
-        val a = t.requireDim(Dimension.ANGLE, "split parameter").base
+        val a = t.requireDim(Dimension.ANGLE, Msgs.noteBreakPlainCurveSplitParameter()).base
         val at = Conics.pointAt(ellipse, a)
         // a rider on the carrier ellipse: the click is *where*, the parameter is *what it holds* — the same
         // split of choice and state every other rider's step makes (OP-18)
@@ -9678,19 +9675,19 @@ class Document {
     ): BreakResult? {
         val bez =
             ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? BezierValue)?.bezier ?: run {
-                note = "${nameOf(el)} has no position to split (its construction is invalid)"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoPositionSplitIts(name = nameOf(el))
                 return null
             }
         val t0 = GeomMath.bezierNearestParam(bez, world)
         if (t0 <= breakEndSlack || t0 >= 1.0 - breakEndSlack) {
-            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
+            noteMsg = Msgs.noteBreakPlainCurveClickAwayEndsBreakThere(name = nameOf(el))
             return null
         }
         val own = drawnFromPoints(el, Tools.BEZIER, 4)
         val consumers = consumersOf(el)
         val c =
             own ?: keyPointsOf(el, 4) ?: run {
-                note = "${nameOf(el)} has no control points to hang the halves on"
+                noteMsg = Msgs.noteBreakPlainCurveHasNoControlPointsHang(name = nameOf(el))
                 return null
             }
         val t = newParameter("t", Quantity.number(t0))
@@ -9708,7 +9705,7 @@ class Document {
         val refs = { xs: List<Element> -> xs.map { it.ref as PointRef } }
         val h1 = runAsTool(Tools.BEZIER, refs(listOf(c[0], l1, l2, s)))?.single() ?: return null
         val h2 = runAsTool(Tools.BEZIER, refs(listOf(s, r2, r1, c[3])))?.single() ?: return null
-        return settle(el, s, listOf(h1, h2), consumers, detached = own != null, why = "the halves are built on it")
+        return settle(el, s, listOf(h1, h2), consumers, detached = own != null, why = Msgs.noteBreakPlainCurveHalvesAreBuiltIt())
     }
 
     /**
@@ -9719,20 +9716,19 @@ class Document {
         el: Element,
         split: Element,
         halves: List<Element>,
-        consumers: List<String>,
+        consumers: List<Msg>,
         detached: Boolean,
-        why: String,
+        why: Msg,
     ): BreakResult {
         val replaces = detached && consumers.isEmpty()
         if (!replaces) setElementsVisible(listOf(el), false)
         // set last: every recording above clears the note, since a note belongs to the operation being run
-        note =
+        noteMsg =
             if (replaces) {
-                "${nameOf(el)} split into ${nameOf(halves[0])} and ${nameOf(halves[1])} — drag ${nameOf(split)} to bend the joint"
+                Msgs.noteBreakPlainCurveSplitDragBendJoint(name = nameOf(el), name2 = nameOf(halves[0]), name3 = nameOf(halves[1]), name4 = nameOf(split))
             } else {
-                val by = consumers.firstOrNull()?.let { "$it is built on it" } ?: why
-                "${nameOf(el)} stays (hidden): $by — ${nameOf(halves[0])} and ${nameOf(halves[1])} are new, " +
-                    "so nothing it feeds changes meaning; drag ${nameOf(split)} to bend the joint"
+                val by = consumers.firstOrNull()?.let { Msgs.noteBreakPlainCurveIsBuiltIt(itWord = it) } ?: why
+                Msgs.noteBreakPlainCurveStaysHiddenAreNewSo(name = nameOf(el), byWord = by, name2 = nameOf(halves[0]), name3 = nameOf(halves[1]), name4 = nameOf(split))
             }
         return BreakResult(el, split, halves, replaces)
     }
@@ -10552,12 +10548,11 @@ class Document {
      * than one that refuses. What the user wants when they reach for it is to take the rounding **off**, and
      * that is Delete, which removes the entry and re-stamps the body without it.
      */
-    fun hideRefusal(el: Element): String? =
+    fun hideRefusal(el: Element): Msg? =
         if (el.kind != ElementKind.DRESSING) {
             null
         } else {
-            "${nameOf(el)} is a rounding of ${dressingWith(el)?.let { nameOf(it.body) } ?: "a body"}, not a picture — " +
-                "it has nothing of its own to hide. Press Delete to take the rounding off the body instead"
+            Msgs.noteIncidenceRegistryIsRoundingNotPictureIt(name = nameOf(el), name2 = dressingWith(el)?.let { nameOf(it.body) } ?: "a body")
         }
 
     /**
@@ -10612,12 +10607,12 @@ class Document {
         thickness: ScalarRef,
     ): ThickNetwork? {
         if (curves.isEmpty() || curves.any { !it.isCurve }) {
-            note = "Thicken: pick curves — segments, arcs or Béziers — that share their endpoints"
+            noteMsg = Msgs.noteIncidenceRegistryThickenPickCurvesSegmentsArcs()
             return null
         }
         val ref = cx.thickNetworkFootprint(curves.map { it.ref }, sides, thickness)
         (Evaluator().eval(ref.node) as? EvalResult.Invalid)?.let {
-            note = "Thicken: ${it.reason}"
+            noteMsg = Msgs.noteThickenRefused(reason = it.why)
             return null
         }
         val el = add(ref, ElementKind.AREA, Styles.FOOTPRINT)
@@ -10626,13 +10621,11 @@ class Document {
         // the per-curve sides, restated by the step that made them (OP-18) — see [scoredSigns]
         registerSigns(el, sides.map { it.ordinal })
         val body = bodyOf(tn, Evaluator())
-        note =
+        noteMsg =
             if (body?.approximated == true) {
-                "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"} — its offsets are " +
-                    "approximated (a Bézier's offset is not a Bézier, and an ellipse's is not an ellipse — " +
-                    "OP-15), so its area and its solid are too"
+                Msgs.noteIncidenceRegistryWallOverCurveItsOffsets(count = curves.size)
             } else {
-                "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"}"
+                Msgs.noteIncidenceRegistryWallOverCurve(count = curves.size)
             }
         return tn
     }
@@ -10650,17 +10643,14 @@ class Document {
     fun thickNetworkBase(tn: ThickNetwork): ThickExtension? {
         val carrier =
             tn.carrier as? ThickCarrier.Network ?: run {
-                note =
-                    "Can't extend ${nameOf(tn.footprint)} with Thicken: it is a rectilinear path drawn with the " +
-                    "Wall tool — extend that path with the Wall tool (click its open end to resume), or thicken " +
-                    "its legs with Thicken to get a wall this can grow"
+                noteMsg =
+                    Msgs.noteExtendingWallCanTExtendThickenIt(name = nameOf(tn.footprint))
                 return null
             }
         val step = creatingStep(tn.footprint)
         if (step == null || step.kind != "tool" || (step.args.firstOrNull() as? Arg.Text)?.s != Tools.THICKEN) {
-            note =
-                "Can't extend ${nameOf(tn.footprint)}: no `tool thicken` step declares it, so there is none to " +
-                "re-stamp — thicken the new curves as a wall of their own"
+            noteMsg =
+                Msgs.noteExtendingWallCanTExtendNoTool(name = nameOf(tn.footprint))
             return null
         }
         val ev = Evaluator()
@@ -10706,19 +10696,18 @@ class Document {
     ): String? {
         val base = thickNetworkBase(tn) ?: return null
         if (curves.size <= base.curves.size) {
-            note = "Extending ${nameOf(tn.footprint)}: click at least one more curve than it already has"
+            noteMsg = Msgs.noteExtendingWallExtendingClickLeastOneMore(name = nameOf(tn.footprint))
             return null
         }
         if (curves.any { !it.isCurve }) {
-            note = "Extending ${nameOf(tn.footprint)}: a wall's carrier is curves — segments, arcs or Béziers"
+            noteMsg = Msgs.noteExtendingWallExtendingWallCarrierIsCurves(name = nameOf(tn.footprint))
             return null
         }
         // a step may only name what an earlier step **declared** (OP-18), so a curve the file does not
         // declare cannot join a carrier set — refused here rather than written as a dangling reference
         curves.firstOrNull { creatingStep(it) == null }?.let {
-            note =
-                "Can't extend ${nameOf(tn.footprint)} with ${nameOf(it)}: no step declares it, so the file " +
-                "would have nothing to call it"
+            noteMsg =
+                Msgs.noteExtendingWallCanTExtendNoStep(name = nameOf(tn.footprint), name2 = nameOf(it))
             return null
         }
         val step = creatingStep(tn.footprint) ?: return null
@@ -10727,9 +10716,8 @@ class Document {
         // makes it look perfectly reachable.
         val downstream = dependentSteps(step) - step
         curves.firstOrNull { el -> downstream.any { s -> s.creates.any { it === el } } }?.let {
-            note =
-                "Can't extend ${nameOf(tn.footprint)} over ${nameOf(it)}: ${nameOf(it)} is built on that wall, " +
-                "so the wall cannot be built on it in turn"
+            noteMsg =
+                Msgs.noteExtendingWallCanTExtendOverIs(name = nameOf(tn.footprint), name2 = nameOf(it))
             return null
         }
         val ev = Evaluator()
@@ -10740,14 +10728,14 @@ class Document {
             curves.mapIndexed { i, el ->
                 val piece =
                     ev.valueOf(el.ref)?.let { carrierPieceOf(it) } ?: run {
-                        note = "Extending ${nameOf(tn.footprint)}: ${nameOf(el)} has no curve to follow right now"
+                        noteMsg = Msgs.noteExtendingWallExtendingHasNoCurveFollow(name = nameOf(tn.footprint), name2 = nameOf(el))
                         return null
                     }
                 CarrierCurve(piece, sides.getOrElse(i) { Justification.CENTER })
             }
         val (body, why) = thickNetwork(pieces, scalarMm(tn.thickness, ev))
         if (body == null) {
-            note = "Can't extend ${nameOf(tn.footprint)}: ${why ?: "the wall has no footprint then"}"
+            noteMsg = Msgs.noteExtendingWallCanTExtend(name = nameOf(tn.footprint), why = why ?: Msgs.noteExtendingWallNoFootprintThen())
             return null
         }
         val at = journal.indexOfFirst { it === step }
@@ -10779,14 +10767,18 @@ class Document {
             val now = nameOf(tn.footprint)
             val moved =
                 if (now == was) {
-                    ""
+                    Msg.EMPTY
                 } else {
-                    " — its step moved after ${afterEl?.let { nameOf(it) } ?: "the curves it now names"}, " +
-                        "so the wall is $now from here on"
+                    Msgs.noteExtendingWallItsStepMovedAfterSo(name = afterEl?.let { Msg.text(nameOf(it)) } ?: Msgs.noteExtendingWallCurvesItNowNames(), now = now)
                 }
-            note =
-                "Wall $was: ${base.curves.size} -> ${curves.size} carrier curves$moved" +
-                if (body.approximated) " (its offsets are approximated — OP-15)" else ""
+            noteMsg =
+                Msgs.noteExtendingWallWallCarrierCurves2(
+                    was = was,
+                    count = base.curves.size,
+                    count2 = curves.size,
+                    moved = moved,
+                    clause0 = if (body.approximated) Msgs.noteExtendingWallItsOffsetsAreApproximatedOp() else Msg.EMPTY,
+                )
             return DocumentFormat.save(this)
         } finally {
             journal.clear()
@@ -10940,7 +10932,7 @@ class Document {
         val region = regionOf(el) ?: return null
         val plane = activeSpace.plane ?: activePlane()
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(el)} extruded ${lengthWord(depth)}") }
+            .also { madeSolid(it, Msgs.note2d3dSeamExtruded(name = nameOf(el), size = lengthWord(depth))) }
     }
 
     /**
@@ -10954,18 +10946,18 @@ class Document {
      */
     private fun madeSolid(
         solid: Element,
-        what: String,
+        what: Msg,
     ) {
         // ...and when the result is *invalid* it says so with the node's own reason (OP-3, OP-27): the
         // empty 3D view is exactly what a silent success and a bad input look like alike, and the reason
         // — "tube radius requires L but got 1" — is what connects it to the parameter that was picked. An
         // invalid solid is a state, not a failure: the step is recorded and it heals when the number does.
-        val why = (Evaluator().eval(solid.ref.node) as? EvalResult.Invalid)?.reason
-        note =
+        val why = (Evaluator().eval(solid.ref.node) as? EvalResult.Invalid)?.why
+        noteMsg =
             if (why == null) {
-                "${nameOf(solid)} is $what — a solid, shown in the 3D view"
+                Msgs.note2d3dSeamIsSolidShownDView(name = nameOf(solid), what = what)
             } else {
-                "${nameOf(solid)} is $what, but nothing is drawn for it yet: $why"
+                Msgs.note2d3dSeamIsButNothingIsDrawn(name = nameOf(solid), what = what, why = why ?: Msg.EMPTY)
             }
     }
 
@@ -11008,7 +11000,7 @@ class Document {
         if (part.kind != ElementKind.SOLID) return null
         // a *Cut* is a subtract, so the operand rule is the boolean's (see [openShellRefusal])
         openShellRefusal(part)?.let {
-            note = it
+            noteMsg = it
             return null
         }
         val region = regionOf(el) ?: return null
@@ -11018,7 +11010,7 @@ class Document {
         val tool = add(cx.cutTool(on, region, depth, activeSpace.piece >= 0), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
             .also {
-                madeSolid(it, "${nameOf(el)} cut ${lengthWord(depth)} into ${nameOf(part)} on ${activeSpace.name}")
+                madeSolid(it, Msgs.note2d3dSeamCut(name = nameOf(el), size = lengthWord(depth), name2 = nameOf(part), name3 = activeSpace.name))
             }
     }
 
@@ -11085,15 +11077,14 @@ class Document {
         val roles =
             picks.map { el ->
                 loftRoleOf(el) ?: run {
-                    note = "Loft: ${nameOf(el)} is neither an area, a point nor a curve, so it can be no part of a loft"
+                    noteMsg = Msgs.noteLoftLoftIsNeitherAreaPoint(name = nameOf(el))
                     return null
                 }
             }
         val sections = roles.count { it != LoftRole.GUIDE }
         if (sections < 2) {
-            note =
-                "Loft: pick at least two sections — areas on their own sketch planes, or an area and a point " +
-                "for an apex end (Extrude to point does that in one gesture)"
+            noteMsg =
+                Msgs.noteLoftLoftPickLeastTwoSections()
             return null
         }
         val parts = ArrayList<LoftPart>()
@@ -11104,7 +11095,7 @@ class Document {
                 LoftRole.SECTION -> {
                     val region =
                         regionOf(el) ?: run {
-                            note = "Loft: ${nameOf(el)} bounds no area, so it is no section"
+                            noteMsg = Msgs.noteLoftLoftBoundsNoAreaSo(name = nameOf(el))
                             return null
                         }
                     if (homeSpace == null) homeSpace = el.space
@@ -11134,7 +11125,7 @@ class Document {
         val el = add(cx.loft(parts, seams), ElementKind.SOLID, Styles.SOLID)
         if (homeSpace != null) el.space = homeSpace
         registerSigns(el, seams)
-        note = loftNote(el, roles)
+        noteMsg = loftNote(el, roles)
         return el
     }
 
@@ -11170,7 +11161,7 @@ class Document {
     ) {
         val script = skinMatched(a, b) ?: return
         restampScript = script
-        note = "${nameOf(a)} now runs to ${nameOf(b)} — the loft's correspondence is stated on its own step"
+        noteMsg = Msgs.noteLoftSkinOverNowRunsLoftCorrespondenceIs(name = nameOf(a), name2 = nameOf(b))
     }
 
     /** The pairs [step] states, or null — how the writer restates that step's own `match=` (see [skinMatched]). */
@@ -11206,7 +11197,7 @@ class Document {
         row: SkinRow,
         matches: List<Element> = emptyList(),
     ): Element? {
-        val what = if (row == SkinRow.RULED) "Loft (ruled)" else "Loft (faired)"
+        val what = if (row == SkinRow.RULED) Msgs.wordToolLoftRuled() else Msgs.wordToolLoftFaired()
         val ev = Evaluator()
         // one region node per section, built once: [regionOf] *constructs* one, so asking twice would leave a
         // node nothing references behind (harmless, but this is the graph and it should stay tidy)
@@ -11216,7 +11207,7 @@ class Document {
         for (el in picks) {
             val region = regionOf(el)
             if (region == null) {
-                note = "$what: ${nameOf(el)} bounds no area, so it is no section"
+                noteMsg = Msgs.noteLoftSkinOverBoundsNoAreaSoIt(what = what, name = nameOf(el))
                 return null
             }
             regions[el.id] = region
@@ -11224,37 +11215,31 @@ class Document {
             val station = space.station
             val along = space.along
             if (station == null || along == null) {
-                note =
-                    "$what: ${nameOf(el)} is drawn in ${spaceLabel(space)}, which does not stand across a run — " +
-                    "a skin's sections live on stations of one run, so put a station on the run with *Station* " +
-                    "and draw the section there"
+                noteMsg =
+                    Msgs.noteLoftSkinOverIsDrawnWhichDoesNot(what = what, name = nameOf(el), spaceLabel = spaceLabel(space))
                 return null
             }
             val first = spine
             if (first == null) {
                 spine = station
             } else if (first !== station) {
-                note =
-                    "$what: ${nameOf(el)} is on a station of ${nameOf(station)} and the first section is on a " +
-                    "station of ${nameOf(first)} — one skin runs over stations of **one** run, so loft each run's " +
-                    "sections on their own"
+                noteMsg =
+                    Msgs.noteLoftSkinOverIsStationFirstSectionIs(what = what, name = nameOf(el), name2 = nameOf(station), name3 = nameOf(first))
                 return null
             }
             order.add(Triple(el, along, evalMm(along.ref)))
         }
         val run = spine
         if (order.size < 2 || run == null) {
-            note = "$what: pick at least two sections, each drawn on a station of one run"
+            noteMsg = Msgs.noteLoftSkinOverPickLeastTwoSectionsEach(what = what)
             return null
         }
         // **A ring of sections has no first and no last section to cap** (the design's first-slice cut, named):
         // the run's closure is a fact of its construction, so this is a gesture refusal and not a value.
         val path = spaceCurveRef(run, what) ?: return null
         if ((ev.valueOf(path) as? Path3Value)?.path?.closed == true) {
-            note =
-                "$what: ${nameOf(run)} is a closed run, so its stations come round to where they started and " +
-                "there is no first or last section to cap — a ring skin is a future extension; cut the run open, " +
-                "or loft the sections of each part of it"
+            noteMsg =
+                Msgs.noteLoftSkinOverIsClosedRunSoIts(what = what, name = nameOf(run))
             return null
         }
         // the stations' own distances are the order (a stable sort, so nothing about equal ones is invented —
@@ -11263,7 +11248,7 @@ class Document {
         val sections = sorted.map { it.first }
         val stated = ArrayList<SkinMatch>()
         if (matches.size % 2 != 0) {
-            note = "$what: a stated match is two curves, and this step names ${matches.size}"
+            noteMsg = Msgs.noteLoftSkinOverStatedMatchIsTwoCurves(what = what, count = matches.size)
             return null
         }
         for (i in matches.indices step 2) {
@@ -11278,9 +11263,12 @@ class Document {
         if (matches.isNotEmpty()) pendingSkinMatch = matches
         madeSolid(
             solid,
-            "${sections.size} sections skinned along ${nameOf(run)}" +
-                (if (row == SkinRow.RULED) " with straight rulings" else ", faired through every station") +
-                (if (stated.isEmpty()) "" else ", with ${stated.size} matched ${if (stated.size == 1) "pair" else "pairs"}"),
+            Msgs.noteLoftSkinOverSkinned(
+                count = sections.size,
+                name = nameOf(run),
+                rulings = if (row == SkinRow.RULED) Msgs.noteLoftSkinOverStraightRulings() else Msgs.noteLoftSkinOverFairedThroughEveryStation(),
+                matched = if (stated.isEmpty()) Msg.EMPTY else Msgs.noteLoftSkinOverMatched(count = stated.size, ifWord = if (stated.size == 1) "one" else "other"),
+            ),
         )
         return solid
     }
@@ -11296,7 +11284,7 @@ class Document {
         sections: List<Element>,
         a: Element,
         b: Element,
-        what: String,
+        what: Msg,
         ev: Evaluator,
         regions: Map<String, RegionRef> = emptyMap(),
     ): SkinMatch? {
@@ -11304,24 +11292,21 @@ class Document {
         val pb = skinPieceOf(sections, b, ev, regions)
         if (pa == null || pb == null) {
             val lost = if (pa == null) a else b
-            note =
-                "$what: ${nameOf(lost)} is no piece of any of these sections' outlines, so there is nothing to " +
-                "match with it — click a curve of one section and a curve of the next"
+            noteMsg =
+                Msgs.noteLoftSkinOverIsNoPieceAnyThese(what = what, name = nameOf(lost))
             return null
         }
         val (ka, ia) = pa
         val (kb, ib) = pb
         if (ka == kb) {
-            note =
-                "$what: ${nameOf(a)} and ${nameOf(b)} are both pieces of section ${ka + 1}, and a match runs " +
-                "from one section to the next — click a curve of each"
+            noteMsg =
+                Msgs.noteLoftSkinOverAreBothPiecesSectionMatch(what = what, name = nameOf(a), name2 = nameOf(b), ka = ka + 1)
             return null
         }
         if (ka + 1 == kb) return SkinMatch(ka, ia, ib)
         if (kb + 1 == ka) return SkinMatch(kb, ib, ia)
-        note =
-            "$what: sections ${minOf(ka, kb) + 1} and ${maxOf(ka, kb) + 1} are not neighbours along the run, and " +
-            "a match pairs the curves of **consecutive** sections — match each interval's own curves"
+        noteMsg =
+            Msgs.noteLoftSkinOverSectionsAreNotNeighboursAlong(what = what, minOf = minOf(ka, kb) + 1, maxOf = maxOf(ka, kb) + 1)
         return null
     }
 
@@ -11397,16 +11382,14 @@ class Document {
             if (skinPieceOf(sections, a, ev) == null || skinPieceOf(sections, b, ev) == null) continue
             val now = skinMatches[step] ?: emptyList()
             if (now.indices.step(2).any { (now[it] === a && now[it + 1] === b) || (now[it] === b && now[it + 1] === a) }) {
-                note = "Match sections: ${nameOf(a)} and ${nameOf(b)} are matched already"
+                noteMsg = Msgs.noteLoftSkinOverMatchSectionsAreMatchedAlready(name = nameOf(a), name2 = nameOf(b))
                 return null
             }
             touched.add(step to (now + listOf(a, b)))
         }
         if (touched.isEmpty()) {
-            note =
-                "Match sections: no loft runs between the sections ${nameOf(a)} and ${nameOf(b)} belong to — " +
-                "loft the sections first (*Loft (ruled)* or *Loft (faired)*) and then match the curves that " +
-                "should meet; a loft whose sections have different piece counts says so and waits for exactly this"
+            noteMsg =
+                Msgs.noteLoftSkinOverMatchSectionsNoLoftRuns(name = nameOf(a), name2 = nameOf(b))
             return null
         }
         val before = touched.map { (step, _) -> step to skinMatches[step] }
@@ -11461,9 +11444,8 @@ class Document {
         height: ScalarRef,
     ): Element {
         val el = heightPoint(base, height)
-        note =
-            "${nameOf(el)}: ${Format.num(((Evaluator().valueOf(height) as? ScalarValue)?.q?.mm) ?: 0.0)} mm above ${nameOf(elementFor(base) ?: el)} " +
-            "— drag it in the 3D view to change the height, or retype it in the panel"
+        noteMsg =
+            Msgs.noteLoftSkinOverMmAboveDragItD(name = nameOf(el), num = Format.num(((Evaluator().valueOf(height) as? ScalarValue)?.q?.mm) ?: 0.0), name2 = nameOf(elementFor(base) ?: el))
         return el
     }
 
@@ -11509,7 +11491,7 @@ class Document {
     private fun projectToPlaneNow(source: Element): Element? {
         val target = activeSpace
         if (!source.isPoint) {
-            note = "Project point: ${nameOf(source)} is ${kindWord(source)}, not a point — click the point to project"
+            noteMsg = Msgs.noteLoftSkinOverProjectPointIsNotPoint(name = nameOf(source), kind = kindWord(source))
             return null
         }
         // A **plane** point of the very plane it would be projected onto lands on itself — a structural refusal
@@ -11517,9 +11499,8 @@ class Document {
         // heal. A point *in space* whose value happens to lie in the plane is a value condition and projects: its
         // foot is a real, different point (dropping a height point onto its own plane recovers its base).
         if (!source.inSpace && source.space == target.name) {
-            note =
-                "Project point: ${nameOf(source)} already lies in ${target.name} — its projection onto ${target.name} " +
-                "is itself. Pick a point defined on another pane, or switch to the pane you want it projected onto."
+            noteMsg =
+                Msgs.noteLoftSkinOverProjectPointAlreadyLiesIts(name = nameOf(source), name2 = target.name)
             return null
         }
         val plane = activePlane()
@@ -11527,9 +11508,8 @@ class Document {
         val view = cx.indirect(local)
         val el = add(view, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
         projected[el.id] = ProjectedPoint(plane, source)
-        note =
-            "${nameOf(el)}: ${nameOf(source)} projected onto ${target.name} — it follows ${nameOf(source)} " +
-            "(drag it, or anything it is built on, and the projection moves)"
+        noteMsg =
+            Msgs.noteLoftSkinOverProjectedOntoItFollowsDrag(name = nameOf(el), name2 = nameOf(source), name3 = target.name)
         return el
     }
 
@@ -11562,9 +11542,8 @@ class Document {
         pt.handle = FreePointHandle(free)
         noteReparam(pt)
         noteEdit()
-        note =
-            "${nameOf(pt)} keeps its position and is a free point of ${pt.space} now — " +
-            "it no longer follows ${src?.let { nameOf(it) } ?: "its source"}"
+        noteMsg =
+            Msgs.noteLoftSkinOverKeepsItsPositionIsFree(name = nameOf(pt), space = pt.space, name2 = src?.let { Msg.text(nameOf(it)) } ?: Msgs.noteLoftSkinOverItsSource())
         return true
     }
 
@@ -11601,10 +11580,10 @@ class Document {
         picks: List<Element>,
         smooth: Boolean,
     ): Element? {
-        val what = if (smooth) "Smooth curve" else "Curve"
+        val what = if (smooth) Msgs.noteLoftSkinOverSmoothCurve() else Msgs.wordToolCurve()
         for (el in picks) {
             if (!el.isPoint) {
-                note = "$what through points: ${nameOf(el)} is ${kindWord(el)}, not a point — click points in space"
+                noteMsg = Msgs.noteLoftSkinOverThroughPointsIsNotPoint(what = what, name = nameOf(el), kind = kindWord(el))
                 return null
             }
         }
@@ -11612,25 +11591,24 @@ class Document {
         val closed = picks.size >= 2 && picks.first() === picks.last()
         val through = if (closed) picks.dropLast(1) else picks
         if (through.size < 2) {
-            note = "$what through points: click at least two points — one point is a place, not a curve"
+            noteMsg = Msgs.noteLoftSkinOverThroughPointsClickLeastTwo(what = what)
             return null
         }
         if (closed && through.size < 3) {
-            note = "$what through points: a closed curve needs at least three points — two would double back on themselves"
+            noteMsg = Msgs.noteLoftSkinOverThroughPointsClosedCurveNeeds(what = what)
             return null
         }
         for (i in 0 until through.size - 1) {
             if (through[i] === through[i + 1]) {
-                note = "$what through points: ${nameOf(through[i])} was clicked twice in a row, and a piece from a point to itself has no direction"
+                noteMsg = Msgs.noteLoftSkinOverThroughPointsWasClickedTwice(what = what, name = nameOf(through[i]))
                 return null
             }
         }
         val refs = through.map { pointInSpace(it) }
         val curve = add(cx.pathThrough(refs, closed = closed, smooth = smooth), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         val shape = if (smooth) "smooth" else "straight"
-        note =
-            "${nameOf(curve)}: a $shape ${if (closed) "closed " else ""}curve through ${through.size} points " +
-            "(${through.joinToString(", ") { nameOf(it) }}) — move any of them and it follows"
+        noteMsg =
+            Msgs.noteLoftSkinOverCurveThroughPointsMoveAny(name = nameOf(curve), shape = shape, ifWord = if (closed) "yes" else "other", count = through.size, name2 = through.joinToString(", ") { nameOf(it) })
         return curve
     }
 
@@ -11664,7 +11642,7 @@ class Document {
         hand: Handedness,
     ): Element? {
         if (!el.isPoint) {
-            note = "Helix: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the axis stands on"
+            noteMsg = Msgs.noteLoftSkinOverHelixIsNotPointClick(name = nameOf(el), kind = kindWord(el))
             return null
         }
         val plane = planeOfSpace(el.space)
@@ -11673,9 +11651,8 @@ class Document {
         val n = turns ?: cx.const(Quantity.number(1.0))
         val curve = add(cx.helix(plane, pointInSpace(el), radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         curve.space = el.space
-        note =
-            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(el)} — ${lengthWord(radius)} radius, " +
-            "${lengthWord(pitch)} per turn, rising out of ${el.space}"
+        noteMsg =
+            Msgs.noteLoftSkinOverHelixAboutRadiusPerTurn(name = nameOf(curve), word = hand.word, name2 = nameOf(el), size = lengthWord(radius), size2 = lengthWord(pitch), space = el.space)
         return curve
     }
 
@@ -11708,16 +11685,14 @@ class Document {
     ): Element? {
         for (el in listOf(center, start)) {
             if (!el.isPoint) {
-                note =
-                    "Helix: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the axis stands " +
-                    "on, then the point the coil starts at"
+                noteMsg =
+                    Msgs.noteLoftSkinOverHelixIsNotPointClick2(name = nameOf(el), kind = kindWord(el))
                 return null
             }
         }
         if (center === start) {
-            note =
-                "Helix: ${nameOf(center)} was clicked for both the centre and the start point — those two " +
-                "are what state the radius, and one point cannot stand at both ends of it"
+            noteMsg =
+                Msgs.noteLoftSkinOverHelixWasClickedBothCentre(name = nameOf(center))
             return null
         }
         val plane = planeOfSpace(center.space)
@@ -11730,10 +11705,8 @@ class Document {
             )
         curve.space = center.space
         val r = helixOf(curve)?.radius
-        note =
-            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(center)}, starting at ${nameOf(start)} — " +
-            (r?.let { "${Format.num(it)} mm radius, " } ?: "") +
-            "${lengthWord(pitch)} per turn, rising out of ${center.space}"
+        noteMsg =
+            Msgs.noteLoftSkinOverHelixAboutStarting2(name = nameOf(curve), word = hand.word, name2 = nameOf(center), name3 = nameOf(start), clause0 = (r?.let { Msgs.noteLoftSkinOverMmRadius(num = Format.num(it)) } ?: Msg.EMPTY), clause1 = Msgs.noteLoftSkinOverPerTurnRisingOut(size = lengthWord(pitch), space = center.space))
         return curve
     }
 
@@ -11790,29 +11763,26 @@ class Document {
     ): Element? {
         for (el in listOf(plan, elevation)) {
             if (!el.isCurve) {
-                note =
-                    "Combine two views: ${nameOf(el)} is ${kindWord(el)}, not a curve — draw each view as one " +
-                    "curve and click them in turn"
+                noteMsg =
+                    Msgs.noteLoftSkinOverCombineTwoViewsIsNot(name = nameOf(el), kind = kindWord(el))
                 return null
             }
             if (el.kind == ElementKind.LINE || el.kind == ElementKind.RAY) {
-                note =
-                    "Combine two views: ${nameOf(el)} runs on for ever, so it states no length of run to " +
-                    "match — a view is a bounded curve"
+                noteMsg =
+                    Msgs.noteLoftSkinOverCombineTwoViewsRunsEver(name = nameOf(el))
                 return null
             }
             // a combined run rides both views' **tangents** (its frame is parallel-transported along them),
             // so a function curve with no statable derivative is refused **up front and by name** rather
             // than being differenced somewhere inside — the session-69 predicate rule
             funcTangentRefusal(el)?.let {
-                note = "Combine two views: $it"
+                noteMsg = Msgs.noteLoftSkinOverCombineTwoViews(itWord = it)
                 return null
             }
         }
         if (plan === elevation) {
-            note =
-                "Combine two views: ${nameOf(plan)} was clicked twice, and one drawing is one view — the " +
-                "second view is drawn in another space, so switch the sketch plane between the two clicks"
+            noteMsg =
+                Msgs.noteLoftSkinOverCombineTwoViewsWasClicked(name = nameOf(plan))
             return null
         }
         val curve =
@@ -11822,9 +11792,8 @@ class Document {
                 Styles.SPACE_CURVE,
             )
         curve.space = plan.space
-        note =
-            "${nameOf(curve)}: the run whose projection into ${plan.space} is ${nameOf(plan)} and into " +
-            "${elevation.space} is ${nameOf(elevation)} — move either drawing, or either space, and it follows"
+        noteMsg =
+            Msgs.noteLoftSkinOverRunWhoseProjectionIsIs(name = nameOf(curve), space = plan.space, name2 = nameOf(plan), space2 = elevation.space, name3 = nameOf(elevation))
         return curve
     }
 
@@ -11865,7 +11834,7 @@ class Document {
         signs: List<Int>,
         mode: Continuity,
     ): Element? {
-        val what = "Connect${if (mode == Continuity.G2) " (curvature)" else ""}"
+        val what = if (mode == Continuity.G2) Msgs.wordToolConnectCurvature() else Msgs.wordToolConnect()
         val runs = listOf(first, second).map { spaceCurveRef(it, what) ?: return null }
         val ends =
             if (signs.size >= 2) {
@@ -11878,14 +11847,13 @@ class Document {
                 )
             }
         if (first === second && ends[0] == ends[1]) {
-            note =
-                "$what: the ${ends[0].word} of ${nameOf(first)} was clicked twice, and a join needs two ends — " +
-                "click near the other end of it to close the run, or pick a second curve"
+            noteMsg =
+                Msgs.noteConnectWasClickedTwiceJoinNeeds(what = what, word = ends[0].word, name = nameOf(first))
             return null
         }
         val one = cx.const(Quantity.number(1.0))
         val run = cx.connect(runs[0], ends[0], runs[1], ends[1], tensionA ?: one, tensionB ?: one, mode)
-        val from = "a ${mode.word} join from the ${ends[0].word} of ${nameOf(first)} to the ${ends[1].word} of ${nameOf(second)}"
+        val from = Msgs.noteConnectJoin(word = mode.word, word2 = ends[0].word, name = nameOf(first), word3 = ends[1].word, name2 = nameOf(second))
         val structurally = inSpaceBecause(first, second)
         val inSpace = structurally ?: keptInSpaceByItsFile(mode, signs)
         if (inSpace == null) {
@@ -11899,20 +11867,18 @@ class Document {
             val named = spans.joinToString(", ") { nameOf(it) }
             val piecesWord =
                 if (spans.size == 1) {
-                    "a drawing curve — it can close an outline, be filleted, broken or dimensioned like any other"
+                    Msgs.noteConnectDrawingCurveItCanClose()
                 } else {
-                    "${spans.size} drawing curves — together they are the join, and an outline can take all of them"
+                    Msgs.noteConnectDrawingCurvesTogetherTheyAre(count = spans.size)
                 }
-            note = "$named: $from — $piecesWord; exact, and it follows both of them"
+            noteMsg = Msgs.noteConnectExactItFollowsBothThem(named = named, from = from, piecesWord = piecesWord)
             // **The deliberate change, said once on load** (GitHub #34, OP-18's versioning doctrine, and the
             // fillet's own precedent at [DocumentFormat.SUPERSEDING_FILLET_VERSION]): the file's literals are
             // untouched and the geometry is to the last bit what it was — what is different is that the join
             // is now a curve *of the drawing*, which is exactly what the report asked for.
             if ((replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION) {
                 noteLoad(
-                    "$named ${if (spans.size == 1) "is" else "are"} the join of ${nameOf(first)} and " +
-                        "${nameOf(second)} read in the drawing — the same curve in the same place, now a drawing " +
-                        "curve, so an outline can be bounded by it",
+                    Msgs.noteConnectJoinReadDrawingSameCurve(named = named, ifWord = if (spans.size == 1) "one" else "other", name = nameOf(first), name2 = nameOf(second)),
                 )
             }
             return spans.first()
@@ -11922,14 +11888,12 @@ class Document {
         // …and where the reading is the *file's* rather than the picks', that is a choice, so it is written
         // down beside the two ends and never worked out again (OP-1, OP-18) — see [keptInSpaceByItsFile]
         registerSigns(curve, ends.map { it.ordinal } + if (structurally == null) listOf(1) else emptyList())
-        note = "${nameOf(curve)}: $from — a curve in space, because $inSpace; exact, and it follows both of them"
+        noteMsg = Msgs.noteConnectCurveSpaceBecauseExactIt(name = nameOf(curve), from = from, inSpace = inSpace)
         // …and the load says so **once**, on the file that predates the reading, never again afterwards: a
         // file that carries the marker already means this, and a note about it would go on firing for ever
         if (structurally == null && (replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION) {
             noteLoad(
-                "${nameOf(curve)} stays a curve in space: a curvature join is ${mode.spans} pieces, and the one " +
-                    "name this file gives it names all of them — connect the two curves again to have it as " +
-                    "the drawing curves an outline can take",
+                Msgs.noteConnectStaysCurveSpaceCurvatureJoin(name = nameOf(curve), spans = mode.spans),
             )
         }
         return curve
@@ -11952,15 +11916,14 @@ class Document {
     private fun inSpaceBecause(
         first: Element,
         second: Element,
-    ): String? =
+    ): Msg? =
         when {
             first.kind == ElementKind.SPACE_CURVE && second.kind == ElementKind.SPACE_CURVE ->
-                "${nameOf(first)} and ${nameOf(second)} are curves in space"
-            first.kind == ElementKind.SPACE_CURVE -> "${nameOf(first)} is a curve in space"
-            second.kind == ElementKind.SPACE_CURVE -> "${nameOf(second)} is a curve in space"
+                Msgs.noteConnectAreCurvesSpace(name = nameOf(first), name2 = nameOf(second))
+            first.kind == ElementKind.SPACE_CURVE -> Msgs.noteConnectIsCurveSpace(name = nameOf(first))
+            second.kind == ElementKind.SPACE_CURVE -> Msgs.noteConnectIsCurveSpace(name = nameOf(second))
             first.space != second.space ->
-                "${nameOf(first)} and ${nameOf(second)} are drawn in ${spaceLabel(spaceOf(first))} and " +
-                    "${spaceLabel(spaceOf(second))}, which have no one plane between them"
+                Msgs.noteConnectAreDrawnWhichHaveNo(name = nameOf(first), name2 = nameOf(second), spaceLabel = spaceLabel(spaceOf(first)), spaceLabel2 = spaceLabel(spaceOf(second)))
             else -> null
         }
 
@@ -11985,11 +11948,11 @@ class Document {
     private fun keptInSpaceByItsFile(
         mode: Continuity,
         signs: List<Int>,
-    ): String? {
+    ): Msg? {
         if (mode.spans == 1) return null
         val marked = signs.size > 2 && signs[2] != 0
         val older = (replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION
-        return if (marked || older) "this drawing was written with it as one run in space" else null
+        return if (marked || older) Msgs.noteConnectThisDrawingWasWrittenIt() else null
     }
 
     /**
@@ -12089,25 +12052,23 @@ class Document {
     ): Element? {
         val space = activeSpace
         if (solid.kind != ElementKind.SOLID) {
-            note = "Intersection curve: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the section of the body you want the curve of"
+            noteMsg = Msgs.noteIntersectionCurvesIntersectionCurveIsNotSolid(name = nameOf(solid), kind = kindWord(solid))
             return null
         }
         if (space.plane == null) {
-            note =
-                "Intersection curve: the plan is not a working plane, so it draws no section — open one " +
-                "(Plane at height, Sketch plane, Sketch on face) and click the body's section there"
+            noteMsg =
+                Msgs.noteIntersectionCurvesIntersectionCurvePlanIsNot()
             return null
         }
         val ev = Evaluator()
         if (spaceAncestors(space, ev).none { it === solid }) {
-            note =
-                "Intersection curve: ${nameOf(solid)} was built after ${space.name}, and a plane's inputs are " +
-                "the solids that came before it — draw the plane after the body, or pick one that is already its context"
+            noteMsg =
+                Msgs.noteIntersectionCurvesIntersectionCurveWasBuiltAfter(name = nameOf(solid), name2 = space.name)
             return null
         }
         val sectionNode =
             spaceSectionNodeOf(space, solid) ?: run {
-                note = "Intersection curve: ${space.name} has no section of ${nameOf(solid)} to take a curve from"
+                noteMsg = Msgs.noteIntersectionCurvesIntersectionCurveHasNoSection(name = space.name, name2 = nameOf(solid))
                 return null
             }
         val planeRef = planeOfSpace(space.name)
@@ -12117,13 +12078,12 @@ class Document {
         val chosen =
             index ?: run {
                 if (plane == null) {
-                    note = "Intersection curve: ${space.name} has no value right now, so there is nothing to cut with"
+                    noteMsg = Msgs.noteIntersectionCurvesIntersectionCurveHasNoValue(name = space.name)
                     return null
                 }
                 if (curves.isEmpty()) {
-                    note =
-                        "Intersection curve: ${space.name} does not cut ${nameOf(solid)} anywhere, so there is " +
-                        "no curve where they meet"
+                    noteMsg =
+                        Msgs.noteIntersectionCurvesIntersectionCurveDoesNotCut(name = space.name, name2 = nameOf(solid))
                     return null
                 }
                 curves.indices.minByOrNull { i -> nearestOnCurve(curves[i], plane, near) } ?: 0
@@ -12132,10 +12092,18 @@ class Document {
         curve.space = space.name
         registerSigns(curve, listOf(chosen))
         val what = curves.getOrNull(chosen)
-        note =
-            "${nameOf(curve)}: curve ${chosen + 1} of ${curves.size} where ${space.name} meets ${nameOf(solid)}" +
-            (what?.let { " — ${if (it.path.closed) "closed, " else ""}${it.exactnessWord}" } ?: "") +
-            " — move either and it follows"
+        noteMsg =
+            Msgs.noteIntersectionCurvesCurveWhereMeets2(
+                name = nameOf(curve), chosen = chosen + 1, count = curves.size, name2 = space.name, name3 = nameOf(solid),
+                clause0 =
+                    what?.let {
+                        Msgs.noteIntersectionCurvesExactness(
+                            closed = if (it.path.closed) Msgs.noteIntersectionCurvesClosedComma() else Msg.EMPTY,
+                            exactness = it.exactnessWord,
+                        )
+                    } ?: Msg.EMPTY,
+                clause1 = Msgs.noteIntersectionCurvesMoveEitherItFollows(),
+            )
         return curve
     }
 
@@ -12178,41 +12146,40 @@ class Document {
         signs: List<Int> = emptyList(),
     ): Element? {
         if (!view.isCurve) {
-            note = "Project onto a face: ${nameOf(view)} is ${kindWord(view)}, not a curve — draw what you want thrown at the body, then click the body"
+            noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceIsNot(name = nameOf(view), kind = kindWord(view))
             return null
         }
         if (view.kind == ElementKind.LINE || view.kind == ElementKind.RAY) {
-            note = "Project onto a face: ${nameOf(view)} runs on for ever, so it states no length of run to throw — project a bounded curve"
+            noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceRunsEver(name = nameOf(view))
             return null
         }
         if (solid.kind != ElementKind.SOLID) {
-            note = "Project onto a face: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body whose face the curve is to land on"
+            noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceIsNot2(name = nameOf(solid), kind = kindWord(solid))
             return null
         }
         val ev = Evaluator()
         val feature =
             (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: run {
-                note = "Project onto a face: ${nameOf(solid)} has no value right now, so it shows no face to project onto"
+                noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceHasNo(name = nameOf(solid))
                 return null
             }
         val planeRef = planeOfSpace(view.space)
         val from =
             (ev.valueOf(planeRef) as? PlaneValue)?.plane ?: run {
-                note = "Project onto a face: ${view.space} has no value right now, so there is no direction to project along"
+                noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceHasNo2(space = view.space)
                 return null
             }
         val pieces =
             cx.drawnPieces(view.ref, ev) ?: run {
-                note = "Project onto a face: ${nameOf(view)} has no value right now, so there is nothing to project"
+                noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceHasNo3(name = nameOf(view))
                 return null
             }
         val chosen =
             signs.getOrNull(0) ?: run {
                 val (index, why) = Project3.landingFace(feature, pieces, from)
                 index ?: run {
-                    note =
-                        "Project onto a face: ${nameOf(solid)} — $why. Put a working plane where the body is and " +
-                        "take the curve there (Intersection curve), or build what you want beside it"
+                    noteMsg =
+                        Msgs.noteProjectionOntoFaceProjectOntoFacePutWorking(name = nameOf(solid), why = why ?: Msg.EMPTY)
                     return null
                 }
             }
@@ -12227,11 +12194,16 @@ class Document {
         val patch = Section3.faces(feature).first?.getOrNull(chosen)
         val made = patch?.let { Project3.projectedOnto(pieces, from, it).first }
         val landing =
-            patch?.let { if (Project3.whollyOnFace(pieces, from, it)) "wholly on the face" else "and part of it runs off the face, landing in the face's plane" }
-        note =
-            "${nameOf(curve)}: ${nameOf(view)} thrown onto ${patch?.name?.label ?: "a face"} of ${nameOf(solid)}" +
-            (made?.let { " — ${it.exactnessWord}, $landing" } ?: "") +
-            " — move either and it follows"
+            patch?.let { if (Project3.whollyOnFace(pieces, from, it)) Msgs.noteProjectionOntoFaceWhollyFace() else Msgs.noteProjectionOntoFacePartItRunsOffFace() }
+        noteMsg =
+            Msgs.noteProjectionOntoFaceThrownOnto2(
+                name = nameOf(curve), name2 = nameOf(view), name3 = patch?.name?.label ?: Msgs.noteDressAFace(), name4 = nameOf(solid),
+                clause0 =
+                    made?.let {
+                        Msgs.noteProjectionOntoFaceExactnessAndLanding(exactness = it.exactnessWord, landing = landing ?: Msg.EMPTY)
+                    } ?: Msg.EMPTY,
+                clause1 = Msgs.noteProjectionOntoFaceMoveEitherItFollows(),
+            )
         return curve
     }
 
@@ -12262,10 +12234,10 @@ class Document {
         centre: Element,
         radius: ScalarRef,
     ): Element? {
-        val c = pointInSpaceOr(centre, "Sphere locus") ?: return null
+        val c = pointInSpaceOr(centre, Msgs.noteSphereLocusSphereLocus()) ?: return null
         val el = add(cx.sphere(c, radius), ElementKind.SPHERE_LOCUS, Styles.SPHERE_LOCUS)
         el.handle = SphereLocusHandle(planeOfSpace(activeSpace.name), c, radius.node)
-        note = "${nameOf(el)}: every point at that distance from ${nameOf(centre)} — move either and it follows"
+        noteMsg = Msgs.noteSphereLocusEveryPointThatDistanceMove(name = nameOf(el), name2 = nameOf(centre))
         return el
     }
 
@@ -12281,12 +12253,11 @@ class Document {
         centre: Element,
         surface: Element,
     ): Element? {
-        val c = pointInSpaceOr(centre, "Sphere locus") ?: return null
-        val s = pointInSpaceOr(surface, "Sphere locus") ?: return null
+        val c = pointInSpaceOr(centre, Msgs.noteSphereLocusSphereLocus()) ?: return null
+        val s = pointInSpaceOr(surface, Msgs.noteSphereLocusSphereLocus()) ?: return null
         val el = add(cx.sphereThrough(c, s), ElementKind.SPHERE_LOCUS, Styles.SPHERE_LOCUS)
-        note =
-            "${nameOf(el)}: every point as far from ${nameOf(centre)} as ${nameOf(surface)} is — " +
-            "move either and it follows"
+        noteMsg =
+            Msgs.noteSphereLocusEveryPointFarIsMove(name = nameOf(el), name2 = nameOf(centre), name3 = nameOf(surface))
         return el
     }
 
@@ -12302,14 +12273,14 @@ class Document {
         a: Element,
         b: Element,
     ): Element? {
-        val s1 = sphereRefOf(a, "Circle of two sphere loci") ?: return null
-        val s2 = sphereRefOf(b, "Circle of two sphere loci") ?: return null
+        val s1 = sphereRefOf(a, Msgs.noteSphereLocusCircleTwoSphereLoci()) ?: return null
+        val s2 = sphereRefOf(b, Msgs.noteSphereLocusCircleTwoSphereLoci()) ?: return null
         if (a === b) {
-            note = "Circle of two sphere loci: ${nameOf(a)} cannot meet itself — click two different loci"
+            noteMsg = Msgs.noteSphereLocusCircleTwoSphereLociCannot(name = nameOf(a))
             return null
         }
         val el = add(cx.sphereCircle(s1, s2), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
-        note = "${nameOf(el)}: the circle where ${nameOf(a)} and ${nameOf(b)} meet — move either and it follows"
+        noteMsg = Msgs.noteSphereLocusCircleWhereMeetMoveEither(name = nameOf(el), name2 = nameOf(a), name3 = nameOf(b))
         return el
     }
 
@@ -12334,11 +12305,11 @@ class Document {
         view: PlaneProjection? = null,
         sign: Int? = null,
     ): Element? {
-        val s1 = sphereRefOf(a, "Point from three sphere loci") ?: return null
-        val s2 = sphereRefOf(b, "Point from three sphere loci") ?: return null
-        val s3 = sphereRefOf(c, "Point from three sphere loci") ?: return null
+        val s1 = sphereRefOf(a, Msgs.noteSphereLocusPointThreeSphereLoci()) ?: return null
+        val s2 = sphereRefOf(b, Msgs.noteSphereLocusPointThreeSphereLoci()) ?: return null
+        val s3 = sphereRefOf(c, Msgs.noteSphereLocusPointThreeSphereLoci()) ?: return null
         if (a === b || b === c || a === c) {
-            note = "Point from three sphere loci: click three different loci — one of them was picked twice"
+            noteMsg = Msgs.noteSphereLocusPointThreeSphereLociClick()
             return null
         }
         val set = cx.trilaterate(s1, s2, s3)
@@ -12347,10 +12318,8 @@ class Document {
         val el = add(cx.selectPoint3(set, chosen, trilaterationEmptyReason(a, b, c)), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
         el.inSpace = true
         registerSigns(el, listOf(chosen))
-        note =
-            "${nameOf(el)}: the point at all three distances, on the " +
-            (if (chosen >= 0) "positive" else "negative") +
-            " side of the plane through the three centres — drag any centre and it follows"
+        noteMsg =
+            Msgs.noteSphereLocusPointAllThreeDistances2(name = nameOf(el), clause0 = if (chosen >= 0) Msgs.noteSphereLocusPositiveSide() else Msgs.noteSphereLocusNegativeSide(), clause1 = Msgs.noteSphereLocusSidePlaneThroughThreeCentres())
         return el
     }
 
@@ -12373,17 +12342,16 @@ class Document {
         view: PlaneProjection? = null,
         index: Int? = null,
     ): Element? {
-        val s = sphereRefOf(sphere, "Point where a run meets a sphere locus") ?: return null
-        val path = spaceCurveRef(run, "Point where a run meets a sphere locus") ?: return null
+        val s = sphereRefOf(sphere, Msgs.noteSphereLocusPointWhereRunMeetsSphere()) ?: return null
+        val path = spaceCurveRef(run, Msgs.noteSphereLocusPointWhereRunMeetsSphere()) ?: return null
         val set = cx.sphereMeetsRun(s, path)
         val ev = Evaluator()
         val points = cx.solutionPoints3(set, ev)
         val chosen =
             index ?: run {
                 if (points.isEmpty()) {
-                    note =
-                        "Point where a run meets a sphere locus: ${nameOf(run)} does not reach ${nameOf(sphere)}, " +
-                        "so it crosses it nowhere — change the radius, or pick a run that passes through it"
+                    noteMsg =
+                        Msgs.noteSphereLocusPointWhereRunMeetsSphere2(name = nameOf(run), name2 = nameOf(sphere))
                     return null
                 }
                 val plane = activePlane3(ev)
@@ -12392,10 +12360,8 @@ class Document {
         val el = add(cx.selectPoint3At(set, chosen), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
         el.inSpace = true
         registerSigns(el, listOf(chosen))
-        note =
-            "${nameOf(el)}: where ${nameOf(run)} crosses ${nameOf(sphere)}" +
-            (if (points.size > 1) " (crossing ${chosen + 1} of ${points.size}, counted along the run)" else "") +
-            liftNote(run)
+        noteMsg =
+            Msgs.noteSphereLocusWhereCrosses2(name = nameOf(el), name2 = nameOf(run), name3 = nameOf(sphere), clause0 = (if (points.size > 1) Msgs.noteSphereLocusCrossingCountedAlongRun(chosen = chosen + 1, count = points.size) else Msg.EMPTY), clause1 = liftNote(run))
         return el
     }
 
@@ -12426,31 +12392,28 @@ class Document {
         a: Element,
         b: Element,
         c: Element,
-    ): String =
-        "no point in space is at all three of those distances at once — ${nameOf(a)}, ${nameOf(b)} and " +
-            "${nameOf(c)} either do not overlap, or their centres now lie on one line (in which case they meet " +
-            "in a whole circle rather than at a pair of points)"
+    ): Msg =
+        Msgs.noteSphereLocusNoPointSpaceIsAll(name = nameOf(a), name2 = nameOf(b), name3 = nameOf(c))
 
     /** [el] as a sphere locus, or null with the reason it is not one — the `SPHERE` slot's own coercion. */
     @Suppress("UNCHECKED_CAST")
     private fun sphereRefOf(
         el: Element,
-        what: String,
+        what: Msg,
     ): Sphere3Ref? {
         if (el.kind == ElementKind.SPHERE_LOCUS) return el.ref as Sphere3Ref
-        note =
-            "$what: ${nameOf(el)} is ${kindWord(el)}, not a sphere locus — build one with " +
-            "*Sphere locus (centre, radius)* and click that"
+        noteMsg =
+            Msgs.noteSphereLocusIsNotSphereLocusBuild(what = what, name = nameOf(el), kind = kindWord(el))
         return null
     }
 
     /** [el] as the point in space a locus is centred on, or null with the reason it is not a point. */
     private fun pointInSpaceOr(
         el: Element,
-        what: String,
+        what: Msg,
     ): Point3Ref? {
         if (!el.isPoint) {
-            note = "$what: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the distance is measured from"
+            noteMsg = Msgs.noteSphereLocusIsNotPointClickPoint(what = what, name = nameOf(el), kind = kindWord(el))
             return null
         }
         return pointInSpace(el)
@@ -12641,7 +12604,7 @@ class Document {
      */
     private fun familyLaws(
         text: String,
-        what: String,
+        what: Msg,
         profile: Element,
         from: Node = profile.ref.node,
     ): List<SweepFamilyBinding.Entry>? {
@@ -12652,25 +12615,23 @@ class Document {
             if (piece.isBlank()) continue
             val eq = piece.indexOf('=')
             if (eq < 0) {
-                note =
-                    "$what: '${piece.trim()}' is no law — write the name of what varies, an '=', and a formula " +
-                    "over $sweepLawParam ('chord = 200mm * (1 - 0.6*$sweepLawParam)'), and separate several with ';'"
+                noteMsg =
+                    Msgs.noteSweepIsNoLawWriteName(what = what, text = piece.trim(), sweepLawParam = sweepLawParam)
                 return null
             }
             val name = piece.substring(0, eq).trim()
             val body = piece.substring(eq + 1).trim()
             if (name.isEmpty()) {
-                note = "$what: '${piece.trim()}' names nothing to vary — write 'name = formula'"
+                noteMsg = Msgs.noteSweepNamesNothingVaryWriteName(what = what, text = piece.trim())
                 return null
             }
             if (body.isEmpty()) {
-                note = "$what: '$name' has no formula — write '$name = ' and one formula over $sweepLawParam, or leave the row empty"
+                noteMsg = Msgs.noteSweepHasNoFormulaWriteOne(what = what, name = name, sweepLawParam = sweepLawParam)
                 return null
             }
             if (name in stated) {
-                note =
-                    "$what: '$name' is given two laws in one step, and a station reads one value for it — " +
-                    "keep the law you mean and delete the other"
+                noteMsg =
+                    Msgs.noteSweepIsGivenTwoLawsOne(what = what, name = name)
                 return null
             }
             stated.add(name)
@@ -12684,7 +12645,7 @@ class Document {
     private fun familyLaw(
         name: String,
         body: String,
-        what: String,
+        what: Msg,
         profile: Element,
         lawables: List<ScalarEntry>,
         stated: List<String>,
@@ -12692,24 +12653,20 @@ class Document {
         // **`roll` and `twist` are the run's own names** and are reserved on the left of a law: the step
         // already carries both as parameters, so a drawing scalar of that name cannot be told from them here.
         if (name == FAMILY_ROLL_NAME) {
-            note =
-                "$what: '$FAMILY_ROLL_NAME' is where the section starts, not how it turns along the run — it is one " +
-                "angle for the whole body, so state the variation as '$FAMILY_TWIST_NAME = …' and leave roll a parameter"
+            noteMsg =
+                Msgs.noteSweepIsWhereSectionStartsNot(what = what, FAMILY_ROLL_NAME = FAMILY_ROLL_NAME, FAMILY_TWIST_NAME = FAMILY_TWIST_NAME)
             return null
         }
         val collides = scalars.firstOrNull { it.name == name && it in lawables }
         if (name == FAMILY_TWIST_NAME && collides != null) {
-            note =
-                "$what: the section reads a parameter called '$FAMILY_TWIST_NAME', and '$FAMILY_TWIST_NAME' is also the run's " +
-                "own turn — rename the parameter (the panel's rows rename in place) so the law says which one it drives"
+            noteMsg =
+                Msgs.noteSweepSectionReadsParameterCalledIs(what = what, FAMILY_TWIST_NAME = FAMILY_TWIST_NAME)
             return null
         }
         // …a **coordinate** is read and never written (the session-76 rule, one feature on)
         if (name != FAMILY_TWIST_NAME && name.contains('.')) {
-            note =
-                "$what: '$name' is a point's coordinate, and a coordinate is read rather than driven — a family " +
-                "law drives a **parameter** the section is built from, so state the law on the parameter that " +
-                "coordinate is placed by"
+            noteMsg =
+                Msgs.noteSweepIsPointCoordinateCoordinateIs(what = what, name = name)
             return null
         }
         val target =
@@ -12718,16 +12675,14 @@ class Document {
             } else {
                 val row = scalars.firstOrNull { it.name == name }
                 if (row != null && isBound(row)) {
-                    val master = boundEntry(row)?.name ?: expressionOf(row) ?: "another value"
-                    note =
-                        "$what: '$name' follows $master, so it has no value of its own for a station to read — " +
-                        "state the law on $master and '$name' reads it at every station"
+                    val master = boundEntry(row)?.name?.let { Msg.text(it) } ?: expressionOf(row)?.let { Msg.text(it) } ?: Msgs.noteSweepAnotherValue()
+                    noteMsg =
+                        Msgs.noteSweepFollowsSoItHasNo(what = what, name = name, master = master)
                     return null
                 }
                 if (row != null && row !in lawables) {
-                    note =
-                        "$what: ${nameOf(profile)} is not built from '$name' — a family law drives a parameter " +
-                        "the section reads, and this one reads ${lawableWord(lawables)}"
+                    noteMsg =
+                        Msgs.noteSweepIsNotBuiltFamilyLaw(what = what, name = nameOf(profile), name2 = name, lawableWord = lawableWord(lawables))
                     return null
                 }
                 row
@@ -12738,7 +12693,7 @@ class Document {
             try {
                 ExprParser.parse(body)
             } catch (err: ExprError) {
-                note = "$what: can't read '$name' from '$body': ${err.message}"
+                noteMsg = Msgs.noteSweepCanTRead(what = what, name = name, body = body, message = err.message ?: "")
                 return null
             }
         val names = ArrayList<String>()
@@ -12747,16 +12702,14 @@ class Document {
         for (n in ast.refNames()) {
             if (n == sweepLawParam) continue
             if (n in stated || n == FAMILY_TWIST_NAME) {
-                note =
-                    "$what: the law for '$name' reads '$n', which this same step drives — a station's values " +
-                    "come from the drawing, so bind '$n' in the drawing (wire it, or give it a formula) and it " +
-                    "follows '$name' at every station"
+                noteMsg =
+                    Msgs.noteSweepLawReadsWhichThisSame(what = what, name = name, n = n)
                 return null
             }
             val resolved = resolveExprName(n)
             if (resolved == null) {
                 if (n in EXPR_CONSTANTS) continue
-                note = "$what: ${unknownName(n)}"
+                noteMsg = Msgs.noteFrameWhatWhy(what = what, why = unknownName(n))
                 return null
             }
             names.add(n)
@@ -12775,11 +12728,11 @@ class Document {
     }
 
     /** How a refusal lists what a section *is* built from — the cure half of the unread-name sentence. */
-    private fun lawableWord(lawables: List<ScalarEntry>): String =
+    private fun lawableWord(lawables: List<ScalarEntry>): Msg =
         if (lawables.isEmpty()) {
-            "no named parameter at all (give the dimension that is to vary a parameter in the panel first)"
+            Msgs.noteSweepNoNamedParameterAllGive()
         } else {
-            lawables.joinToString(", ") { "'${it.name}'" }
+            Msg.text(lawables.joinToString(", ") { "'${it.name}'" })
         }
 
     /**
@@ -12840,18 +12793,17 @@ class Document {
         val toolId = if (step?.kind == "tool") (step.args.firstOrNull() as? Arg.Text)?.s else null
         val tool = toolId?.let { toolDef(it) }
         if (step == null || tool == null || !tool.carriesLaws) {
-            note = familyRefusal(el, toolId)
+            noteMsg = familyRefusal(el, toolId)
             return null
         }
         val profile = sweptSectionOf(step)
         if (profile == null) {
-            note =
-                "Section laws: ${nameOf(el)} carries no drawn section to read per station — a family reads one " +
-                "2D drawing once for every station of the run, so sweep an area with *Sweep (profile along a curve)*"
+            noteMsg =
+                Msgs.noteSweepSectionLawsCarriesNoDrawn(name = nameOf(el))
             return null
         }
         val wanted = text?.trim()?.ifEmpty { null }
-        val entries = if (wanted == null) null else familyLaws(wanted, "Section laws", profile) ?: return null
+        val entries = if (wanted == null) null else familyLaws(wanted, Msgs.noteSweepSectionLaws(), profile) ?: return null
         val before = sweepFamilies[step]
         if (entries == null || entries.isEmpty()) {
             sweepFamilies.remove(step)
@@ -12918,27 +12870,18 @@ class Document {
     private fun familyRefusal(
         el: Element,
         toolId: String?,
-    ): String =
+    ): Msg =
         when (toolId) {
             // **The tube's section is the run's own statement**, not a drawing: there is no 2D DAG to read
             // per station, and the one dimension it has is exactly what `r(t)` already states (F6).
             Tools.TUBE ->
-                "Section laws: ${nameOf(el)} is a tube, whose section is a circle the run itself states — " +
-                    "there is no drawing to read per station, and the one size it has is *Section law* " +
-                    "(`r($sweepLawParam) = 5mm * (1 - $sweepLawParam/2)`). To vary an outline, draw the section " +
-                    "and sweep it with *Sweep (profile along a curve)*"
+                Msgs.noteSweepSectionLawsIsTubeWhose(name = nameOf(el), sweepLawParam = sweepLawParam)
             // …the swept cut, in session 77's own sentence pluralized: its reach is derived from the solid it
             // cuts, and sections that differ per station would move that reach station by station.
             Tools.CUT_ALONG_CURVE, Tools.CUT_ALONG_CURVE_FLAT, Tools.SPLIT_ALONG_CURVE, Tools.SPLIT_ALONG_CURVE_FLAT ->
-                "Section laws: ${nameOf(el)} is cut by a chain carried along a route, and a swept cut states no " +
-                    "sizes of its own — how far its sections reach is derived from the solid it cuts, so sections " +
-                    "that differed along the run would move that reach station by station. Sweep the varying " +
-                    "section as a solid with *Sweep* (its own scalars may be formulas over the run) and subtract " +
-                    "it with *Subtract*"
+                Msgs.noteSweepSectionLawsIsCutChain(name = nameOf(el))
             else ->
-                "Section laws: ${nameOf(el)} is ${kindWord(el)}, and laws over the run belong to a swept body " +
-                    "whose section is a drawing — build one with *Sweep (profile along a curve)* and state the " +
-                    "laws on that"
+                Msgs.noteSweepSectionLawsIsLawsOver(name = nameOf(el), kind = kindWord(el))
         }
 
     /** The law [step] recorded, or null — how the writer restates that step's own text. */
@@ -12964,14 +12907,14 @@ class Document {
      */
     private fun sizeLaw(
         text: String,
-        what: String,
+        what: Msg,
     ): LawParse? {
         val param = sweepLawParam
         val ast =
             try {
                 ExprParser.parse(text)
             } catch (err: ExprError) {
-                note = "$what: can't read the section's size from '${text.trim()}': ${err.message}"
+                noteMsg = Msgs.noteSweepCanTReadSectionSize(what = what, text = text.trim(), message = err.message ?: "")
                 return null
             }
         val names = ArrayList<String>()
@@ -12984,7 +12927,7 @@ class Document {
             val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
-                note = "$what: ${unknownName(n)}"
+                noteMsg = Msgs.noteFrameWhatWhy(what = what, why = unknownName(n))
                 return null
             }
             names.add(n)
@@ -13014,12 +12957,12 @@ class Document {
         val toolId = if (step?.kind == "tool") (step.args.firstOrNull() as? Arg.Text)?.s else null
         val tool = toolId?.let { toolDef(it) }
         if (step == null || tool == null || !tool.carriesLaw) {
-            note = lawRefusal(el, toolId)
+            noteMsg = lawRefusal(el, toolId)
             return null
         }
         val wanted = text?.trim()?.ifEmpty { null }
         // refused **before** anything is rewritten, in the words the gesture would have used
-        val parse = if (wanted == null) null else sizeLaw(wanted, "Section law") ?: return null
+        val parse = if (wanted == null) null else sizeLaw(wanted, Msgs.noteSweepSectionLaw()) ?: return null
         // **The binding is the one authority for the law's text** — the writer reads it there and nowhere
         // else (see [DocumentFormat.restate]'s `tool` branch) — so restating the law is putting a different
         // binding on the very same step, and taking it away is removing that binding. Nothing about the
@@ -13043,7 +12986,7 @@ class Document {
     private fun lawRefusal(
         el: Element,
         toolId: String?,
-    ): String =
+    ): Msg =
         when (toolId) {
             // **The swept cut is the recorded cut of this package** (OP-22's extension, step 2 — see
             // DESIGN.md): its section is a *chain*, unbounded in general, and the reach the whole operator is
@@ -13052,15 +12995,9 @@ class Document {
             // relevant span of the route and the clip box are solved for each other in one fixed-point loop —
             // so the honest answer today is to say so and name the way round it, not to carry half of it.
             Tools.CUT_ALONG_CURVE, Tools.CUT_ALONG_CURVE_FLAT, Tools.SPLIT_ALONG_CURVE, Tools.SPLIT_ALONG_CURVE_FLAT ->
-                "Section law: ${nameOf(el)} is cut by a chain carried along a route, and a swept cut states no " +
-                    "size of its own — how far its section reaches is derived from the solid it cuts, so a " +
-                    "section that changed size along the run would move that reach station by station. Sweep the " +
-                    "tapering section as a solid with *Sweep* (its scale may be a formula over the run) and " +
-                    "subtract it with *Subtract*"
+                Msgs.noteSweepSectionLawIsCutChain(name = nameOf(el))
             else ->
-                "Section law: ${nameOf(el)} is ${kindWord(el)}, and a size law over the run belongs to a swept " +
-                    "body — build one with *Tube along a curve* or *Sweep (profile along a curve)* and state the " +
-                    "law on that"
+                Msgs.noteSweepSectionLawIsSizeLaw(name = nameOf(el), kind = kindWord(el))
         }
 
     /** The binding [law] leaves on the solid it sizes, for the writer and the re-stamp to find. */
@@ -13094,11 +13031,11 @@ class Document {
         twist: ScalarRef? = null,
         law: String? = null,
     ): Element? {
-        val path = spaceCurveRef(el, "Tube") ?: return null
+        val path = spaceCurveRef(el, Msgs.noteSweepTube()) ?: return null
         // **[law] is `r(t)`, a length over the station** (OP-26, session 77) — a tapered handle, a horn. It
         // *supersedes* the typed radius rather than scaling it, because what it states is the radius itself;
         // absent, this is the tube it always was, down to the node's inputs and the step's own words.
-        val parsed = if (law == null) null else sizeLaw(law, "Tube") ?: return null
+        val parsed = if (law == null) null else sizeLaw(law, Msgs.noteSweepTube()) ?: return null
         val solid =
             add(
                 cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist), parsed?.input),
@@ -13107,8 +13044,8 @@ class Document {
             )
         solid.space = el.space
         if (parsed != null && law != null) rememberLaw(solid, law, parsed)
-        val what = if (law == null) "a ${lengthWord(radius)} tube" else "a tube of r($sweepLawParam) = ${law.trim()}"
-        madeSolid(solid, "$what along ${nameOf(el)}" + liftNote(el))
+        val what = if (law == null) Msgs.wordToolTubeOfRadius(size = lengthWord(radius)) else Msgs.noteSweepTubeR(sweepLawParam = sweepLawParam, text = law.trim())
+        madeSolid(solid, Msgs.noteSweepAlong2(what = what, name = nameOf(el), clause0 = liftNote(el)))
         return solid
     }
 
@@ -13173,10 +13110,10 @@ class Document {
          */
         laws: String? = null,
     ): Element? {
-        val path = spaceCurveRef(el, "Sweep") ?: return null
+        val path = spaceCurveRef(el, Msgs.noteSweepSweep()) ?: return null
         val region =
             regionOf(profile) ?: run {
-                note = "Sweep: ${nameOf(profile)} bounds no area, so it is no section to carry along ${nameOf(el)}"
+                noteMsg = Msgs.noteSweepSweepBoundsNoAreaSo(name = nameOf(profile), name2 = nameOf(el))
                 return null
             }
         val anchorEl = anchor?.let { elementFor(it) }
@@ -13188,20 +13125,16 @@ class Document {
         if (anchorEl != null) {
             notInThePlane(
                 anchorEl,
-                "the point a section rides its run on",
-                "place a point in ${spaceLabel(spaceOf(profile))} where ${nameOf(profile)} should ride and pick that — " +
-                    "or leave it out, and the area's own origin rides the run",
+                Msgs.noteSweepPointSectionRidesItsRun(),
+                Msgs.noteSweepPlacePointWhereShouldRide(spaceLabel = spaceLabel(spaceOf(profile)), name = nameOf(profile)),
             )?.let {
-                note = "Sweep: $it"
+                noteMsg = Msgs.noteSweepSweep2(itWord = it)
                 return null
             }
         }
         if (anchor != null && anchorEl != null && anchorEl.space != profile.space) {
-            note =
-                "Sweep: ${nameOf(anchorEl)} is drawn in ${spaceLabel(spaceOf(anchorEl))}, and " +
-                "${nameOf(profile)} in ${spaceLabel(spaceOf(profile))} — the point the section rides on is a " +
-                "point of the section's own plane, so place one there and pick that (or leave it out, and the " +
-                "area's own origin rides the run)"
+            noteMsg =
+                Msgs.noteSweepSweepIsDrawnPointSection(name = nameOf(anchorEl), spaceLabel = spaceLabel(spaceOf(anchorEl)), name2 = nameOf(profile), spaceLabel2 = spaceLabel(spaceOf(profile)))
             return null
         }
         // Which crossing of the section's own plane the run is ridden at: **taken verbatim** when the step
@@ -13215,11 +13148,11 @@ class Document {
         // **[law] is `scale(t)`, a plain factor over the station** (OP-26, session 77): the section carried
         // rigidly, read larger or smaller about the very point it rides the run on, and never a re-reading of
         // its own sketch. Refused by name here for everything structural, before anything is built.
-        val parsed = if (law == null) null else sizeLaw(law, "Sweep") ?: return null
+        val parsed = if (law == null) null else sizeLaw(law, Msgs.noteSweepSweep()) ?: return null
         // **[laws] is the family** (OP-26, session 79) — the section's own named scalars driven per station,
         // refused by name here for everything structural, before anything is built.
         val familyEntries =
-            if (laws == null) null else familyLaws(laws, "Section laws", profile, region.node) ?: return null
+            if (laws == null) null else familyLaws(laws, Msgs.noteSweepSectionLaws(), profile, region.node) ?: return null
         val sectionPlane = if (anchor == null) planeOfSpace(profile.space) else null
         val hits = if (sectionPlane == null) emptyList() else crossingsOf(path, sectionPlane)
         val chosen =
@@ -13261,17 +13194,13 @@ class Document {
             val missing = familyEntries.filter { it.unresolved }
             if (missing.isNotEmpty() && replayingVersion != null) {
                 noteLoad(
-                    "${nameOf(solid)} states a law for ${missing.joinToString(", ") { "'${it.driven}'" }}, " +
-                        "and this drawing carries no value of that name — the body is invalid until one exists",
+                    Msgs.noteSweepStatesLawThisDrawingCarries(name = nameOf(solid), list = missing.joinToString(", ") { "'${it.driven}'" }),
                 )
             }
         }
         madeSolid(
             solid,
-            "${nameOf(profile)} swept along ${nameOf(el)}" +
-                (familyEntries?.takeIf { it.isNotEmpty() }?.let { es -> ", with ${es.joinToString("; ") { "${it.driven}($sweepLawParam) = ${it.text}" }}" } ?: "") +
-                (law?.let { ", scaled by $sweepLawParam -> ${it.trim()}" } ?: "") + liftNote(el) +
-                (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
+            Msgs.noteSweepSweptAlong2(name = nameOf(profile), name2 = nameOf(el), clause0 = (familyEntries?.takeIf { it.isNotEmpty() }?.let { es -> Msgs.noteSweepFamilyEntries(list = es.joinToString("; ") { "${it.driven}($sweepLawParam) = ${it.text}" }) } ?: Msg.EMPTY), clause1 = (law?.let { Msgs.noteSweepScaled(sweepLawParam = sweepLawParam, text = it.trim()) } ?: Msg.EMPTY), clause2 = liftNote(el), clause3 = (anchorEl?.let { Msgs.noteSweepRiding(name = nameOf(it)) } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size))),
         )
         return solid
     }
@@ -13313,10 +13242,7 @@ class Document {
         val at = (ev.valueOf(plane) as? PlaneValue)?.plane
         if (run == null || at == null) {
             noteLoad(
-                "${nameOf(profile)} rides a recorded crossing of its own plane, and the run has no value right " +
-                    "now — so this load cannot tell whether that numbering has moved (a closed run's seam counts " +
-                    "as a crossing from format ${DocumentFormat.SEAM_ORDERED_VERSION} on). The number is kept as " +
-                    "it was written; sweep the section again if it rides the wrong crossing",
+                Msgs.noteSweepRidesRecordedCrossingItsOwn(name = nameOf(profile), SEAM_ORDERED_VERSION = DocumentFormat.SEAM_ORDERED_VERSION.toString()),
             )
             return recorded
         }
@@ -13370,21 +13296,21 @@ class Document {
         sectionPlane: PlaneRef?,
         chosen: Int?,
         count: Int,
-    ): String {
-        if (sectionPlane == null) return ""
+    ): Msg {
+        if (sectionPlane == null) return Msg.EMPTY
         val where = spaceLabel(spaceOf(profile))
         if (chosen == null) {
             return if (count == 0) {
-                ", with ${nameOf(profile)}'s own origin riding the run — ${nameOf(el)} does not cross $where, " +
-                    "so there is no point of the section for the run to go through"
+                Msgs.noteSweepOwnOriginRidingRunDoes(name = nameOf(profile), name2 = nameOf(el), theWhere = where)
             } else {
-                ", with ${nameOf(profile)}'s own origin riding the run — sweep it again to ride where " +
-                    "${nameOf(el)} pierces $where, or pick the point of the section that is to ride it"
+                Msgs.noteSweepOwnOriginRidingRunSweep(name = nameOf(profile), name2 = nameOf(el), theWhere = where)
             }
         }
-        return ", riding where ${nameOf(el)} pierces $where" +
-            (if (count > 1) " (crossing ${chosen + 1} of $count, the one nearest the section)" else "") +
-            " — pick a point of the section to ride it elsewhere"
+        return Msgs.noteSweepRidingWhere(
+            head = Msgs.noteSweepRidingWherePierces(name = nameOf(el), theWhere = where),
+            which = if (count > 1) Msgs.noteSweepCrossingOneNearestSection(chosen = chosen + 1, count = count) else Msg.EMPTY,
+            tail = Msgs.noteSweepPickPointSectionRideIt(),
+        )
     }
 
     // ---- the lift: a drawn curve is the run it already is (OP-26, step 1's missing source) ----
@@ -13442,20 +13368,17 @@ class Document {
     @Suppress("UNCHECKED_CAST")
     private fun spaceCurveRef(
         el: Element,
-        what: String,
+        what: Msg,
     ): Path3Ref? {
         if (el.kind == ElementKind.SPACE_CURVE) return el.ref as Path3Ref
         if (isLiftable(el)) return cx.liftedRun(listOf(el.ref), planeOfSpace(el.space), liftCloses(el))
         if (el.kind == ElementKind.LINE || el.kind == ElementKind.RAY) {
-            note =
-                "$what: ${nameOf(el)} runs on for ever, so it states no length of run — click a bounded curve, " +
-                "an outline, or a curve in space"
+            noteMsg =
+                Msgs.noteLiftRunsEverSoItStates(what = what, name = nameOf(el))
             return null
         }
-        note =
-            "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve — click a curve in space, or the drawing " +
-            "that is to be the route (an outline, an area, a segment, an arc, a circle), which is read as the " +
-            "run it already is"
+        noteMsg =
+            Msgs.noteLiftIsNotCurveClickCurve(what = what, name = nameOf(el), kind = kindWord(el))
         return null
     }
 
@@ -13467,13 +13390,15 @@ class Document {
      * told that the drawing itself is being used as the run, in which space it was read, and — where a conic
      * had to be fitted — what that cost (OP-15).
      */
-    private fun liftNote(el: Element): String {
-        if (el.kind == ElementKind.SPACE_CURVE) return ""
+    private fun liftNote(el: Element): Msg {
+        if (el.kind == ElementKind.SPACE_CURVE) return Msg.EMPTY
         val ev = Evaluator()
         val plane = planeValueOfSpace(el.space, ev)
         val fitted = plane != null && cx.liftIsFitted(listOf(el.ref), plane, ev)
-        return ", reading it as the run it already is where it is drawn in ${spaceLabel(spaceOf(el))}" +
-            (if (fitted) " (its conic pieces fitted to 0.1 µm)" else "")
+        return Msgs.noteLiftReadingWithExactness(
+            head = Msgs.noteLiftReadingItRunItAlready(spaceLabel = spaceLabel(spaceOf(el))),
+            fitted = if (fitted) Msgs.noteLiftItsConicPiecesFittedM() else Msg.EMPTY,
+        )
     }
 
     /**
@@ -13503,16 +13428,15 @@ class Document {
      * business and comes back as the reason it is invalid, so it heals when the drawing moves (OP-3).
      */
     fun liftCurves(picks: List<Element>): Element? {
-        val what = "Lift drawing into space"
+        val what = Msgs.noteLiftLiftDrawingSpace()
         if (picks.isEmpty()) {
-            note = "$what: click the drawing that is to become a run"
+            noteMsg = Msgs.noteLiftClickDrawingThatIsBecome(what = what)
             return null
         }
         for (el in picks) {
             if (!isLiftable(el)) {
-                note =
-                    "$what: ${nameOf(el)} is ${kindWord(el)}, and a run is lifted out of a drawn curve — click " +
-                    "an outline, an area, a segment, an arc, a circle or a Bézier"
+                noteMsg =
+                    Msgs.noteLiftIsRunIsLiftedOut(what = what, name = nameOf(el), kind = kindWord(el))
                 return null
             }
         }
@@ -13521,10 +13445,8 @@ class Document {
         val space = run[0].space
         for (el in run) {
             if (el.space != space) {
-                note =
-                    "$what: ${nameOf(el)} is drawn in ${spaceLabel(spaceOf(el))} and ${nameOf(run[0])} in " +
-                    "${spaceLabel(spaceOf(run[0]))} — a run is lifted out of one drawing, so pick the pieces of " +
-                    "one space (or lift each and join them with Connect two curves)"
+                noteMsg =
+                    Msgs.noteLiftIsDrawnRunIsLifted(what = what, name = nameOf(el), spaceLabel = spaceLabel(spaceOf(el)), name2 = nameOf(run[0]), spaceLabel2 = spaceLabel(spaceOf(run[0])))
                 return null
             }
         }
@@ -13534,11 +13456,8 @@ class Document {
         curve.space = space
         val ev = Evaluator()
         val fitted = planeValueOfSpace(space, ev)?.let { cx.liftIsFitted(run.map { r -> r.ref }, it, ev) } ?: false
-        note =
-            "${nameOf(curve)}: ${run.joinToString(", ") { nameOf(it) }} read as ${if (closed) "a closed run" else "a run"} " +
-            "in space, lying in ${spaceLabel(spaceOf(run[0]))} where ${if (run.size == 1) "it is" else "they are"} drawn — " +
-            (if (fitted) "its conic pieces fitted to 0.1 µm, " else "exact, ") +
-            "and it follows every edit of the drawing"
+        noteMsg =
+            Msgs.noteLiftReadSpaceLyingWhereDrawn2(name = nameOf(curve), name2 = run.joinToString(", ") { nameOf(it) }, ifWord = if (closed) Msgs.noteLiftClosedRun() else Msgs.noteLiftARun(), spaceLabel = spaceLabel(spaceOf(run[0])), ifWord2 = if (run.size == 1) Msgs.noteLiftItIs() else Msgs.noteLiftTheyAre(), clause0 = (if (fitted) Msgs.noteLiftItsConicPiecesFittedM2() else Msgs.noteLiftExactComma()))
         return curve
     }
 
@@ -13579,7 +13498,7 @@ class Document {
     ): Element? {
         val region =
             regionOf(el) ?: run {
-                note = "Extrude to point: ${nameOf(el)} bounds no area"
+                noteMsg = Msgs.noteLiftExtrudePointBoundsNoArea(name = nameOf(el))
                 return null
             }
         val plane = activePlane()
@@ -13595,7 +13514,7 @@ class Document {
                 Styles.SOLID,
             )
         registerSigns(solid, listOf(seam, 0))
-        note = loftNote(solid, listOf(LoftRole.SECTION, LoftRole.APEX))
+        noteMsg = loftNote(solid, listOf(LoftRole.SECTION, LoftRole.APEX))
         return solid
     }
 
@@ -13620,24 +13539,24 @@ class Document {
     private fun loftNote(
         el: Element,
         roles: List<LoftRole>,
-    ): String {
+    ): Msg {
         val ev = Evaluator()
         val sections = roles.count { it != LoftRole.GUIDE }
         val guides = roles.count { it == LoftRole.GUIDE }
         val apex = roles.any { it == LoftRole.APEX }
         val what =
             buildString {
-                append("Loft ${nameOf(el)} over $sections section${if (sections == 1) "" else "s"}")
-                if (apex) append(" (the last one a point — an apex)")
-                if (guides > 0) append(", shaped by $guides guide${if (guides == 1) "" else "s"}")
+                append(Msgs.noteLiftLoftOverSection(name = nameOf(el), sections = sections))
+                if (apex) append(Msgs.noteLiftLastOnePointApex())
+                if (guides > 0) append(Msgs.noteLiftShapedGuide(guides = guides))
             }
         val result = ev.resultOf(el.ref)
-        if (result is EvalResult.Invalid) return "$what — invalid right now: ${result.reason}"
+        if (result is EvalResult.Invalid) return Msgs.noteLiftInvalidRightNow(what = what, reason = result.reason)
         val feature = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Loft
         return if (feature?.approximated == true) {
-            "$what — approximated (a curved section or guide is sampled, OP-15), so its volume is too"
+            Msgs.noteLiftApproximatedCurvedSectionGuideIs(what = what)
         } else {
-            "$what — exact: every facet is planar, so its volume is analytic (OP-15)"
+            Msgs.noteLiftExactEveryFacetIsPlanar(what = what)
         }
     }
 
@@ -13685,7 +13604,7 @@ class Document {
         val plane = cx.facePlane(base.ref as SolidRef, SolidFace.TOP)
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
             .also {
-                madeSolid(it, "${nameOf(el)} raised ${lengthWord(depth)} off ${nameOf(base)}'s top face")
+                madeSolid(it, Msgs.noteLiftRaisedOffTopFace(name = nameOf(el), size = lengthWord(depth), name2 = nameOf(base)))
             }
     }
 
@@ -13711,12 +13630,9 @@ class Document {
         if (el.kind != ElementKind.SOLID) return null
         // RESULT, not FOOTPRINT: a section is a drawing in its own right, not the plan of a wall
         val area = add(cx.sectionAt(el.ref as SolidRef, height), ElementKind.AREA, Styles.RESULT)
-        val where = if (activeSpace.isPlan) "the plan" else activeSpace.name
-        note =
-            "${nameOf(area)} is the cross-section of ${nameOf(el)} at ${lengthWord(height)} — a 2D area " +
-            "drawn in $where, so a prism's lands exactly on its own footprint and nothing looks new; a " +
-            "rounded one's is the outline the rounding leaves at that height, bands and corners and all. " +
-            "Dimension it, or extrude it again."
+        val where = if (activeSpace.isPlan) Msgs.noteLiftPlan() else Msg.text(activeSpace.name)
+        noteMsg =
+            Msgs.noteLiftIsCrossSectionDArea(name = nameOf(area), name2 = nameOf(el), size = lengthWord(height), theWhere = where)
         return area
     }
 
@@ -13757,7 +13673,7 @@ class Document {
                 cx.revolve(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line), angle, offset)
             }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(el)} turned about ${nameOf(axis)}${turnWord(angle, offset)}") }
+            .also { madeSolid(it, Msgs.noteLiftTurnedAbout(name = nameOf(el), name2 = nameOf(axis), turnWord = turnWord(angle, offset))) }
     }
 
     /**
@@ -13786,13 +13702,13 @@ class Document {
     private fun turnWord(
         angle: ScalarRef?,
         offset: ScalarRef?,
-    ): String {
-        if (angle == null) return " — a complete revolution, so it has no ends"
-        val a = evalQuantity(angle)?.takeIf { it.dim == Dimension.ANGLE } ?: return ""
+    ): Msg {
+        if (angle == null) return Msgs.noteLiftCompleteRevolutionSoItHas()
+        val a = evalQuantity(angle)?.takeIf { it.dim == Dimension.ANGLE } ?: return Msg.EMPTY
         val o = offset?.let { evalQuantity(it) }?.takeIf { it.dim == Dimension.ANGLE } ?: Quantity.deg(0.0)
         val from = o.deg
         val to = from + a.deg
-        return " from ${Format.num(minOf(from, to))}° to ${Format.num(maxOf(from, to))}° about it"
+        return Msgs.noteLiftAboutIt(num = Format.num(minOf(from, to)), num2 = Format.num(maxOf(from, to)))
     }
 
     // ---- the ball: what a circle says one dimension up (session 52's queue, item 3) ----
@@ -13840,7 +13756,7 @@ class Document {
     private fun ball(
         center: PointRef,
         meridian: CircleRef,
-        radiusWord: String,
+        radiusWord: Msg,
     ): Element? {
         val north = addDerived(cx.pointOnCircle(meridian, cx.const(90.0.deg)))
         val south = addDerived(cx.pointReflect(north, center))
@@ -13851,8 +13767,7 @@ class Document {
         val about = elementFor(center)?.let { " round ${nameOf(it)}" } ?: ""
         madeSolid(
             solid,
-            "a ball$radiusWord$about — the half-disc of ${nameOf(arc)} and ${nameOf(diameter)} turned a complete " +
-                "revolution about that diameter, so it has no ends — one spherical face, sectioned exactly",
+            Msgs.noteBallBallHalfDiscTurnedComplete(radiusWord = radiusWord, about = about, name = nameOf(arc), name2 = nameOf(diameter)),
         )
         return solid
     }
@@ -13865,7 +13780,7 @@ class Document {
     fun sphereCR(
         center: PointRef,
         radius: ScalarRef,
-    ): Element? = ball(center, cx.circleCR(center, radius), " of radius ${lengthWord(radius)}")
+    ): Element? = ball(center, cx.circleCR(center, radius), Msgs.noteBallRadius(size = lengthWord(radius)))
 
     /**
      * *Sphere (centre, surface point)*: click the centre, then a point the surface passes through — the twin of
@@ -13879,7 +13794,7 @@ class Document {
     fun sphereCP(
         center: PointRef,
         surface: PointRef,
-    ): Element? = ball(center, cx.circleCP(center, surface), "")
+    ): Element? = ball(center, cx.circleCP(center, surface), Msg.EMPTY)
 
     // ---- booleans between solids (OP-22) ----
 
@@ -13901,15 +13816,15 @@ class Document {
         if (a.kind != ElementKind.SOLID || b.kind != ElementKind.SOLID) return null
         if (a === b) {
             // a refusal that said nothing was the other half of GitHub #9's silent-success sweep
-            note = "${nameOf(a)} cannot be combined with itself — click two different solids"
+            noteMsg = Msgs.noteBooleansBetweenSolidsCannotBeCombinedItselfClick(name = nameOf(a))
             return null
         }
         openShellRefusal(a)?.let {
-            note = it
+            noteMsg = it
             return null
         }
         openShellRefusal(b)?.let {
-            note = it
+            noteMsg = it
             return null
         }
         val ra = a.ref as SolidRef
@@ -13922,12 +13837,12 @@ class Document {
             }
         val word =
             when (kind) {
-                BoolOp.UNION -> "fused with"
-                BoolOp.SUBTRACT -> "less"
-                BoolOp.INTERSECT -> "met with"
+                BoolOp.UNION -> Msgs.noteBooleansBetweenSolidsFused()
+                BoolOp.SUBTRACT -> Msgs.wordBoolLess()
+                BoolOp.INTERSECT -> Msgs.noteBooleansBetweenSolidsMet()
             }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(a)} $word ${nameOf(b)}") }
+            .also { madeSolid(it, Msgs.noteBooleansBetweenSolidsCombined(name = nameOf(a), word = word, name2 = nameOf(b))) }
     }
 
     // ---- edge blends: the 2D fillet, one dimension up (session 71, slice 2) ----
@@ -13958,13 +13873,13 @@ class Document {
         }
 
     /** Why [el] is not a profile, in its own words. */
-    private fun blendProfileRefusal(el: Element): String =
+    private fun blendProfileRefusal(el: Element): Msg =
         when (el.kind) {
             ElementKind.CIRCLE, ElementKind.ELLIPSE, ElementKind.OUTLINE, ElementKind.AREA ->
-                "is closed, and a rounding's profile has two ends — one to land on each face. Break it, or draw an open chain"
+                Msgs.noteEdgeBlendsIsClosedRoundingProfileHas()
             ElementKind.LINE, ElementKind.RAY ->
-                "runs on for ever, and a rounding's profile has two ends — one to land on each face. Draw a chain or a segment instead"
-            else -> "is ${kindWord(el)}, not a curve a rounding can be shaped by — draw a chain, a segment, an arc or a Bézier"
+                Msgs.noteEdgeBlendsRunsEverRoundingProfileHas()
+            else -> Msgs.noteEdgeBlendsIsNotCurveRoundingCan(kind = kindWord(el))
         }
 
     /**
@@ -14025,7 +13940,7 @@ class Document {
         val targets: List<Int>,
         val choices: List<BlendChoice>,
         /** What the click named, in the drawing's own words — the panel's readout. */
-        val where: String,
+        val where: Msg,
         /**
          * −1 while this rounding stands; otherwise how many **band faces** it held when it was removed — the
          * tombstone's own slot count, frozen at the removal (OP-30's *slot kept for the life of the
@@ -14075,7 +13990,7 @@ class Document {
      * What the entry [el] **is**, in the drawing's own words — *"a fillet of 5 mm along the upright edge"* —
      * or null when [el] is no entry. The panel's readout, and the sentence its row's tooltip is built from.
      */
-    fun dressEntryReadout(el: Element): String? {
+    fun dressEntryReadout(el: Element): Msg? {
         val e = dressEntryOf(el) ?: return null
         return entryPhrase(e.kind, e.size, e.profile, e.whole, e.where, e.targets.size, 0)
     }
@@ -14273,28 +14188,37 @@ class Document {
         size: ScalarRef?,
         profileEl: Element?,
         whole: Boolean,
-        where: String,
+        where: Msg,
         count: Int,
         already: Int,
-    ): String =
-        (
-            if (kind == BlendKind.PROFILE) {
-                "the profile ${profileEl?.let { nameOf(it) } ?: "?"} run"
-            } else {
-                "a ${kind.word} of ${size?.let { lengthWord(it) } ?: "?"}"
-            }
-        ) + " along ${if (whole) "every edge of " else ""}$where" +
+    ): Msg =
+        Msgs.noteDressEntryPhrase(
+            what =
+                if (kind == BlendKind.PROFILE) {
+                    Msgs.noteOneDressedBodyProfileRun(name = profileEl?.let { nameOf(it) } ?: "?")
+                } else {
+                    Msgs.noteDressSizedRounding(word = kind.word, size = size?.let { lengthWord(it) } ?: "?")
+                },
+            scope = if (whole) "face" else "edge",
+            where = where,
             // …and what it did **not** take, in the words a first rounding says it in ([madeSolid]): a face
             // gesture breaks the edges of that face that are still sharp, and the note says so rather than
             // leaving "(2 edges)" on a four-edged face to be a surprise
-            (
+            count =
                 if (count > 1 || already > 0) {
-                    " ($count edge${if (count == 1) "" else "s"}" +
-                        (if (already > 0) " — $already ${if (already == 1) "was" else "were"} already rounded" else "") + ")"
+                    Msgs.noteDressEdgeCount(
+                        count = count,
+                        already =
+                            if (already > 0) {
+                                Msgs.noteOneDressedBodyAlreadyRounded(already = already, ifWord = if (already == 1) "one" else "other")
+                            } else {
+                                Msg.EMPTY
+                            },
+                    )
                 } else {
-                    ""
-                }
-            )
+                    Msg.EMPTY
+                },
+        )
 
     /** Which entry [el] is of its dressing, or −1 — the order a bulk removal has to work in (see [Editor]). */
     fun dressEntryIndex(el: Element): Int = dressingWith(el)?.entries?.indexOfFirst { it.el === el } ?: -1
@@ -14304,12 +14228,11 @@ class Document {
      * bulk form of the single-entry refusal ([Editor.deleteSelection]): a body's *last* rounding is what
      * makes it that body, so what the user means there is to delete the body.
      */
-    fun entriesEmptyingRefusal(els: List<Element>): String? {
+    fun entriesEmptyingRefusal(els: List<Element>): Msg? {
         for (d in dressings) {
             val doomed = d.entries.count { e -> e.el != null && els.any { it === e.el } }
             if (doomed > 0 && doomed == d.standing.size) {
-                return "${nameOf(d.body)} would be left with no rounding at all, and it is the roundings that " +
-                    "make it that body — delete ${nameOf(d.body)} itself to take them all off, or leave one on"
+                return Msgs.noteOneDressedBodyWouldBeLeftNoRounding(name = nameOf(d.body))
             }
         }
         return null
@@ -14406,13 +14329,13 @@ class Document {
         signs: List<Int> = emptyList(),
         profileEl: Element? = null,
     ): Element? {
-        val what = "${kind.word.replaceFirstChar { it.uppercase() }} ${if (whole) "the edges of a face" else "an edge"}"
+        val what = Msgs.noteBlendGestureWhat(kind = kind.name, scope = if (whole) "face" else "edge")
         // **A pick that names an entry names the body it belongs to** (OP-30). Two routes reach here that
         // way: a click on an entry's row in the element list, and an *older file's* chain step, whose `els=`
         // names the intermediate solid the chain used to make and which is now that body's entry.
         val on = dressingWith(solid)?.body ?: solid
         if (on.kind != ElementKind.SOLID) {
-            note = "$what: ${nameOf(on)} is ${kindWord(on)}, not a solid — click the body whose edge you want broken"
+            noteMsg = Msgs.noteOneDressedBodyIsNotSolidClickBody(what = what, name = nameOf(on), kind = kindWord(on))
             return null
         }
         // **the drawn section, resolved to an ordinary operand** (GitHub #30). A profile is a curve of the
@@ -14424,11 +14347,11 @@ class Document {
             } else {
                 val el = profileEl
                 if (el == null) {
-                    note = "$what: click the profile to run along the edge — a drawn chain, or one segment, arc or curve"
+                    noteMsg = Msgs.noteOneDressedBodyClickProfileRunAlongEdge(what = what)
                     return null
                 }
                 blendProfileOf(el) ?: run {
-                    note = "$what: ${nameOf(el)} ${blendProfileRefusal(el)}"
+                    noteMsg = Msgs.noteFrameWhatNameWhy(what = what, name = nameOf(el), why = blendProfileRefusal(el))
                     return null
                 }
             }
@@ -14455,11 +14378,11 @@ class Document {
         val baseEl = analyticBaseOf(on, ev)
         val body =
             (ev.valueOf(baseEl?.ref ?: on.ref) as? SolidValue)?.solid ?: run {
-                note = "$what: ${nameOf(on)} has no value right now, so it shows no edges to break"
+                noteMsg = Msgs.noteOneDressedBodyHasNoValueRightNow(what = what, name = nameOf(on))
                 return null
             }
         if (baseEl == null) {
-            note = "$what: ${nameOf(on)} — ${Section3.edges(body.feature).second}"
+            noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = Section3.edges(body.feature).second ?: Msg.EMPTY)
             return null
         }
         val tipEl = tipOfChain(on, ev) ?: on
@@ -14495,13 +14418,13 @@ class Document {
                 val pick = blendTarget(body, whole, at, view, ev)
                 inView = pick.inView
                 pick.index ?: run {
-                    note = "$what: ${nameOf(on)} — ${pick.why}"
+                    noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = pick.why ?: Msg.EMPTY)
                     return null
                 }
             }
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, tangentRun(baseEl, ev))
         if (targets == null) {
-            note = "$what: ${nameOf(on)} — $whyTargets"
+            noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = whyTargets ?: Msg.EMPTY)
             return null
         }
         // **four integers per edge for the built-in rows, five for a drawn profile** — the fifth is which
@@ -14515,11 +14438,11 @@ class Document {
             } else {
                 val sec = scoringSection(kind, size, profileRef, ev)
                 if (sec == null) {
-                    note =
+                    noteMsg =
                         if (kind == BlendKind.PROFILE) {
-                            "$what: ${nameOf(profileEl!!)} has no value right now, so there is no profile to run along the edge"
+                            Msgs.noteOneDressedBodyHasNoValueRightNow2(what = what, name = nameOf(profileEl!!))
                         } else {
-                            "$what: type a positive ${kind.sizeWord} first (or pick a parameter in the panel)"
+                            Msgs.noteOneDressedBodyTypePositiveFirstPickParameter(what = what, sizeWord = kind.sizeWord)
                         }
                     return null
                 }
@@ -14537,7 +14460,7 @@ class Document {
                 val (scored, why) = Blend3.choicesFor(body, targets, sec, onFace)
                 val fresh =
                     scored ?: run {
-                        note = "$what: ${nameOf(on)} — $why"
+                        noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = why ?: Msg.EMPTY)
                         return null
                     }
                 // **A recorded choice is never re-decided** (OP-18). A file written before one pick ran along
@@ -14547,10 +14470,7 @@ class Document {
                 if (stored.size == 1 && targets.size > 1) {
                     if ((replayingVersion ?: 0) in 1 until DocumentFormat.SUPERSEDING_FILLET_VERSION) {
                         noteLoad(
-                            "${nameOf(on)}'s ${kind.word} now runs along all ${targets.size} edges of the " +
-                                "tangent-continuous run through the edge it named — they are one smooth band, " +
-                                "which is what the drawing says they are; the added edges' choices are scored " +
-                                "once here and written on the next save",
+                            Msgs.noteOneDressedBodyNowRunsAlongAllEdges(name = nameOf(on), word = kind.word, count = targets.size),
                         )
                     }
                     targets.indices.map { i -> if (targets[i] == address) stored[0] else fresh[i] }
@@ -14560,9 +14480,9 @@ class Document {
             }
         val where =
             if (whole) {
-                Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: "a face"
+                Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: Msgs.noteDressAFace()
             } else {
-                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: "an edge"
+                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: Msgs.noteOneDressedBodyEdge()
             }
         val entrySigns = listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() }
         // **One dressing per part** (OP-30): where this gesture rounds an edge or a face of the *base* of a
@@ -14593,7 +14513,7 @@ class Document {
             body0.space = baseEl.space
             dressings.add(Dressing(body0, baseEl).also { it.entries.add(tomb) })
             pendingTombstone = removedBands to entrySigns
-            madeSolid(body0, "${nameOf(baseEl)} with its first rounding removed — the slot it held is kept so nothing after it renumbers")
+            madeSolid(body0, Msgs.noteOneDressedBodyItsFirstRoundingRemovedSlot(name = nameOf(baseEl)))
             return body0
         }
         if (join != null) {
@@ -14602,9 +14522,7 @@ class Document {
             if ((replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.DRESSED_BODY_VERSION && !saidDressedBody) {
                 saidDressedBody = true
                 noteLoad(
-                    "the roundings of ${nameOf(join.body)} were a chain of solids, one per fillet; they are now " +
-                        "one dressed body with an entry per rounding — every one of them removable on its own, " +
-                        "and the ones that share a ${kind.sizeWord} applied in one pass",
+                    Msgs.noteOneDressedBodyRoundingsWereChainSolidsOne(name = nameOf(join.body), sizeWord = kind.sizeWord),
                 )
             }
             val el = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
@@ -14612,13 +14530,9 @@ class Document {
             join.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
             rebuildDressing(join)
             registerSigns(el, entrySigns)
-            val why = (Evaluator().eval(join.body.ref.node) as? EvalResult.Invalid)?.reason
-            note =
-                "${nameOf(el)} is " +
-                "${entryPhrase(kind, size, profileEl, whole, where, targets.size, if (whole) Blend3.roundedAlready(body.feature, address) else 0)} — " +
-                "rounding ${join.entries.size} of ${nameOf(join.body)}, applied with the others in one pass" +
-                (if (inView) ", picked in the 3D view" else "") +
-                (if (why == null) "; select the row and press Delete to take it off again" else ", but the body cannot be built with it: $why")
+            val why = (Evaluator().eval(join.body.ref.node) as? EvalResult.Invalid)?.why
+            noteMsg =
+                Msgs.noteOneDressedBodyIsRoundingAppliedOthersOne2(name = nameOf(el), entryPhrase = entryPhrase(kind, size, profileEl, whole, where, targets.size, if (whole) Blend3.roundedAlready(body.feature, address) else 0), count = join.entries.size, name2 = nameOf(join.body), clause0 = (if (inView) Msgs.noteOneDressedBodyPickedDView() else Msg.EMPTY), clause1 = (if (why == null) Msgs.noteOneDressedBodySelectRowPressDeleteTake() else Msgs.noteOneDressedBodyButBodyCannotBeBuilt(why = why ?: Msg.EMPTY)))
             return el
         }
         // **The dressable case builds through [passRef]** — the one construction a dressing has — so that the
@@ -14668,38 +14582,50 @@ class Document {
         }
         madeSolid(
             el,
-            "${nameOf(tipEl)} with " +
-                (
+            Msgs.noteOneDressedBodyMsg2(
+                name = nameOf(tipEl),
+                clause0 =
                     if (kind == BlendKind.PROFILE) {
-                        "the profile ${nameOf(profileEl!!)} run"
+                        Msgs.noteOneDressedBodyProfileRun(name = nameOf(profileEl!!))
                     } else {
-                        "a ${kind.word} of ${lengthWord(size!!)}"
-                    }
-                ) + " along ${if (whole) "every edge of " else ""}$where" +
-                (if (baseEl !== tipEl) " of ${nameOf(baseEl)}" else "") +
-                (
+                        Msgs.noteDressSizedRounding(word = kind.word, size = lengthWord(size!!))
+                    },
+                clause1 = Msgs.noteDressAlongScope(scope = if (whole) "face" else "edge", where = where),
+                clause2 = if (baseEl !== tipEl) Msgs.noteDressOfBase(name = nameOf(baseEl)) else Msg.EMPTY,
+                clause3 =
                     if (targets.size > 1 || (whole && Blend3.roundedAlready(body.feature, address) > 0)) {
                         // …and what it did **not** take, where an earlier rounding got there first: a face
                         // gesture breaks the edges of that face that are still sharp (session 80), and the
                         // note says so rather than leaving "(2 edges)" on a four-edged face to be a surprise
                         val already = if (whole) Blend3.roundedAlready(body.feature, address) else 0
-                        " (${targets.size} edge${if (targets.size == 1) "" else "s"}" +
-                            (if (already > 0) " — $already ${if (already == 1) "was" else "were"} already rounded" else "") + ")"
+                        Msgs.noteDressEdgeCount(
+                            count = targets.size,
+                            already =
+                                if (already > 0) {
+                                    Msgs.noteOneDressedBodyAlreadyRounded(already = already, ifWord = if (already == 1) "was" else "were")
+                                } else {
+                                    Msg.EMPTY
+                                },
+                        )
                     } else {
-                        ""
-                    }
-                ) +
+                        Msg.EMPTY
+                    },
                 // **which picture named it**, said out loud for the reason *Sketch on face* says it (the
                 // `Face3DPickTest` precedent): the two views answer this question by different evidence, and a
                 // user who got an edge they did not expect must be able to read which one answered.
-                (if (inView) ", picked in the 3D view" else "") +
-                (
-                    if (kind == BlendKind.PROFILE) {
-                        " — the profile is an ordinary drawing, so reshaping it re-cuts the body"
-                    } else {
-                        " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body"
-                    }
-                ),
+                clause4 =
+                    Msg.joined(
+                        listOf(
+                            if (inView) Msgs.noteOneDressedBodyPickedDView() else Msg.EMPTY,
+                            if (kind == BlendKind.PROFILE) {
+                                Msgs.noteOneDressedBodyProfileIsOrdinaryDrawingSo()
+                            } else {
+                                Msgs.noteOneDressedBodyIsOrdinaryParameterSoRetyping(sizeWord = kind.sizeWord)
+                            },
+                        ),
+                        "",
+                    ),
+            ),
         )
         return el
     }
@@ -14781,24 +14707,24 @@ class Document {
         view: PlaneProjection? = null,
         signs: List<Int> = emptyList(),
     ): Element? {
-        val what = if (open) "Shell" else "Hollow"
+        val what = if (open) Msgs.wordToolShell() else Msgs.wordToolHollow()
         if (solid.kind != ElementKind.SOLID) {
-            note = "$what: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body you want hollowed"
+            noteMsg = Msgs.noteOneDressedBodyIsNotSolidClickBody2(what = what, name = nameOf(solid), kind = kindWord(solid))
             return null
         }
         val ev = Evaluator()
         val tipEl = tipOfChain(solid, ev) ?: solid
         val body =
             (ev.valueOf(tipEl.ref) as? SolidValue)?.solid ?: run {
-                note = "$what: ${nameOf(tipEl)} has no value right now, so there is nothing to hollow"
+                noteMsg = Msgs.noteOneDressedBodyHasNoValueRightNow3(what = what, name = nameOf(tipEl))
                 return null
             }
         Shell3.shellable(body.feature)?.let {
-            note = "$what: ${nameOf(tipEl)} — $it"
+            noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(tipEl), why = it ?: Msg.EMPTY)
             return null
         }
         // the face the note names, filled in by the open row and unread by the closed one
-        var openLabel = "a face"
+        var openLabel = Msgs.noteDressAFace()
         val openFaces =
             if (!open) {
                 emptyList()
@@ -14807,15 +14733,15 @@ class Document {
                     signs.getOrNull(0) ?: run {
                         val (i, why) = faceForOpening(body, at, view, ev)
                         i ?: run {
-                            note = "$what: ${nameOf(tipEl)} — $why"
+                            noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(tipEl), why = why ?: Msg.EMPTY)
                             return null
                         }
                     }
                 Shell3.openFaceRefusal(body.feature, face)?.let {
-                    note = "$what: ${nameOf(tipEl)} — $it"
+                    noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(tipEl), why = it ?: Msg.EMPTY)
                     return null
                 }
-                openLabel = Section3.faces(body.feature).first?.getOrNull(face)?.name?.label ?: "a face"
+                openLabel = Section3.faces(body.feature).first?.getOrNull(face)?.name?.label ?: Msgs.noteDressAFace()
                 listOf(face)
             }
         val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces), ElementKind.SOLID, Styles.SOLID)
@@ -14823,9 +14749,7 @@ class Document {
         registerSigns(el, openFaces)
         madeSolid(
             el,
-            "${nameOf(tipEl)} hollowed to a wall of ${lengthWord(thickness)}" +
-                (if (open) ", with $openLabel left open" else ", closed all round") +
-                " — the wall thickness is an ordinary parameter, so retyping it re-hollows the body",
+            Msgs.noteOneDressedBodyHollowedWallWallThicknessIs(name = nameOf(tipEl), size = lengthWord(thickness), clause0 = (if (open) Msgs.noteOneDressedBodyLeftOpen(openLabel = openLabel) else Msgs.noteOneDressedBodyClosedAllRound())),
         )
         return el
     }
@@ -14846,7 +14770,7 @@ class Document {
         at: Vec2,
         view: PlaneProjection?,
         ev: Evaluator,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val feature = body.feature
         val ray = view?.eyeRay(at)
         if (ray != null) {
@@ -14856,12 +14780,12 @@ class Document {
                 if (pick == null) return null to why
                 val faces = Section3.faces(feature).first ?: return null to why
                 val i = faces.indexOfFirst { it.name == pick.patch.name }
-                return if (i >= 0) i to null else null to "${pick.patch.name.label} is not a face this body can open"
+                return if (i >= 0) i to null else null to Msgs.noteOneDressedBodyIsNotFaceThisBody(name = pick.patch.name.label)
             }
         }
         val from =
             (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane
-                ?: return null to "${activeSpace.name} has no value right now, so there is nothing to click on"
+                ?: return null to Msgs.noteOneDressedBodyHasNoValueRightNow4(name = activeSpace.name)
         // …and where a 3D view *is* driving but its ray reached no body at all (a click just off the
         // silhouette), the rim reading below is still asked of the picture the camera shows (issue #24)
         return if (ray != null) faceUnderClick(feature, from, at, view, body) else faceUnderClick(feature, from, at)
@@ -14871,7 +14795,7 @@ class Document {
      * What a blend's click named: the index into the list it addresses, the refusal when it named nothing,
      * and **which picture answered** — see [blendTarget] and the note [blendEdges] writes.
      */
-    private class BlendPick(val index: Int?, val why: String?, val inView: Boolean = false)
+    private class BlendPick(val index: Int?, val why: Msg?, val inView: Boolean = false)
 
     /**
      * Which edge (or [whole] face) of [body] a blend's click at [at] named — **the ray's answer where a 3D
@@ -14914,7 +14838,7 @@ class Document {
         }
         val from =
             (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane
-                ?: return BlendPick(null, "${activeSpace.name} has no value right now, so there is nothing to click on")
+                ?: return BlendPick(null, Msgs.noteOneDressedBodyHasNoValueRightNow4(name = activeSpace.name))
         val (i, why) = if (whole) faceUnderClick(feature, from, at) else edgeNear(feature, from, at)
         return BlendPick(i, why)
     }
@@ -14952,7 +14876,7 @@ class Document {
         body: Solid3,
         view: PlaneProjection,
         at: Vec2,
-    ): Pair<Int?, String?>? {
+    ): Pair<Int?, Msg?>? {
         val ray = view.eyeRay(at) ?: return null
         val click = view.toScreen(at) ?: return null
         val (edges, why) = Section3.edges(feature)
@@ -15031,7 +14955,7 @@ class Document {
                 best = i
             }
         }
-        return if (best == null) null to "it draws no edge here that a blend could run along" else best to null
+        return if (best == null) null to Msgs.noteOneDressedBodyItDrawsNoEdgeHere() else best to null
     }
 
     /**
@@ -15067,7 +14991,7 @@ class Document {
         feature: Feature3,
         from: Plane3,
         at: Vec2,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val (edges, why) = Section3.edges(feature)
         if (edges == null) return null to why
         val n = from.normal.normalized()
@@ -15088,7 +15012,7 @@ class Document {
                 best = i
             }
         }
-        return if (best == null) null to "it draws no edge here that a blend could run along" else best to null
+        return if (best == null) null to Msgs.noteOneDressedBodyItDrawsNoEdgeHere() else best to null
     }
 
     /**
@@ -15145,7 +15069,7 @@ class Document {
         at: Vec2,
         view: PlaneProjection? = null,
         body: Solid3? = null,
-    ): Pair<Int?, String?> {
+    ): Pair<Int?, Msg?> {
         val (inside, why) = Blend3.faceNear(feature, from, at)
         if (inside != null) return inside to null
         val (edge, whyEdge) =
@@ -15172,20 +15096,20 @@ class Document {
     fun stateOf(
         el: Element,
         ev: Evaluator = Evaluator(),
-    ): String? {
-        val states = ArrayList<String>(2)
+    ): Msg? {
+        val states = ArrayList<Msg>(2)
         if (!el.visible) {
             states.add(
                 if (hiddenByConstruction(el)) {
-                    "hidden by the construction (Show leaves it hidden)"
+                    Msgs.noteOneDressedBodyHiddenConstructionShowLeavesIt()
                 } else {
-                    "hidden (Show brings it back)"
+                    Msgs.noteOneDressedBodyHiddenShowBringsItBack()
                 },
             )
         }
         val f = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported
-        if (f?.openShell != null) states.add("open shell (display and arrangement only)")
-        return states.joinToString("; ").ifEmpty { null }
+        if (f?.openShell != null) states.add(Msgs.noteOneDressedBodyOpenShellDisplayArrangementOnly())
+        return if (states.isEmpty()) null else Msg.joined(states, "; ")
     }
 
     /**
@@ -15202,11 +15126,10 @@ class Document {
      * literal** ([constructit.geom.Feature3.Imported.openShell]) — the triangles the step itself carries — so
      * no recorded step can ever have been written while this said yes and replay it while it says no.
      */
-    private fun openShellRefusal(el: Element): String? {
+    private fun openShellRefusal(el: Element): Msg? {
         val f = (Evaluator().valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported ?: return null
         f.openShell ?: return null
-        return "${nameOf(el)} is an open shell — a boolean needs watertight operands. It came in that way " +
-            "from ${f.source}; it still displays, places and exports (but not to 3MF or STL)."
+        return Msgs.noteOneDressedBodyIsOpenShellBooleanNeeds(name = nameOf(el), source = f.source)
     }
 
     /**
@@ -15231,13 +15154,12 @@ class Document {
         val tp =
             thickNetworks.firstOrNull { dependsOn(solidEl.ref.node, it.footprint.ref.node, HashSet()) }
                 ?: run {
-                    note =
-                        "${nameOf(solidEl)} was not extruded from a wall footprint, so there are no openings to cut — " +
-                        "extrude a wall's footprint first, or use Subtract"
+                    noteMsg =
+                        Msgs.noteOneDressedBodyWasNotExtrudedWallFootprint(name = nameOf(solidEl))
                     return null
                 }
         if (tp.intervals.isEmpty()) {
-            note = "the wall ${nameOf(solidEl)} was extruded from has no openings on it yet — place one with Opening first"
+            noteMsg = Msgs.noteOneDressedBodyWallWasExtrudedHasNo(name = nameOf(solidEl))
             return null
         }
         var cut = solidEl.ref as SolidRef
@@ -15257,7 +15179,7 @@ class Document {
         }
         val n = tp.intervals.size
         return add(cut, ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(solidEl)} with $n opening${if (n == 1) "" else "s"} cut out of it") }
+            .also { madeSolid(it, Msgs.noteOneDressedBodyOpeningCutOutIt(name = nameOf(solidEl), n = n)) }
     }
 
     // ---- cutting with an unbounded chain (OP-22's extension, step 1) ----
@@ -15279,13 +15201,12 @@ class Document {
      */
     fun chainThroughPoints(points: List<PointRef>): Element? {
         if (points.size < 2) {
-            note = "Chain: click at least two points — one point states no direction, so there is no ray to continue it"
+            noteMsg = Msgs.noteCuttingUnboundedChainChainClickLeastTwoPoints()
             return null
         }
         val chain = add(cx.chainThrough(points), ElementKind.CHAIN, Styles.CHAIN)
-        note =
-            "${nameOf(chain)} is a cutting chain through ${points.size} points, running to infinity at both ends — " +
-            "cut a solid with it, or split one in two"
+        noteMsg =
+            Msgs.noteCuttingUnboundedChainIsCuttingChainThroughPoints(name = nameOf(chain), count = points.size)
         return chain
     }
 
@@ -15364,7 +15285,7 @@ class Document {
         carry: CarryMode = CarryMode.ROTATING,
     ): Element? {
         val chain = chainRefFor(solidEl, chainEl) ?: return null
-        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, "Cut by chain") ?: return null)
+        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, Msgs.noteCuttingUnboundedChainCutChain()) ?: return null)
         // **The side is clicked in the chain's own space, and it has to be said now that the picks may span
         // spaces.** A click is a bare position; [Chains.sideAt] reads it in the chain's plane, and until the
         // boolean's `crossSpace` reached this row the two could not differ — a chain was only pickable where
@@ -15374,10 +15295,8 @@ class Document {
         // A replay never comes here — it is handed the sign it recorded — which is what keeps every recorded
         // `clicks=` position in one stated frame: the chain's.
         if (signs.isEmpty() && at != null && activeSpace.name != chainEl.space) {
-            note =
-                "Cut by chain: the side to keep is clicked beside ${nameOf(chainEl)}, which is drawn in " +
-                "${spaceLabel(spaceNamed(chainEl.space) ?: activeSpace)} — switch back there and click the side, " +
-                "so that \"which half\" is read in the same drawing you pointed at"
+            noteMsg =
+                Msgs.noteCuttingUnboundedChainCutChainSideKeepIs(name = nameOf(chainEl), spaceLabel = spaceLabel(spaceNamed(chainEl.space) ?: activeSpace))
             return null
         }
         val side = signs.firstOrNull() ?: sideScoredAt(chain, at)
@@ -15388,7 +15307,7 @@ class Document {
                 Styles.SOLID,
             )
         registerSigns(cut, listOf(side))
-        madeSolid(cut, "${nameOf(solidEl)} cut by ${nameOf(chainEl)}${alongWord(alongEl, carry)}, keeping the ${sideWord(side)} side")
+        madeSolid(cut, Msgs.noteCuttingUnboundedChainCutKeepingSide(name = nameOf(solidEl), name2 = nameOf(chainEl), alongWord = alongWord(alongEl, carry), sideWord = sideWord(side)))
         return cut
     }
 
@@ -15412,15 +15331,13 @@ class Document {
         carry: CarryMode = CarryMode.ROTATING,
     ): Element? {
         val chain = chainRefFor(solidEl, chainEl) ?: return null
-        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, "Split by chain") ?: return null)
+        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, Msgs.noteCuttingUnboundedChainSplitChain()) ?: return null)
         val plane = planeOfSpace(chainEl.space)
         val ref = solidEl.ref as SolidRef
         val left = add(cx.splitSolid(ref, chain, plane, 1, along, carry), ElementKind.SOLID, Styles.SOLID)
         val right = add(cx.splitSolid(ref, chain, plane, -1, along, carry), ElementKind.SOLID, Styles.SOLID)
-        note =
-            "${nameOf(solidEl)} split by ${nameOf(chainEl)}${alongWord(alongEl, carry)} into ${nameOf(left)} " +
-            "(the left of the chain's run) and ${nameOf(right)} (its right) — two solids, either of which can be " +
-            "hidden or cut again"
+        noteMsg =
+            Msgs.noteCuttingUnboundedChainSplitLeftChainRunIts(name = nameOf(solidEl), name2 = nameOf(chainEl), alongWord = alongWord(alongEl, carry), name3 = nameOf(left), name4 = nameOf(right))
         return left
     }
 
@@ -15428,7 +15345,7 @@ class Document {
     private fun alongWord(
         alongEl: Element?,
         carry: CarryMode,
-    ): String = if (alongEl == null) "" else " swept along ${nameOf(alongEl)} (${carry.word})"
+    ): Msg = if (alongEl == null) Msg.EMPTY else Msgs.noteCuttingUnboundedChainSweptAlong(name = nameOf(alongEl), word = carry.word)
 
     /** The chain [chainEl] hands a cut, with both gesture refusals made by name — or null. */
     private fun chainRefFor(
@@ -15436,27 +15353,24 @@ class Document {
         chainEl: Element,
     ): ChainRef? {
         if (solidEl.kind != ElementKind.SOLID) {
-            note = "Cut by chain: ${nameOf(solidEl)} is ${kindWord(solidEl)}, not a solid — click the body to cut first"
+            noteMsg = Msgs.noteCuttingUnboundedChainCutChainIsNotSolid(name = nameOf(solidEl), kind = kindWord(solidEl))
             return null
         }
         openShellRefusal(solidEl)?.let {
-            note = it
+            noteMsg = it
             return null
         }
         // A ray is the one near miss worth its own sentence: it looks like half a chain and is refused for a
         // reason of the operator rather than of the tool — it stops, so the plane closes round its end and
         // there are not two sides to choose between (see [chainOf] and [Chain]).
         if (chainEl.kind == ElementKind.RAY) {
-            note =
-                "Cut by chain: ${nameOf(chainEl)} is a ray — it stops, so the plane flows round its end and there is " +
-                "no side to keep; cut with the line through it, with a chain, or with anything that closes"
+            noteMsg =
+                Msgs.noteCuttingUnboundedChainCutChainIsRayIt(name = nameOf(chainEl))
             return null
         }
         return chainOf(chainEl) ?: run {
-            note =
-                "Cut by chain: ${nameOf(chainEl)} is ${kindWord(chainEl)} — cut with a chain or a line, both of which " +
-                "run on for ever, or with anything that closes (a circle, an outline, a rectangle), which separates " +
-                "the plane just as well"
+            noteMsg =
+                Msgs.noteCuttingUnboundedChainCutChainIsCutChain(name = nameOf(chainEl), kind = kindWord(chainEl))
             return null
         }
     }
@@ -15473,7 +15387,7 @@ class Document {
         return if (at == null) 1 else Chains.sideAt(v, at)
     }
 
-    private fun sideWord(side: Int): String = if (side >= 0) "left" else "right"
+    private fun sideWord(side: Int): Msg = if (side >= 0) Msgs.wordSideLeft() else Msgs.wordSideRight()
 
     // ---- imported bodies, and the placement that moves any solid (the JT import, OP-9) ----
 
@@ -15530,7 +15444,7 @@ class Document {
         if (el.kind != ElementKind.SOLID) return null
         val ref = cx.placeSolid(el.ref as SolidRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
         return add(ref, ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(el)} placed in ${activeSpace.name}") }
+            .also { madeSolid(it, Msgs.noteImportedBodiesPlacementPlaced(name = nameOf(el), name2 = activeSpace.name)) }
     }
 
     // ---- imported curves: a frozen run, its placement, and the sketch a flat one makes (OP-26, step 9) ----
@@ -15594,11 +15508,11 @@ class Document {
         at: PointRef,
         angle: ScalarRef? = null,
     ): Element? {
-        val runRef = spaceCurveRef(el, "Place curve") ?: return null
+        val runRef = spaceCurveRef(el, Msgs.noteImportedCurvesPlaceCurve()) ?: return null
         val ref = cx.placeCurve(runRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
         val placed = add(ref, ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         if (isImportedRun(el)) importedCurves.add(placed.id)
-        note = "${nameOf(placed)}: ${nameOf(el)} placed in ${activeSpace.name} — drag the point to move it"
+        noteMsg = Msgs.noteImportedCurvesPlacedDragPointMoveIt(name = nameOf(placed), name2 = nameOf(el), name3 = activeSpace.name)
         return placed
     }
 
@@ -15627,28 +15541,25 @@ class Document {
      * the number it misses a plane by (see [Curves3.planeOfRun] for the tolerance and its argument).
      */
     fun sketchFromWireframe(el: Element): Element? {
-        val what = "Sketch from wireframe"
+        val what = Msgs.noteImportedCurvesSketchWireframe()
         if (el.kind != ElementKind.SPACE_CURVE) {
-            note =
-                "$what: ${displayName(el)} is ${kindWord(el)}, not a curve in space — click an imported wireframe " +
-                "run; a curve you drew is already in a sketch, and its own space is the one to draw in"
+            noteMsg =
+                Msgs.noteImportedCurvesIsNotCurveSpaceClick(what = what, displayName = displayName(el), kind = kindWord(el))
             return null
         }
         if (!isImportedRun(el)) {
-            note =
-                "$what: ${displayName(el)} was not imported — it is a curve this drawing constructs, so it is already " +
-                "made of points you can edit, and whether it is flat is a fact of how it was built rather than " +
-                "something to measure"
+            noteMsg =
+                Msgs.noteImportedCurvesWasNotImportedItIs(what = what, displayName = displayName(el))
             return null
         }
         val path = (Evaluator().valueOf(el.ref) as? Path3Value)?.path
         if (path == null) {
-            note = "$what: ${displayName(el)} has no run right now"
+            noteMsg = Msgs.noteImportedCurvesHasNoRunRightNow(what = what, displayName = displayName(el))
             return null
         }
         val (plane, why) = Curves3.planeOfRun(path)
         if (plane == null) {
-            note = "$what: ${displayName(el)} cannot become a sketch — $why"
+            noteMsg = Msgs.noteImportedCurvesCannotBecomeSketch(what = what, displayName = displayName(el), why = why ?: Msg.EMPTY)
             return null
         }
         val points = Curves3.polyline(path)
@@ -15658,9 +15569,8 @@ class Document {
         val base = activeSpace
         val space = createWireSpace(el) ?: return null
         val made = traceWireSketch(el, local, path.closed)
-        note =
-            "${space.name}: ${displayName(el)} traced into a sketch on its own plane — ${local.size} points and " +
-            "${made.size} segments you can drag, dimension and build on (${base.name} is one click away in the space list)"
+        noteMsg =
+            Msgs.noteImportedCurvesTracedSketchItsOwnPlane(name = space.name, displayName = displayName(el), count = local.size, count2 = made.size, name2 = base.name)
         return made.firstOrNull()
     }
 
@@ -16032,7 +15942,7 @@ class Document {
     ): Boolean {
         val node = iv.position.node as? ParameterNode ?: return false
         if (node.boundTo != null) {
-            note = "This opening's position is wired to another parameter — set that one instead"
+            noteMsg = Msgs.noteImportedCurvesThisOpeningPositionIsWired()
             return false
         }
         val len = legLengthOf(tp, iv.legIndex) ?: return false
@@ -16040,12 +15950,11 @@ class Document {
         val max = maxOf(0.0, len - w)
         val want = mm.coerceIn(0.0, max)
         node.literal = ScalarValue(want.mm)
-        note =
+        noteMsg =
             if (kotlin.math.abs(want - mm) <= Vec2.EPS) {
                 null
             } else {
-                "Opening kept on its leg: position ${Format.num(want)} mm (0…${Format.num(max)} for a " +
-                    "${Format.num(w)} mm opening on a ${Format.num(len)} mm leg)"
+                Msgs.noteImportedCurvesOpeningKeptItsLegPosition(num = Format.num(want), num2 = Format.num(max), num3 = Format.num(w), num4 = Format.num(len))
             }
         return true
     }
@@ -16079,7 +15988,7 @@ class Document {
     ): Boolean {
         val node = iv.width.node as? ParameterNode ?: return false
         if (node.boundTo != null) {
-            note = "This opening's width is wired to another parameter — set that one instead"
+            noteMsg = Msgs.noteImportedCurvesThisOpeningWidthIsWired()
             return false
         }
         val len = legLengthOf(tp, iv.legIndex) ?: return false
@@ -16088,17 +15997,14 @@ class Document {
         val want = mm.coerceIn(MIN_INTERVAL_WIDTH, max)
         node.literal = ScalarValue(want.mm)
         val shared = thickNetworks.sumOf { p -> p.intervals.count { it !== iv && it.width.node === node } }
-        note =
+        noteMsg =
             when {
                 kotlin.math.abs(want - mm) > Vec2.EPS && mm <= 0.0 ->
-                    "An opening cannot be closed by crossing its jambs: width held at ${Format.num(want)} mm — " +
-                        "delete the opening instead"
+                    Msgs.noteImportedCurvesOpeningCannotBeClosedCrossing(num = Format.num(want))
                 kotlin.math.abs(want - mm) > Vec2.EPS ->
-                    "Opening kept on its leg: width ${Format.num(want)} mm (at most ${Format.num(max)} mm from " +
-                        "${Format.num(pos)} mm along a ${Format.num(len)} mm leg)"
+                    Msgs.noteImportedCurvesOpeningKeptItsLegWidth(num = Format.num(want), num2 = Format.num(max), num3 = Format.num(pos), num4 = Format.num(len))
                 shared > 0 ->
-                    "Width ${Format.num(want)} mm — this parameter is shared with $shared other opening" +
-                        "${if (shared == 1) "" else "s"}, which resize with it"
+                    Msgs.noteImportedCurvesWidthMmThisParameterIs(num = Format.num(want), shared = shared)
                 else -> null
             }
         return true
@@ -16408,14 +16314,14 @@ class Document {
             try {
                 ExprParser.parse(xText)
             } catch (err: ExprError) {
-                note = "Can't read x($param) from '${xText.trim()}': ${err.message}"
+                noteMsg = Msgs.noteFunctionCurvesCanTReadX(param = param, text = xText.trim(), message = err.message ?: "")
                 return null
             }
         val yAst =
             try {
                 ExprParser.parse(yText)
             } catch (err: ExprError) {
-                note = "Can't read y($param) from '${yText.trim()}': ${err.message}"
+                noteMsg = Msgs.noteFunctionCurvesCanTReadY(param = param, text = yText.trim(), message = err.message ?: "")
                 return null
             }
         val names = ArrayList<String>()
@@ -16427,7 +16333,7 @@ class Document {
             val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
-                note = "Can't build the curve: ${unknownName(n)}"
+                noteMsg = Msgs.noteFunctionCurvesCanTBuildCurve(unknownName = unknownName(n))
                 return null
             }
             names.add(n)
@@ -16477,7 +16383,7 @@ class Document {
             try {
                 ExprParser.parse(text)
             } catch (err: ExprError) {
-                note = "Can't read the curve's $which from '${text.trim()}': ${err.message}"
+                noteMsg = Msgs.noteFunctionCurvesCanTReadCurve(which = which, text = text.trim(), message = err.message ?: "")
                 return null
             }
         val names = ArrayList<String>()
@@ -16486,7 +16392,7 @@ class Document {
             val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
-                note = "Can't read the curve's $which: ${unknownName(n)}"
+                noteMsg = Msgs.noteFunctionCurvesCanTReadCurve2(which = which, unknownName = unknownName(n))
                 return null
             }
             names.add(n)
@@ -16516,9 +16422,9 @@ class Document {
      * rule): a function curve whose derivative the vocabulary cannot state has no tangent to be anchored on,
      * and the honest answer is to say which function stopped it rather than to difference numerically.
      */
-    fun funcTangentRefusal(el: Element): String? {
+    fun funcTangentRefusal(el: Element): Msg? {
         val c = (Evaluator().valueOf(el.ref) as? FuncCurveValue)?.curve ?: return null
-        return c.noTangent?.let { "${nameOf(el)}: $it" }
+        return c.noTangent?.let { Msgs.refusalQualified(name = Msg.text(nameOf(el)), reason = it) }
     }
 
     // ---- relational constructions ----
@@ -16575,25 +16481,20 @@ class Document {
         val chosen =
             when {
                 on.isEmpty() -> {
-                    note =
-                        "Tangent at point: ${nameOf(pointEl)} does not lie on a circle by construction — a " +
-                        "tangent needs a point the drawing puts on one: a circle's own radius point, a point " +
-                        "of a circle fitted through three, an end of an arc, a crossing with a circle, a " +
-                        "tangency, or a point riding a circle"
+                    noteMsg =
+                        Msgs.noteRelationalConstructionsTangentPointDoesNotLie(name = nameOf(pointEl))
                     null
                 }
                 circleEl != null ->
                     on.firstOrNull { it.host === circleEl } ?: run {
-                        note =
-                            "Tangent at point: ${nameOf(pointEl)} does not lie on ${nameOf(circleEl)} by " +
-                            "construction — it lies on ${namesOf(on)}; click one of those"
+                        noteMsg =
+                            Msgs.noteRelationalConstructionsTangentPointDoesNotLie2(name = nameOf(pointEl), name2 = nameOf(circleEl), namesOf = namesOf(on))
                         null
                     }
                 on.size == 1 -> on[0]
                 else -> {
-                    note =
-                        "Tangent at point: ${nameOf(pointEl)} lies on ${namesOf(on)}, so the tangent there is " +
-                        "two different lines — click the circle the tangent is to"
+                    noteMsg =
+                        Msgs.noteRelationalConstructionsTangentPointLiesSoTangent(name = nameOf(pointEl), namesOf = namesOf(on))
                     null
                 }
             } ?: return
@@ -16602,7 +16503,7 @@ class Document {
 
     /** The circles of [on], named the way a refusal has to name them — "e4 and e7", "e4, e7 and e9". */
     private fun namesOf(on: List<OnCircle>): String {
-        val names = on.map { it.host?.let { h -> nameOf(h) } ?: "the circle it rides" }
+        val names = on.map { it.host?.let { h -> nameOf(h) } ?: Msgs.noteRelationalConstructionsCircleItRides() }
         return if (names.size <= 1) names.joinToString() else names.dropLast(1).joinToString(", ") + " and " + names.last()
     }
 
@@ -16798,8 +16699,7 @@ class Document {
                 // fitted. That is the chamfer-on-arc convention's own spirit, said out loud.
                 val bad = listOf(leg1, leg2).firstOrNull { !isFilletLeg(it) }
                 if (bad != null) {
-                    note = "Fillet: ${nameOf(bad)} is ${kindWord(bad)}, and a rounding is tangent by " +
-                        "construction to a line or a circle — pick a line, a segment, a circle or an arc"
+                    noteMsg = Msgs.noteRoundingSupersedesCornerFilletIsRoundingIsTangent(name = nameOf(bad), kind = kindWord(bad))
                 }
                 null
             }
@@ -16859,7 +16759,7 @@ class Document {
             } else {
                 filletVariantFor(leg1, leg2, radius, clickA, clickB)
             } ?: return null
-        val reason = "no circle of that radius is tangent to both legs there"
+        val reason = Msgs.noteRoundingSupersedesCornerNoCircleThatRadiusIs()
         val set =
             when {
                 leg1.isLinear ->
@@ -16970,8 +16870,7 @@ class Document {
                 // setback along one could only be sampled. Named rather than dropped.
                 val bad = listOf(leg1, leg2).firstOrNull { !isFilletLeg(it) }
                 if (bad != null) {
-                    note = "Chamfer: ${nameOf(bad)} is ${kindWord(bad)}, and a bevel's end runs a stated " +
-                        "distance along its leg — pick a line, a segment, a circle or an arc"
+                    noteMsg = Msgs.noteRoundingSupersedesCornerChamferIsBevelEndRuns(name = nameOf(bad), kind = kindWord(bad))
                 }
                 null
             }
@@ -17000,7 +16899,7 @@ class Document {
             } else {
                 chamferVariantFor(leg1, leg2, distance, clickA, clickB)
             } ?: return null
-        val reason = "the two legs do not cross there, so there is no corner to bevel"
+        val reason = Msgs.noteRoundingSupersedesCornerTwoLegsDoNotCross()
         val set =
             when {
                 leg1.isLinear -> cx.intersectLC(carrierLine(leg1), carrierCircle(leg2))
@@ -17053,7 +16952,7 @@ class Document {
         val v2 = filletLegOf(leg2, ev) ?: return null
         val v = FilletMath.chamferVariantFor(v1, v2, d, clickA, clickB)
         if (v == null) {
-            note = "Chamfer: ${nameOf(leg1)} and ${nameOf(leg2)} do not cross, so there is no corner to bevel"
+            noteMsg = Msgs.noteRoundingSupersedesCornerChamferDoNotCrossSo(name = nameOf(leg1), name2 = nameOf(leg2))
         }
         return v
     }
@@ -17515,11 +17414,11 @@ class Document {
         val refEl = elementFor(reference) ?: return null
         val aboutEl = elementFor(about) ?: return null
         if (count < 2) {
-            note = "a pattern needs at least 2 instances"
+            noteMsg = Msgs.notePatternsOrbitsPatternNeedsLeastInstances()
             return null
         }
         if (refEl === aboutEl) {
-            note = "a pattern needs two different points"
+            noteMsg = Msgs.notePatternsOrbitsPatternNeedsTwoDifferentPoints()
             return null
         }
         val name = named ?: uniquePatternName()
@@ -17558,7 +17457,7 @@ class Document {
                 host.gesture.inner.getValue(host.index).add(p)
                 nestedPatterns.add(p)
             }
-            note = "Pattern ${p.name}: $count instances — anything built on its members now repeats round it"
+            noteMsg = Msgs.notePatternsOrbitsPatternInstancesAnythingBuiltIts(name = p.name, count = count)
             p
         }.also { p -> p.step = journal.lastOrNull()?.takeIf { it.kind == "pattern" } }
     }
@@ -17628,7 +17527,7 @@ class Document {
         val floor = building?.gesture?.levels?.size ?: 0
         var top = deepest
         var run: LevelRun? = null
-        var deeper: String? = null
+        var deeper: Msg? = null
         while (top >= floor) {
             val here = levelRun(tool, slotEl, sites, top, floor)
             if (here != null) {
@@ -17640,12 +17539,12 @@ class Document {
             deeper = levelRefusal(tool, slotEl, sites, top) ?: deeper
             top--
         }
-        val plan = run ?: return Replication(outermost, null, emptyList(), deeper ?: "not replicated: ${nameOf(slotEl.first { it != null }!!)} is outside the pattern")
+        val plan = run ?: return Replication(outermost, null, emptyList(), deeper ?: Msgs.notePatternsOrbitsNotReplicatedIsOutsidePattern(name = nameOf(slotEl.first { it != null }!!)))
         if (plan.base > floor && building == null) {
             // a run that starts *inside* a nested pattern has no step form of its own — the `orbit` step names
             // the pattern, and a nested one is not a name the file resolves. Unreachable in practice (every
             // element a ride built is a member of that ride too), and refused rather than written unloadably.
-            return Replication(outermost, null, emptyList(), "not replicated: ${plan.levels[0].pattern.name} is a pattern inside a pattern, which only the gesture that carries it can ride")
+            return Replication(outermost, null, emptyList(), Msgs.notePatternsOrbitsNotReplicatedIsPatternInside(name = plan.levels[0].pattern.name))
         }
         val p = plan.levels[0].pattern
         val levels = plan.levels
@@ -17678,9 +17577,9 @@ class Document {
                 levels, tool.id, pointPicks, elementPicks, cells, cellIndices, emptyList(), picks.signs, picks.count,
                 chainsPart = tool.facePartOperand,
             )
-        val copies = copiesFor(gesture, p.count) ?: return Replication(p, null, emptyList(), "not replicated: the pattern has no room for it")
+        val copies = copiesFor(gesture, p.count) ?: return Replication(p, null, emptyList(), Msgs.notePatternsOrbitsNotReplicatedPatternHasNo())
         if (copies.fold(1) { a, b -> a * b } < 2) {
-            return Replication(p, null, emptyList(), "not replicated: the pattern has no room for a second copy of it")
+            return Replication(p, null, emptyList(), Msgs.notePatternsOrbitsNotReplicatedPatternHasNo2())
         }
         return Replication(p, gesture, copies, null, deeper)
     }
@@ -17813,7 +17712,7 @@ class Document {
         slotEl: List<Element?>,
         sites: List<List<MemberSite>>,
         top: Int,
-    ): String? = levelRefusalAt(tool, slotEl, sites, top, top)
+    ): Msg? = levelRefusalAt(tool, slotEl, sites, top, top)
 
     private fun levelRefusalAt(
         tool: ToolDef,
@@ -17821,10 +17720,10 @@ class Document {
         sites: List<List<MemberSite>>,
         level: Int,
         top: Int,
-    ): String? {
+    ): Msg? {
         val ref =
             sites.firstNotNullOfOrNull { row -> row.firstOrNull { it.level == level }?.pattern }
-                ?: return "not replicated: nothing rides that pattern"
+                ?: return Msgs.notePatternsOrbitsNotReplicatedNothingRidesThat()
         for (i in tool.slots.indices) {
             val el = slotEl[i] ?: continue
             val here = sites[i].firstOrNull { it.level == level }
@@ -17836,9 +17735,9 @@ class Document {
             // …and an outside input has to be one this level's transform leaves alone
             if (ref.invariants.none { it === el }) {
                 return when {
-                    level > 0 -> "not replicated inside ${ref.name}: ${nameOf(el)} is outside it"
-                    here != null -> "not replicated: ${nameOf(el)} belongs to pattern ${here.pattern.name}"
-                    else -> "not replicated: ${nameOf(el)} is outside the pattern"
+                    level > 0 -> Msgs.notePatternsOrbitsNotReplicatedInsideIsOutside(name = ref.name, name2 = nameOf(el))
+                    here != null -> Msgs.notePatternsOrbitsNotReplicatedBelongsPattern(name = nameOf(el), name2 = here.pattern.name)
+                    else -> Msgs.notePatternsOrbitsNotReplicatedIsOutsidePattern(name = nameOf(el))
                 }
             }
         }
@@ -18072,7 +17971,7 @@ class Document {
         val k = perCopy.values.firstOrNull()?.size ?: return
         if (k == 0) return
         if (perCopy.values.any { it.size != k } || perCopy.size != counts.fold(1) { a, b -> a * b } || perCopy.size < 2) {
-            note = "Pattern ${g.pattern.name}: ${g.label} did not build the same geometry at every index, so its results are not pattern members"
+            noteMsg = Msgs.notePatternsOrbitsPatternDidNotBuildSame(name = g.pattern.name, name2 = g.label)
             return
         }
         for (l in counts.indices) {
@@ -18174,19 +18073,18 @@ class Document {
     fun restampRefusal(
         p: Pattern,
         n: Int,
-    ): String? {
-        if (n < 2) return "a pattern needs at least 2 instances"
-        if (n == p.count) return "pattern ${p.name} already has $n instances"
+    ): Msg? {
+        if (n < 2) return Msgs.notePatternsOrbitsPatternNeedsLeastInstances()
+        if (n == p.count) return Msgs.notePatternsOrbitsPatternAlreadyHasInstances(name = p.name, n = n)
         val sizes = HashMap<PatternOrbit, Int>()
         sizes[p.ring] = n
         for (g in p.gestures) {
             val over = g.ridingAt(0).firstOrNull { (sizes[orbitOf(g, it)] ?: 0) <= it.offset }
             if (over != null) {
-                return "can't re-stamp pattern ${p.name} at $n: its ${g.label} spans ${over.offset + 1} members " +
-                    "of a ${sizes[orbitOf(g, over)] ?: 0}-member orbit — use the tool again instead"
+                return Msgs.notePatternsOrbitsCanTReStampPattern(name = p.name, n = n, name2 = g.label, offset = over.offset + 1, orbitOf = sizes[orbitOf(g, over)] ?: 0)
             }
-            val copies = copiesFor(g, n, sizes) ?: return "can't re-stamp pattern ${p.name}: its ${g.label} rides nothing"
-            if (copies[0] < 2) return "can't re-stamp pattern ${p.name} at $n: its ${g.label} would have no second copy"
+            val copies = copiesFor(g, n, sizes) ?: return Msgs.notePatternsOrbitsCanTReStampPattern2(name = p.name, name2 = g.label)
+            if (copies[0] < 2) return Msgs.notePatternsOrbitsCanTReStampPattern3(name = p.name, n = n, name2 = g.label)
             for (o in g.outputs) sizes[o] = if (o.pattern === p) copies[0] else o.size
         }
         return null
@@ -18203,13 +18101,13 @@ class Document {
     fun gestureCountRefusal(
         g: OrbitGesture,
         n: Int,
-    ): String? {
+    ): Msg? {
         val tool = toolDef(g.toolId)
         val least = maxOf(tool?.minCount ?: 2, 2)
-        if (g.count <= 0) return "${g.label} has no count of its own to re-stamp"
-        if (n < least) return "${g.label} needs at least $least"
-        if (n == g.count) return "${g.label} already has $n"
-        if (g.step == null) return "${g.label} has no step to re-run"
+        if (g.count <= 0) return Msgs.notePatternsOrbitsHasNoCountItsOwn(name = g.label)
+        if (n < least) return Msgs.notePatternsOrbitsNeedsLeast(name = g.label, least = least)
+        if (n == g.count) return Msgs.notePatternsOrbitsAlreadyHas(name = g.label, n = n)
+        if (g.step == null) return Msgs.notePatternsOrbitsHasNoStepReRun(name = g.label)
         return null
     }
 
@@ -18297,7 +18195,7 @@ class Document {
                 Picks(emptyList(), listOf(e0, e1), v1, listOf(v0 + (v1 - v0) * 0.9, v1 + (v2 - v1) * 0.1)),
             ) ?: return
         buildOrbit(plan, fillet, scalars)
-        note = "Rounded polygon: ${p.name}, $count sides and $count roundings — retype the radius to re-round, or re-stamp the count"
+        noteMsg = Msgs.notePatternsOrbitsRoundedPolygonSidesRoundingsRetype(name = p.name, count = count)
     }
 
     /**
@@ -18344,16 +18242,15 @@ class Document {
         val (s12, s13) =
             storedLegSigns(signs) ?: tangentCircleSigns(l1, l2, l3, at) ?: run {
                 // a refusal is said out loud rather than leaving three picks that quietly built nothing
-                note =
-                    "No circle is tangent to all three of ${nameOf(leg1)}, ${nameOf(leg2)} and ${nameOf(leg3)}: " +
-                    "two of them are parallel, or all three meet in one point"
+                noteMsg =
+                    Msgs.notePatternsOrbitsNoCircleIsTangentAll(name = nameOf(leg1), name2 = nameOf(leg2), name3 = nameOf(leg3))
                 return null
             }
         val centre =
             cx.select(
                 cx.intersectLL(bisectorOfLines(l1, l2, s12), bisectorOfLines(l1, l3, s13)),
                 +1,
-                "no circle is tangent to all three lines (two of them are parallel, or all three meet in a point)",
+                Msgs.notePatternsOrbitsNoCircleIsTangentAll2(),
             )
         val touch = cx.projectToLine(centre, l1)
         val el = add(cx.circleCP(centre, touch), ElementKind.CIRCLE, Styles.CURVE)
@@ -18374,7 +18271,7 @@ class Document {
         l2: LineRef,
         sign: Int,
     ): LineRef {
-        val corner = cx.select(cx.intersectLL(l1, l2), +1, "parallel lines have no crossing to bisect")
+        val corner = cx.select(cx.intersectLL(l1, l2), +1, Msgs.notePatternsOrbitsParallelLinesHaveNoCrossing())
         val step = cx.const(1.0.mm)
         return cx.angleBisector(cx.pointAlongLine(l1, corner, step, +1), corner, cx.pointAlongLine(l2, corner, step, sign))
     }
@@ -18496,20 +18393,20 @@ class Document {
             ElementKind.ARC -> measurement("len", cx.measureArcLength(seg.ref as ArcRef))
             ElementKind.ELLIPTIC_ARC ->
                 measurement("len", cx.measureEllipticArcLength(seg.ref as EllipticArcRef)).also {
-                    note = "${it.name} is computed numerically to ±${Conics.LENGTH_TOL_MM} mm — an elliptic arc's length has no closed form (OP-15)"
+                    noteMsg = Msgs.noteMeasurementsIsComputedNumericallyMmElliptic(name = it.name, LENGTH_TOL_MM = Conics.LENGTH_TOL_MM.toString())
                 }
             ElementKind.ELLIPSE ->
                 measurement("len", cx.measureCircumference(seg.ref as EllipseRef)).also {
-                    note = "${it.name} is computed numerically to ±${Conics.LENGTH_TOL_MM} mm — an ellipse's circumference has no closed form (OP-15)"
+                    noteMsg = Msgs.noteMeasurementsIsComputedNumericallyMmEllipse(name = it.name, LENGTH_TOL_MM = Conics.LENGTH_TOL_MM.toString())
                 }
             // the same statement one curve family on: a construction over a function curve is exact, and its
             // *measured* length is not — so the number is flagged where it is taken (OP-15, OP-24's line)
             ElementKind.FUNC_CURVE ->
                 measurement("len", cx.measureFuncCurveLength(seg.ref as FuncCurveRef)).also {
-                    note = "${it.name} is computed numerically to ±${FuncCurves.LENGTH_TOL_MM} mm — a function curve's length has no closed form (OP-15)"
+                    noteMsg = Msgs.noteMeasurementsIsComputedNumericallyMmFunction(name = it.name, LENGTH_TOL_MM = FuncCurves.LENGTH_TOL_MM.toString())
                 }
             else -> {
-                note = "${nameOf(seg)} has no length to measure"
+                noteMsg = Msgs.noteMeasurementsHasNoLengthMeasure(name = nameOf(seg))
                 null
             }
         }
@@ -18585,10 +18482,8 @@ class Document {
         // graphic lives in the 3D view, which is where both of its ends are drawn.
         for (p in listOf(pa, pb)) {
             if (p.inSpace) {
-                note =
-                    "${nameOf(p)} is a point in space, and a linear dimension is measured and drawn in the " +
-                    "sketch plane — dimension two points of ${activeSpace.name}, or read this one's own " +
-                    "position in the panel"
+                noteMsg =
+                    Msgs.noteDimensionsIsPointSpaceLinearDimension(name = nameOf(p), name2 = activeSpace.name)
                 return null
             }
         }
@@ -18611,7 +18506,7 @@ class Document {
         dofs: List<Quantity> = emptyList(),
     ): Element? {
         if (curve.isElliptic) {
-            note = "${nameOf(curve)} is an ellipse, which has no single radius — dimension the distance between its axis points (Key points), or measure its length"
+            noteMsg = Msgs.noteDimensionsIsEllipseWhichHasNo(name = nameOf(curve))
             return null
         }
         if (!curve.isCentric) return null

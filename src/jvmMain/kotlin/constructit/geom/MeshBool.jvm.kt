@@ -1,5 +1,7 @@
 package constructit.geom
 
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import manifold3d.Manifold
 import manifold3d.UIntVector
 import manifold3d.manifold.MeshGL
@@ -34,9 +36,9 @@ actual object MeshBool {
             // resolve and only the first native call fails
             val cube = Manifold.Cube(manifold3d.linalg.DoubleVec3(1.0, 1.0, 1.0), false)
             val probe = cube.subtract(cube.translate(0.5, 0.5, 0.5))
-            if (probe.isEmpty) "the engine returned nothing for its own smoke test" else null
+            if (probe.isEmpty) Msgs.refusalMeshboolEngineReturnedNothingItsOwn().render() else null
         } catch (t: Throwable) {
-            "no usable native Manifold library for this platform (${t::class.simpleName}: ${t.message})"
+            Msgs.refusalMeshboolNoUsableNativeManifoldLibrary(simpleName = t::class.simpleName ?: "", message = t.message ?: "").render()
         }
 
     /**
@@ -76,7 +78,7 @@ actual object MeshBool {
 
     actual val available: Boolean get() = failure == null
 
-    actual val status: String get() = failure ?: "Manifold $VERSION (JVM binding, float32 meshes)"
+    actual val status: String get() = failure ?: Msgs.refusalMeshboolManifoldJvmBindingFloatMeshes(VERSION = VERSION).render()
 
     /** The binding's version, quoted in reasons so a report says which engine produced a mesh. */
     const val VERSION = "2.0.3"
@@ -85,26 +87,26 @@ actual object MeshBool {
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, String?> {
+    ): Pair<Mesh3?, Msg?> {
         val why = failure
         if (why != null) return null to meshBoolUnavailable(why)
-        if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to "a general boolean needs two closed meshes"
+        if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanNeedsTwoClosed()
         return try {
             val ma = Manifold(meshGl(a))
-            if (ma.status() != 0) return null to "the first solid's mesh is not one Manifold accepts (status ${ma.status()})"
+            if (ma.status() != 0) return null to Msgs.refusalMeshboolFirstSolidMeshIsNot(status = ma.status())
             val mb = Manifold(meshGl(b))
-            if (mb.status() != 0) return null to "the second solid's mesh is not one Manifold accepts (status ${mb.status()})"
+            if (mb.status() != 0) return null to Msgs.refusalMeshboolSecondSolidMeshIsNot(status = mb.status())
             val r =
                 when (kind) {
                     BoolOp.UNION -> ma.add(mb)
                     BoolOp.SUBTRACT -> ma.subtract(mb)
                     BoolOp.INTERSECT -> ma.intersect(mb)
                 }
-            if (r.status() != 0) return null to "the general boolean failed (Manifold status ${r.status()})"
-            if (r.isEmpty) return null to "the boolean leaves nothing of the solid"
+            if (r.status() != 0) return null to Msgs.refusalMeshboolGeneralBooleanFailedManifoldStatus(status = r.status())
+            if (r.isEmpty) return null to Msgs.refusalMeshboolBooleanLeavesNothingSolid()
             MeshCanon.finish(mesh3(r.getMeshGL()))
         } catch (t: Throwable) {
-            null to "the general boolean engine failed (${t::class.simpleName}: ${t.message})"
+            null to Msgs.refusalMeshboolGeneralBooleanEngineFailed(simpleName = t::class.simpleName ?: "", message = t.message ?: "")
         }
     }
 
