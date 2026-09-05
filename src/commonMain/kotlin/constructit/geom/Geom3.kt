@@ -1331,6 +1331,70 @@ object Geom3 {
     // ---- features ----
 
     /**
+     * How far a tool stands off a face of the body it works on — the one rule GitHub #33 left with no
+     * exception, *a tool never shares a face with the body*, said here for the **other** tool that shares one
+     * by construction ([Blend3]'s `GROW_MM` is the same micron for the blend's).
+     *
+     * A micron: six orders below any feature a drawing has and five above the general engine's own float32
+     * noise, which is the same window the blend's step-off was measured into.
+     */
+    const val TOOL_STEP_MM = 1e-3
+
+    /**
+     * The **tool a *Cut* takes out of a body**: [regions], read on [face] from behind, swept [depth] mm into
+     * the material — and standing [TOOL_STEP_MM] proud of [face] in the air, so that no face of it lies in
+     * a face of the body (OP-9, GitHub #33).
+     *
+     * **Why the step-off, measured rather than assumed** (session 82, the drill through a pyramid's slanted
+     * face). The cut used to start exactly *on* the face, and the reasoning for that was exactness: *"a cap a
+     * femtometre off a face it is meant to be flush with is exactly the near-tangency the general boolean
+     * cannot close"*. Flush is worse than near, and by the whole of #33's argument: a **coplanar** pair of
+     * faces is a cancellation the engine has to adjudicate, and a float32 engine adjudicating it is a coin
+     * toss. Where the two prisms share an axis this never showed, because the slab algebra (OP-22) answers
+     * them exactly and never comes near a mesh; a drill through a **slanted** face has no common axis, goes
+     * to Manifold, and came back with nine zero-thickness flaps in the re-triangulation of that face — the
+     * body of five tests in this suite. Stepped a micron into the air the very same drill comes back with
+     * none, and the only surface the tool then shares with the body is its **wall**, which crosses the face
+     * transversally and is the case the engine is exact about.
+     *
+     * **The depth is still the depth.** The step is added to the sweep as well as to the start, so the far
+     * cap lands where `depth` says it does; a blind pocket is the depth that was typed and a through cut is
+     * unchanged. What moves is a micron of *air* above the face, which removes nothing.
+     *
+     * **[stepOff] is whether there is air to step into, and it is a fact about the drawing rather than a
+     * measurement.** [face] is a face of the body exactly when the sketch space was made *on* a face
+     * (`SketchSpace.piece >= 0`), and then the outward side of it is air by definition. A **datum** plane is
+     * not: it may lean straight through the material, and there the micron is not air but a micron-thick
+     * slab off the whole cut cross-section — 2.26 mm³ on this suite's own 45° mitre, which is how the
+     * distinction was found. So a datum's tool keeps the flush cap it always had, with the coin toss that
+     * comes with it *where a datum happens to lie in a face*; that case is recorded rather than hidden, and
+     * the exact reading of it is the blend's — ask the dressed face list, not the triangles.
+     *
+     * The mirroring in the flipped frame is bit-exact — a negation and a product of negations — so the
+     * tool's wall stands over the drawn outline to the last bit, where computing the same outline on an
+     * offset plane would add and cancel in-plane terms. With [stepOff] false not one bit of this differs
+     * from the sketch-behind-and-extrude pair it replaced.
+     */
+    fun cutTool(
+        face: Plane3,
+        regions: List<Region>,
+        depth: Double,
+        stepOff: Boolean,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> {
+        if (regions.isEmpty()) return null to "a sketch needs at least one region"
+        val m = Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)
+        val mirrored =
+            regions.map { r ->
+                Region(GeomMath.transform(r.outer, m), r.holes.map { GeomMath.transform(it, m) })
+            }
+        val step = if (stepOff) TOOL_STEP_MM else 0.0
+        // `flipped()` points into the material, so stepping *back* along it is stepping out into the air
+        val behind = face.flipped().translated(-step)
+        return extrude(Sketch3(behind, mirrored), depth + step, tolMm)
+    }
+
+    /**
      * A prism: [sketch] swept [depth] mm along its plane's normal (OP-17 slice 1).
      *
      * Caps are the triangulated region — bottom wound the other way so its normal points out of the
@@ -1852,6 +1916,36 @@ object Geom3 {
     private fun roundRadius(profile: SweepProfile): Double? = (profile as? SweepProfile.Round)?.radius
 
     /**
+     * Whether the ruled quad `a0 → a1 → b1 → b0` **folds over the diagonal its own split runs on** — the two
+     * triangles `(a0, a1, b1)` and `(a0, b1, b0)` facing into opposite half-spaces.
+     *
+     * *Why this is the criterion, and why it is a statement about the **correspondence*** (session 82, the
+     * orchestrator's probe). A ruled band in this kernel *is* the polyhedron its stated split makes of it —
+     * every quad split from its own lower rail, which `SkinTest` asserts against a hand-written figure — so
+     * a quad is folded exactly when the two triangles that stand for it are wound against each other. A
+     * merely **warped** quad, which every twisted band has, keeps its two normals on the same side and their
+     * dot product positive; the warp is first order in the turn and the fold is a sign change, so the two are
+     * separated by the whole of a half-space rather than by a tolerance.
+     *
+     * What it catches that a mesh check cannot: a twist that folds *without* making anything coplanar. Two
+     * congruent triangles turned one corner round send every ruling to the vertical of its neighbour, the
+     * three quads sweep through the axis, and the shell they close encloses **exactly nothing** — no flap,
+     * every edge used once each way, and no body. [MeshCanon.hollow] names that shell after the fact; this
+     * names the correspondence that asked for it, before a triangle exists.
+     */
+    internal fun foldedQuad(
+        a0: Vec3,
+        a1: Vec3,
+        b1: Vec3,
+        b0: Vec3,
+    ): Boolean {
+        val n1 = (a1 - a0).cross(b1 - a0)
+        val n2 = (b1 - a0).cross(b0 - a0)
+        if (n1.length() <= Vec3.EPS || n2.length() <= Vec3.EPS) return false
+        return n1.dot(n2) < 0.0
+    }
+
+    /**
      * The **shells a run of stations carries [sections] through**: one quad band per span and, on an open
      * run, a cap at each end.
      *
@@ -1889,6 +1983,7 @@ object Geom3 {
      * *before* [place], which is what makes it **rigid** scaling about the anchor rather than a re-reading
      * of the section's sketch: the ring keeps its shape and the mitre push then happens to that ring.
      */
+
     internal fun sweptShells(
         sections: List<TessRegion>,
         stations: List<Frame3>,
@@ -2353,43 +2448,86 @@ object Geom3 {
         // **One level** ([Solid3.meshAt]): a loft's row count comes from its guides' own sampled polylines,
         // which live inside the correspondence plan along with the global boundary parameter set every ring
         // is built on — so coarsening it would mean redoing the expensive half to save the cheap one.
-        return Solid3.derivedFine(Feature3.Loft(sections, seams, guides)) {
-            val mb = MeshBuilder()
-            for (k in 0 until sections.size - 1) {
-                val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
-                val steps = if (here.isEmpty()) 1 else here.maxOf { stepsOf(it, k) }
-                val rows =
-                    (0..steps).map { i ->
-                        val t = i.toDouble() / steps
-                        val bows = here.map { bowOf(it, k, t) }
-                        (0 until m).map { j ->
-                            var p = ringW[k][j] * (1.0 - t) + ringW[k + 1][j] * t
-                            if (here.isNotEmpty()) {
-                                val w = weightsAt(here.map { it.param }, us[j])
-                                for ((gi, bow) in bows.withIndex()) p += bow * w[gi]
-                            }
-                            p
+        //
+        // **And it is built here rather than on demand** (session 82), which is the one thing about a loft
+        // that is no longer lazy: a correspondence may fold the band back on itself *without* making two
+        // rails meet ([crossingRails] says exactly that in its own note). The fold itself is a statement
+        // about the **rings** and is asked of them below, before a triangle exists; the shell is still built
+        // here because the two degenerate closed shells ([MeshCanon.fault]) are the backstop for a fold no
+        // single quad makes. The laziness bought a `Feature3` nobody meshes, and *watertight or refused*
+        // (OP-9) outranks it.
+        // the rows of every band, laid out once and read twice: asked first, emitted after
+        val banded = ArrayList<List<List<Vec3>>>(sections.size - 1)
+        for (k in 0 until sections.size - 1) {
+            val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
+            val steps = if (here.isEmpty()) 1 else here.maxOf { stepsOf(it, k) }
+            banded.add(
+                (0..steps).map { i ->
+                    val t = i.toDouble() / steps
+                    val bows = here.map { bowOf(it, k, t) }
+                    (0 until m).map { j ->
+                        var p = ringW[k][j] * (1.0 - t) + ringW[k + 1][j] * t
+                        if (here.isNotEmpty()) {
+                            val w = weightsAt(here.map { it.param }, us[j])
+                            for ((gi, bow) in bows.withIndex()) p += bow * w[gi]
+                        }
+                        p
+                    }
+                },
+            )
+        }
+        // **…and the third way a correspondence folds, asked of the rings and not of a triangle** (session
+        // 82, the orchestrator's probe): a quad whose own split makes two triangles that face against each
+        // other. [crossingRails] catches a seam turned far enough that two rails *meet*; this catches one
+        // turned far enough that a single quad turns inside out, which is the case where nothing meets and
+        // nothing is coplanar — the band simply passes through the run. See [foldedQuad].
+        for ((k, rows) in banded.withIndex()) {
+            for (i in 0 until rows.size - 1) {
+                for (j in 0 until m) {
+                    val j2 = (j + 1) % m
+                    if (!foldedQuad(rows[i][j], rows[i][j2], rows[i + 1][j2], rows[i + 1][j])) continue
+                    return null to
+                        "the seam pairs sections ${k + 1} and ${k + 2} so that the band between them folds " +
+                        "over itself: the strip at ${percent(us[j])} of the boundary turns so far that the " +
+                        "two triangles its own split makes of it face against each other, so the shell " +
+                        "passes through the run rather than running along it — start the correspondence at " +
+                        "another vertex, or turn one of the sections so the rails run the same way about it"
+                }
+            }
+        }
+        val shell =
+            run {
+                val mb = MeshBuilder()
+                for (rows in banded) {
+                    for (i in 0 until rows.size - 1) {
+                        for (j in 0 until m) {
+                            val j2 = (j + 1) % m
+                            mb.triangle(rows[i][j], rows[i][j2], rows[i + 1][j2])
+                            mb.triangle(rows[i][j], rows[i + 1][j2], rows[i + 1][j])
                         }
                     }
-                for (i in 0 until steps) {
-                    for (j in 0 until m) {
-                        val j2 = (j + 1) % m
-                        mb.triangle(rows[i][j], rows[i][j2], rows[i + 1][j2])
-                        mb.triangle(rows[i][j], rows[i + 1][j2], rows[i + 1][j])
+                }
+                for ((ci, cap) in caps.withIndex()) {
+                    val (p, split) = cap
+                    for (t in split) {
+                        val a = p.plane.toWorld(t.a)
+                        val b = p.plane.toWorld(t.b)
+                        val c = p.plane.toWorld(t.c)
+                        if (capAsIs[ci]) mb.triangle(a, b, c) else mb.triangle(a, c, b)
                     }
                 }
+                mb.build()
             }
-            for ((ci, cap) in caps.withIndex()) {
-                val (p, split) = cap
-                for (t in split) {
-                    val a = p.plane.toWorld(t.a)
-                    val b = p.plane.toWorld(t.b)
-                    val c = p.plane.toWorld(t.c)
-                    if (capAsIs[ci]) mb.triangle(a, b, c) else mb.triangle(a, c, b)
-                }
-            }
-            mb.build()
-        } to null
+        // …and the shell itself, against the two degenerate closed shells the gate names — the backstop for
+        // a correspondence that folds in a way no single quad does ([MeshCanon.fault]: flap and hollow)
+        MeshCanon.fault(shell)?.let {
+            return null to
+                "the correspondence folds this loft's shell back on itself — $it. Two bands that are wound " +
+                "against each other along the rail they share are the surface doubling back, which is what a " +
+                "seam turned too far does short of making two rails meet: start the correspondence at " +
+                "another vertex, or turn one of the sections so the rails run the same way about the run"
+        }
+        return Solid3.derivedFine(Feature3.Loft(sections, seams, guides)) { shell } to null
     }
 
     /**

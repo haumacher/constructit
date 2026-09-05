@@ -6,14 +6,19 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Element
 import constructit.geom.Frames3
 import constructit.geom.Geom3
+import constructit.geom.GeomMath
 import constructit.geom.Mesh3
 import constructit.geom.MeshCanon
 import constructit.geom.Path3
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
+import constructit.geom.Vec2
 import constructit.geom.Vec3
 import java.io.File
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -47,14 +52,78 @@ fun geometryNodeOf(el: Element): Node {
 }
 
 /**
+ * **What a rolling ball of radius [r] takes out of a square corner, per millimetre of straight run** — the
+ * blend's own section area, `r²(1 − π/4)`: the square the two faces make of the corner, less the quarter
+ * disc the ball leaves behind.
+ */
+fun raspWedgeArea(r: Double): Double = r * r * (1.0 - PI / 4.0)
+
+/**
+ * **The same figure with the ball's quarter-arc replaced by the tessellation's own inscribed chords** —
+ * `r² − ½·n·r²·sin(π/2n)` for the `n` [GeomMath.chordSteps] the kernel would use.
+ *
+ * A chord lies further from the corner than the arc it replaces, so the wedge a meshed tool takes out is
+ * always the larger of the two: exact ≤ removed ≤ this, and the bracket moves with the tolerance rather
+ * than being a percentage (`FlapFreeBlendTest`'s own rule).
+ */
+fun raspWedgeAreaByChords(
+    r: Double,
+    tolMm: Double = GeomMath.TESS_TOL_MM,
+): Double {
+    val n = GeomMath.chordSteps(r, PI / 2.0, tolMm)
+    return r * r - 0.5 * n * r * r * sin(PI / (2.0 * n))
+}
+
+/**
+ * **What the same ball takes out of a rim that is an arc of its *own* radius, per radian of that arc** —
+ * `r³/6`, and the whole of *the ball stands still*.
+ *
+ * The ball's centre runs on a circle of radius `R − r`, so at `R = r` it does not run at all: the band is
+ * one ball's own surface, a sphere patch, and the material lost over an angle `φ` is the cylinder sector
+ * under the rim (`φr³/2`) less the sphere's own sector (`φr³/3`). Read as a moment it is
+ * `∫∫(r − a) dA` over the corner wedge, which is the figure [raspBallMomentByChords] computes for the
+ * tessellation.
+ */
+fun raspBallMoment(r: Double): Double = r * r * r / 6.0
+
+/** [raspBallMoment] over the polygon the kernel's own chords make of the ball's quarter-arc. */
+fun raspBallMomentByChords(
+    r: Double,
+    tolMm: Double = GeomMath.TESS_TOL_MM,
+): Double {
+    val n = GeomMath.chordSteps(r, PI / 2.0, tolMm)
+    // the wedge as a polygon: the corner, then the ball's arc from one tangency to the other
+    val pts = ArrayList<Vec2>(n + 2)
+    pts.add(Vec2(0.0, 0.0))
+    for (k in 0..n) {
+        val th = -PI / 2.0 - (PI / 2.0) * k / n
+        pts.add(Vec2(r * (1.0 + cos(th)), r * (1.0 + sin(th))))
+    }
+    var twiceArea = 0.0
+    var sixMoment = 0.0
+    for (i in pts.indices) {
+        val a = pts[i]
+        val b = pts[(i + 1) % pts.size]
+        val cross = a.x * b.y - b.x * a.y
+        twiceArea += cross
+        sixMoment += (a.x + b.x) * cross
+    }
+    val area = twiceArea / 2.0
+    val moment = sixMoment / 6.0
+    return r * area - moment
+}
+
+/**
  * Watertightness, the hard requirement for a solid (OP-2): the mesh must be a **closed, oriented
  * 2-manifold**, so it can be printed and its volume means something.
  *
- * Three checks, all of them structural rather than approximate:
+ * Four checks, all of them structural rather than approximate:
  * - no degenerate triangle (repeated corner, or zero area);
  * - every directed edge occurs exactly once, and its reverse exactly once — which is closedness
  *   ("every edge has two faces") and consistent orientation ("they disagree on its direction") in one
  *   statement;
+ * - **no flap**: no pair of triangles sharing an edge whose normals are back-to-back, which the counts
+ *   above and the volume integral are both blind to (GitHub #33, [MeshCanon.flap]);
  * - positive signed volume, i.e. the consistent orientation is the *outward* one.
  *
  * Run on every solid in every test: a mesh is a sink (OP-9), so a defect here is invisible until
@@ -63,19 +132,6 @@ fun geometryNodeOf(el: Element): Node {
 fun assertManifold(
     mesh: Mesh3,
     what: String = "solid",
-    /**
-     * That this body is **known** to fold back on itself, and the fold is what is being asserted rather
-     * than its absence (GitHub #33's flap check, applied to what was already in the build).
-     *
-     * Three families carry one, all of them older than the check and none of them a blend's coplanar tool:
-     * a **self-crossing** loft, skin or tube, which this kernel builds on purpose and whose surface really
-     * does pass through itself (`TubeCornerBendTest`'s own name has said so since it was written); the
-     * general engine's re-triangulation around a **drill through a slanted face**, where it leaves a
-     * degenerate pair of its own; and the **end of a tangent-continuous rim**, where a band stops against
-     * an unrounded neighbour. Each is a real finding and each is recorded here rather than tolerated: the
-     * assertion is inverted, so the day the cause is fixed this call fails and the record comes out.
-     */
-    foldsBackOnItself: Boolean = false,
 ) {
     assertTrue(mesh.triangles.isNotEmpty(), "$what has no triangles")
     for ((i, t) in mesh.triangles.withIndex()) {
@@ -108,13 +164,10 @@ fun assertManifold(
     // **and no flap** (GitHub #33): two triangles sharing an edge, coplanar and wound against each other,
     // is a surface folded back on itself with no thickness between the two sheets. Every edge-use count is
     // 1/1 there, so the checks above are blind to it, and the volume integral is too — the pair cancels.
-    // The production twin is [MeshCanon.flap], and this calls it rather than restating it.
-    val fold = MeshCanon.flap(mesh)
-    if (foldsBackOnItself) {
-        assertTrue(fold != null, "$what is recorded as folding back on itself, and no longer does — take the record out")
-    } else if (fold != null) {
-        fail("$what has $fold")
-    }
+    // The production twin is [MeshCanon.flap], which [MeshCanon.fault] now asks of every general boolean
+    // (session 82), and this calls it rather than restating it. There is no longer any way to say *"this one
+    // folds and that is expected"*: the four families that used to need one are retired at their causes.
+    MeshCanon.flap(mesh)?.let { fail("$what has $it") }
     val vol = Geom3.volume(mesh)
     assertTrue(vol > 0.0, "$what encloses no positive volume ($vol mm^3) — is it wound inside out?")
 }

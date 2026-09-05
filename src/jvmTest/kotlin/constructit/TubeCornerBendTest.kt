@@ -13,6 +13,7 @@ import constructit.geom.Embedding
 import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
+import constructit.geom.MeshCanon
 import constructit.geom.MeshQuality
 import constructit.geom.Path3
 import constructit.geom.SweepProfile
@@ -253,7 +254,11 @@ attach e9 e19
                 "the shells the sweep would have emitted",
             )
         val mesh = shells(MeshQuality.FINE)
-        assertManifold(mesh, "the folded tube — watertight, which is exactly why nothing refused", foldsBackOnItself = true)
+        // **watertight, which is exactly why nothing refused** — and the fold is stated in the engine's own
+        // vocabulary rather than through an inverted [assertManifold], because this body is *built to fold*:
+        // it is the report's own geometry, reached round the refusal that now stands in front of it.
+        assertNull(MeshCanon.notClosed(mesh), "closed and consistently wound, every edge used once each way")
+        assertNotNull(MeshCanon.flap(mesh), "…and folded back on itself all the same, which no count can see")
         assertTrue(Geom3.volume(mesh) > 0.0, "…and positively volumed")
         for (c in cornersOf(path, 10.0)) {
             assertTrue(selfIntersections(mesh, c, 60.0) > 0, "the surface cuts through itself at the corner at $c")

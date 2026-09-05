@@ -1,5 +1,6 @@
 package constructit
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
@@ -10,11 +11,16 @@ import constructit.editor.Element
 import constructit.editor.ElementKind
 import constructit.geom.Blend3
 import constructit.geom.Feature3
+import constructit.geom.Geom3
+import constructit.geom.MeshCanon
 import constructit.geom.Section3
+import constructit.geom.Vec2
 import constructit.geom.Vec3
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -68,6 +74,12 @@ show els=e2
         name: String,
     ): Element = assertNotNull(ed.doc.elements.firstOrNull { ed.doc.nameOf(it) == name }, "$name is in the drawing")
 
+    /** Where the drawing's point [name] stands — the run's own lengths are read off these, not off the mesh. */
+    private fun pt(
+        ed: Editor,
+        name: String,
+    ): Vec2 = assertNotNull(Evaluator().valueOf(el(ed, name).ref) as? constructit.core.PointValue, "$name is a point").p
+
     @Suppress("UNCHECKED_CAST")
     private fun blendFeature(
         ed: Editor,
@@ -89,9 +101,96 @@ show els=e2
         assertEquals(3, blend.targets.size, "the rasped run: e11's rim, the arc's rim, e10's rim")
         assertTrue(8 in blend.targets, "the picked edge is in it")
         val mesh = Evaluator().solid(el(ed, "e19").ref as SolidRef).mesh
-        // the run's far end, where the last band stops against the one rim piece that is not rounded, is
-        // where the general engine leaves a fold of its own — recorded, not tolerated (see [assertManifold])
-        assertManifold(mesh, "e19", foldsBackOnItself = true)
+        assertManifold(mesh, "e19")
+    }
+
+    /**
+     * **The reporter's own radius is the ball standing still, and it builds** (session 82; family 3 of GitHub
+     * #33's by-product, met on this very drawing).
+     *
+     * The drawing uses one parameter for two things — `r` is the 2D fillet's radius *and* the rasp's — which
+     * is what sharing a node **means** in this build, and what a user means by *"round everything at 5"*. The
+     * middle piece of the run is that fillet's own arc, so the rasp rolls a ball of radius `r` along a rim of
+     * radius `r`: the ball's centre runs on a circle of radius `R − r = 0`, so **the ball stands still**, and
+     * the band it leaves is that one ball's own surface — the degenerate torus with its hole closed to a
+     * point, which is a sphere patch over the arc's angle. It is an ordinary body, it is in this kernel's own
+     * catalogue (the Turn's pole, the Vertex's ball), and every rounded-rectangle plate with a spherical
+     * corner is one.
+     *
+     * What it needed was for the band to be **constructed as the surface of revolution it is**
+     * ([Blend3]'s `revolvedBand`): a crease that is one circular arc turns about a fixed axis, and where the
+     * general sweep carries the run as chords — and so places a section point that lands *on* the axis within
+     * a chord's own error of it, a ring a few tenths of a millimetre across at the run's ends — a revolve puts
+     * the pole on the axis exactly and drops the quads that collapse with it. Ten micron-scale flaps before,
+     * none after, and the production gate is silent on it.
+     *
+     * The figure is asserted rather than the fact of building: the two straight pieces of the run lose
+     * `r²(1 − π/4)` per millimetre and the arc loses the ball's own `φ·r³/6`, bracketed above by the same
+     * arithmetic over the tessellation's **own** inscribed chords, so the bracket moves with the tolerance
+     * rather than being a percentage.
+     */
+    @Test
+    fun theReportersOwnRadiusIsTheBallStandingStillAndBuilds() {
+        val ed = load(issue29)
+        val mesh = Evaluator().solid(el(ed, "e19").ref as SolidRef).mesh
+        assertManifold(mesh, "the reporter's rasped run")
+        assertNull(MeshCanon.fault(mesh), "and the production gate is silent on it")
+
+        val plate = Evaluator().solid(el(ed, "e18").ref as SolidRef).mesh
+        val took = Geom3.volume(plate) - Geom3.volume(mesh)
+        val arc = assertNotNull(Evaluator().valueOf(el(ed, "e6").ref) as? constructit.core.ArcValue).arc
+        val phi = abs(constructit.geom.GeomMath.sweep(arc))
+        val r = arc.radius
+        assertClose(r, 5.0, tol = 1e-9, msg = "the fillet's own arc is the rasp's own radius — one parameter, two uses")
+        // the run's two straight pieces are the outline's own segments, from the arc's key points to the
+        // corners the run stops at, so their lengths are the drawing's and not the mesh's
+        val legs =
+            (pt(ed, "e8") - pt(ed, "e1")).length() + (pt(ed, "e9") - pt(ed, "e4")).length()
+        val exact = raspWedgeArea(r) * legs + phi * raspBallMoment(r)
+        val chords = raspWedgeAreaByChords(r) * legs + phi * raspBallMomentByChords(r)
+        assertTrue(took >= exact - 1e-6, "at least the closed form takes: $took against $exact")
+        assertTrue(took <= chords + 1e-6, "and no more than the inscribed chords do: $took against $chords ($exact exact)")
+
+        // …and the band over the arc really is the ball's own surface: one pole on the top face, every
+        // vertex of the patch its own radius from the ball's centre
+        val axis = arc.center
+        assertTrue(
+            mesh.vertices.any { (it - Vec3(axis.x, axis.y, 20.0)).length() < 1e-3 },
+            "the band closes on the arc's own centre — one pole, on the top face",
+        )
+        val ball = Vec3(axis.x, axis.y, 20.0 - r)
+        val patch = mesh.vertices.filter { it.z > 20.0 - r + 1e-6 && it.z < 20.0 - 1e-6 && (Vec2(it.x, it.y) - axis).length() < r + 0.1 }
+        assertTrue(patch.size >= 8, "the sphere patch is meshed: ${patch.size} vertices")
+        for (v in patch) assertClose((v - ball).length(), r, tol = 0.05, msg = "on the ball's own surface: $v")
+
+        assertEquals(
+            DocumentFormat.save(ed.doc),
+            DocumentFormat.save(DocumentFormat.load(DocumentFormat.save(ed.doc))),
+            "and the drawing is a fixed point of save",
+        )
+    }
+
+    /**
+     * **A rasp *wider* than the rim it runs along is still refused, in the words it always was.** The ball
+     * would have to reach past the arc's own axis, which is a surface that passes through itself; the
+     * boundary is now exactly the rim's radius rather than a tessellation's distance short of it.
+     */
+    @Test
+    fun aRaspWiderThanTheRimItRunsAlongIsRefused() {
+        // the same drawing with the rasp given its own radius, one micron over the rim's
+        val wider =
+            issue29
+                .replace("param \"h\" = 20mm", "param \"h\" = 20mm\nparam \"r3\" = 5.001mm")
+                .replace("scalar=\"r\" signs=8;-1;1;0;1", "scalar=\"r3\" signs=8;-1;1;0;1")
+        val ed = load(wider)
+        val why =
+            assertNotNull(
+                (Evaluator().eval(el(ed, "e19").ref.node) as? EvalResult.Invalid)?.reason,
+                "a ball wider than the rim is not a body",
+            )
+        assertTrue("is larger than the bend" in why, "the bend is named: $why")
+        assertTrue("pass through itself" in why, "and the consequence, in the words it always had: $why")
+        assertTrue("radius 5 mm" in why, "…measured against the rim's own radius: $why")
     }
 
     /** The three edges really are the run: consecutive cap pieces of one cap, meeting end to end. */
@@ -143,7 +242,7 @@ show els=e2
     fun theBandIsTangentContinuousAcrossTheJoints() {
         val ed = load(issue29)
         val mesh = Evaluator().solid(el(ed, "e19").ref as SolidRef).mesh
-        assertManifold(mesh, "e19", foldsBackOnItself = true)
+        assertManifold(mesh, "e19")
         // the two joints, in the world: the arc's tangencies raised to the top cap (z = 20)
         val arc = assertNotNull(Evaluator().valueOf(el(ed, "e6").ref) as? constructit.core.ArcValue).arc
         for (t in listOf(constructit.geom.GeomMath.arcStart(arc), constructit.geom.GeomMath.arcEnd(arc))) {

@@ -598,47 +598,79 @@ object Skin3 {
         // **One level** ([Solid3.meshAt]): a skin's row count comes from its correspondence — the families'
         // sampling counts and, for a faired row, the interpolant through every station — all of which live in
         // the plan above, so coarsening the picture would mean redoing the expensive half to save the cheap one.
-        return Solid3.derivedFine(feature) {
-            val mb = Geom3.MeshBuilder()
-            val rails = HashMap<Long, List<Vec3>>()
+        //
+        // **And built here rather than on demand** (session 82): a stated pair can turn the correspondence far
+        // enough that the band folds over itself, which is a fact about the *rings* and not about the mesh —
+        // so the rows are laid out first, every quad the correspondence states is asked, and only then is a
+        // triangle emitted. *Watertight or refused* (OP-9) outranks the laziness the deferral bought.
+        val rails = HashMap<Long, List<Vec3>>()
 
-            fun railOf(
-                family: Int,
-                j: Int,
-            ): List<Vec3> =
-                rails.getOrPut(family.toLong() * 4096L + j) {
-                    val span = plan.span(family)
-                    span.map { k -> plan.railPoint(family, j, k) }
+        fun railOf(
+            family: Int,
+            j: Int,
+        ): List<Vec3> =
+            rails.getOrPut(family.toLong() * 4096L + j) {
+                val span = plan.span(family)
+                span.map { k -> plan.railPoint(family, j, k) }
+            }
+
+        // the rows of every band, in the order they are emitted in — laid out once and read twice
+        val banded = ArrayList<List<List<Vec3>>>()
+        val bandSteps = ArrayList<Int>()
+        for (k in 0 until plan.intervals) {
+            for (strip in plan.strips[k]) {
+                val f = plan.families[strip.family]
+                val span = plan.span(strip.family)
+                val steps = if (plan.row == SkinRow.RULED) 1 else FAIR_ROWS
+                banded.add((0..f.count).map { j -> rowsOf(railOf(strip.family, j), span, k, plan.row, steps) })
+                bandSteps.add(steps)
+            }
+        }
+        // ---- the correspondence's own refusal, and nothing emitted ----
+        for ((bi, rows) in banded.withIndex()) {
+            for (i in 0 until bandSteps[bi]) {
+                for (j in 0 until rows.size - 1) {
+                    if (!Geom3.foldedQuad(rows[j][i], rows[j + 1][i], rows[j + 1][i + 1], rows[j][i + 1])) continue
+                    return null to
+                        "the correspondence folds this skin's shell back on itself: the strip between " +
+                        "${Frames3.mm(rows[j][i].x)}, ${Frames3.mm(rows[j][i].y)}, ${Frames3.mm(rows[j][i].z)} and " +
+                        "its neighbour turns so far that the two triangles its own split makes of it face " +
+                        "against each other, so the band passes through the run rather than running along it. " +
+                        "State the pair at another vertex, or leave the pieces to pair by traversal order"
                 }
-            for (k in 0 until plan.intervals) {
-                for (strip in plan.strips[k]) {
-                    val f = plan.families[strip.family]
-                    val span = plan.span(strip.family)
-                    val steps = if (plan.row == SkinRow.RULED) 1 else FAIR_ROWS
-                    val rows =
-                        (0..f.count).map { j ->
-                            rowsOf(railOf(strip.family, j), span, k, plan.row, steps)
-                        }
-                    for (i in 0 until steps) {
-                        for (j in 0 until f.count) {
+            }
+        }
+        val shell =
+            run {
+                val mb = Geom3.MeshBuilder()
+                for ((bi, rows) in banded.withIndex()) {
+                    for (i in 0 until bandSteps[bi]) {
+                        for (j in 0 until rows.size - 1) {
                             mb.triangle(rows[j][i], rows[j + 1][i], rows[j + 1][i + 1])
                             mb.triangle(rows[j][i], rows[j + 1][i + 1], rows[j][i + 1])
                         }
                     }
                 }
-            }
-            for ((prep, split, outward) in caps) {
-                for (t in split) {
-                    val a = prep.plane.toWorld(t.a)
-                    val b = prep.plane.toWorld(t.b)
-                    val c = prep.plane.toWorld(t.c)
-                    // a cap triangle maps to the world with its normal along +plane.normal, so it is emitted as
-                    // it stands exactly where that normal is the one out of the material
-                    if (outward) mb.triangle(a, b, c) else mb.triangle(a, c, b)
+                for ((prep, split, outward) in caps) {
+                    for (t in split) {
+                        val a = prep.plane.toWorld(t.a)
+                        val b = prep.plane.toWorld(t.b)
+                        val c = prep.plane.toWorld(t.c)
+                        // a cap triangle maps to the world with its normal along +plane.normal, so it is emitted as
+                        // it stands exactly where that normal is the one out of the material
+                        if (outward) mb.triangle(a, b, c) else mb.triangle(a, c, b)
+                    }
                 }
+                mb.build()
             }
-            mb.build()
-        } to null
+        // …and the shell itself, against the two degenerate closed shells the gate names — the backstop for a
+        // correspondence that folds in a way no single quad does ([MeshCanon.fault], flap and hollow)
+        MeshCanon.fault(shell)?.let {
+            return null to
+                "the correspondence folds this skin's shell back on itself — $it. State the pair at another " +
+                "vertex, or leave the pieces to pair by traversal order"
+        }
+        return Solid3.derivedFine(feature) { shell } to null
     }
 
     /**

@@ -207,25 +207,54 @@ class LoftTest {
      * A square and a square turned 45° above it: the seam — which boundary piece the correspondence starts at
      * — decides which corner rises to which, and the choices are **different solids**.
      *
-     * Seam 2 is the aligned pairing (each corner rises towards the corner in its own direction) and seam 3 is
-     * the quarter-turn one; both are watertight, their rails differ, and so do their volumes.
+     * Seam 2 is the aligned pairing (each corner rises towards the corner in its own direction) and seam 1 is
+     * a quarter turn of it; both are watertight, and their rails differ, which is the whole of what the seam
+     * is for. Their **volumes** are equal to the last bit, and that is worth saying rather than hiding: the
+     * two sections are both four-fold symmetric about the same axis, so a quarter turn is a congruence and
+     * the body it makes is the aligned one turned — a different solid in the only sense a stored model has,
+     * which is which corner is joined to which.
      */
     @Test
     fun theSeamDecidesWhichCornerRisesToWhich() {
         val a = turnedFrustum(2)
-        val b = turnedFrustum(3)
+        val b = turnedFrustum(1)
         // the turned square's corners are at 45° + 90°k on a radius of 50 about (50, 50): the first is the
         // north-east one. Seam 2 starts the top's correspondence there two pieces on, i.e. at the south-west
-        // corner, so the base's own first corner (0, 0) rails to it; seam 3 rails it to the south-east one.
+        // corner, so the base's own first corner (0, 0) rails to it; seam 1 rails it to the north-west one.
         val sw = Vec3(50.0 - 50.0 * COS45, 50.0 - 50.0 * COS45, 80.0)
-        val se = Vec3(50.0 + 50.0 * COS45, 50.0 - 50.0 * COS45, 80.0)
+        val nw = Vec3(50.0 - 50.0 * COS45, 50.0 + 50.0 * COS45, 80.0)
         assertTrue(hasEdge(a, Vec3(0.0, 0.0, 0.0), sw), "seam 2 pairs the origin corner with the corner over it")
-        assertTrue(!hasEdge(b, Vec3(0.0, 0.0, 0.0), sw), "seam 3 does not")
-        assertTrue(hasEdge(b, Vec3(0.0, 0.0, 0.0), se), "seam 3 pairs it with the next corner round instead")
-        assertTrue(
-            abs(Geom3.volume(a) - Geom3.volume(b)) > 1000.0,
-            "a quarter-turn twist is a different solid, not the same one relabelled (${Geom3.volume(a)} vs ${Geom3.volume(b)})",
+        assertTrue(!hasEdge(a, Vec3(0.0, 0.0, 0.0), nw), "and reaches the north-west one by no edge at all")
+        assertTrue(hasEdge(b, Vec3(0.0, 0.0, 0.0), nw), "seam 1 pairs it with the next corner round instead")
+        assertClose(
+            Geom3.volume(a),
+            Geom3.volume(b),
+            1e-9,
+            "a quarter turn between two four-fold sections is a congruence, so the figure is the same one",
         )
+    }
+
+    /**
+     * **The other quarter turn folds the shell, and is refused by name** (session 82, family 4 of GitHub
+     * #33's by-product; `turnedFrustum(3)` used to be built and pinned as folding).
+     *
+     * A ruled band in this kernel *is* the polyhedron its stated split makes of it — every quad split from
+     * its own lower rail — and that split is not symmetric under reflection: of the two quarter turns, one
+     * puts each strip's diagonal where the band bends and the other puts it where the band folds. Seam 1
+     * builds; seam 3, its mirror image, hands back a closed, consistently wound shell whose triangles lie
+     * back to back along a rail. Every count passes it, so the flap check is what names it, and the cure is
+     * the one the crossing-rails refusal already offers: start the correspondence at another vertex.
+     */
+    @Test
+    fun theOtherQuarterTurnFoldsTheBandAndIsRefusedByName() {
+        val c = Construction()
+        val solid = c.loft(listOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), c.areaOn(80.0, turnedSquare(c))), listOf(0, 3))
+        val result = Evaluator().resultOf(solid)
+        assertTrue(result is EvalResult.Invalid, "the folded band is refused, not handed back closed and wrong")
+        val why = (result as EvalResult.Invalid).reason
+        assertTrue(why.contains("folds over itself"), "the fold is named: $why")
+        assertTrue(why.contains("two triangles its own split makes of it face against each other"), "…as the quad it is: $why")
+        assertTrue(why.contains("another vertex"), "and what to do about it: $why")
     }
 
     /**
@@ -256,7 +285,7 @@ class LoftTest {
         val c = Construction()
         val solid = c.loft(listOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), c.areaOn(80.0, turnedSquare(c))), listOf(0, seam))
         val mesh = Evaluator().solid(solid).mesh
-        assertManifold(mesh, "turned frustum, seam $seam", foldsBackOnItself = seam == 3)
+        assertManifold(mesh, "turned frustum, seam $seam")
         return mesh
     }
 

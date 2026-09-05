@@ -1,5 +1,6 @@
 package constructit
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
@@ -257,36 +258,70 @@ class LoftToolTest {
      * **The seam is a click and a persisted choice.** The same two sections, clicked at two different corners
      * of the upper one, give two different solids — and each comes back as *itself* on reload, because the
      * choice rides the step's `signs=` and is never re-scored (OP-1/OP-18).
+     *
+     * The two sections here are both axis-aligned squares, so a quarter turn of the correspondence is a
+     * **congruence**: the two bodies have the same figure and differ only in which corner is joined to which,
+     * which is exactly the thing a stored seam is for and is what the rails are compared on. The other
+     * quarter turn folds the band and is refused by name (session 82) — asserted here too, because a seam a
+     * click can reach has to say what it cannot do.
      */
     @Test
     fun theSeamChoiceIsRecordedAndReplayedVerbatim() {
         // near a corner, deliberately: a click at a leg's midpoint is the same distance from both its ends,
         // and what the seam names is a corner
         val a = twistedFrustum(Vec2(30.0, 20.0))
-        val b = twistedFrustum(Vec2(70.0, 20.0))
+        val b = twistedFrustum(Vec2(30.0, 80.0))
         val volA = a.volumeOf(a.solids().single())
         val volB = b.volumeOf(b.solids().single())
         assertManifold(a.meshOf(a.solids().single()), "seam A")
-        assertManifold(b.meshOf(b.solids().single()), "seam B", foldsBackOnItself = true)
-        assertTrue(abs(volA - volB) > 1000.0, "clicking a different corner is a different solid ($volA vs $volB)")
+        assertManifold(b.meshOf(b.solids().single()), "seam B")
+        val railsA = railsOf(a.meshOf(a.solids().single()))
+        val railsB = railsOf(b.meshOf(b.solids().single()))
+        assertTrue(railsA != railsB, "clicking a different corner joins different corners: $railsA vs $railsB")
+        assertClose(volA, volB, 1e-9, "…and a quarter turn between two squares is a congruence, so the figure is the same")
 
         val signsA = DocumentFormat.save(a.doc).lines().first { it.startsWith("tool loft") }
         val signsB = DocumentFormat.save(b.doc).lines().first { it.startsWith("tool loft") }
         assertTrue(signsA.contains("signs="), "the seam is written down: $signsA")
         assertTrue(signsA != signsB, "and the two choices are different steps")
 
-        for ((ed, vol) in listOf(a to volA, b to volB)) {
+        for ((ed, rails) in listOf(a to railsA, b to railsB)) {
             val back = roundTrip(ed)
             val reloaded = back.elements.single { it.kind == ElementKind.SOLID }
+
             @Suppress("UNCHECKED_CAST")
-            assertClose(
-                Geom3.volume(Evaluator().solid(reloaded.ref as SolidRef).mesh),
-                vol,
-                1e-6,
+            assertEquals(
+                rails,
+                railsOf(Evaluator().solid(reloaded.ref as SolidRef).mesh),
                 "each replays as the solid its own click chose",
             )
         }
+
+        // …and the quarter turn the other way is refused, in the fold's own words
+        val folded = twistedFrustum(Vec2(70.0, 20.0))
+        val el = assertNotNull(folded.doc.elements.lastOrNull { it.kind == ElementKind.SOLID }, "the step was taken")
+        val why = assertNotNull((Evaluator().eval(el.ref.node) as? EvalResult.Invalid)?.reason, "and refused")
+        assertTrue("folds over itself" in why, "by name: $why")
+        assertTrue("another vertex" in why, "with the cure beside it: $why")
     }
+
+    /** Which corner of the lower section is joined to which corner of the upper — the seam, read off the mesh. */
+    private fun railsOf(mesh: constructit.geom.Mesh3): Set<String> {
+        val out = HashSet<String>()
+        for (t in mesh.triangles) {
+            for ((p, q) in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+                val u = mesh.vertices[p]
+                val v = mesh.vertices[q]
+                // a rail runs from a corner of the plan square to a corner of the datum square; the split
+                // diagonals do too, so both are compared — together they *are* the correspondence
+                if (abs(u.z) > 1e-9 || abs(v.z - 70.0) > 1e-9) continue
+                out.add("${round(u.x)},${round(u.y)}->${round(v.x)},${round(v.y)}")
+            }
+        }
+        return out
+    }
+
+    private fun round(x: Double): Long = kotlin.math.round(x * 1e6).toLong()
 
     /**
      * The plan square lofted to a **rotated** square on a parallel plane, with the upper section clicked at

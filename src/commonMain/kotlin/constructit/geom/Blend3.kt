@@ -3074,7 +3074,8 @@ object Blend3 {
                     // with a **round** leg has no step-off in this vocabulary at all. Both are swept exactly
                     // as they always were, the first with the **grown** section (which is the whole of what
                     // GitHub #33 asks of a tool that has one) and the second with its own, unmoved.
-                    Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.grownRegion), plan = null)
+                    revolvedBand(lead)
+                        ?: Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.grownRegion), plan = null)
                 } else {
                     val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings), corners)
                     if (mesh == null) {
@@ -3135,6 +3136,61 @@ object Blend3 {
         }
         return result to null
     }
+
+    /**
+     * **The band along a circular rim, built as what it is: a surface of revolution** (session 82).
+     *
+     * A crease that is one circular arc turns about a fixed axis, and the section stands in the plane through
+     * that axis at every station — so the tool the blend sweeps *is* a solid of revolution, and [Geom3.revolve]
+     * builds exactly that. Why it matters, and why the general sweep cannot: [Frames3] carries a run as
+     * **chords**, and a section point that lands on the axis is then placed within a chord's own error of it
+     * rather than on it. Where the ball is as wide as the rim it runs along — `r = R`, the ball **stands
+     * still** and the band is the ball's own sphere patch — that point *is* the axis for the whole run, and
+     * the ring the sweep traces round it instead of a pole is a few tenths of a millimetre across at the run's
+     * ends and a few microns across in the middle. The fan over that ring folds back on itself, which is the
+     * ten micron-scale flaps GitHub #29's own drawing carried. A revolve has no such error: a profile point on
+     * the axis is on the axis at every station, the quads that collapse with it are dropped
+     * ([Geom3.MeshBuilder.triangle], which exists for this very case), and what comes out is one pole.
+     *
+     * Null where the crease is not one circular arc, or where its axis is not the section's own upright — then
+     * the band is not a body of revolution and the sweep is the only construction there is.
+     */
+    private fun revolvedBand(piece: Piece): Pair<Solid3?, String?>? {
+        val arc = piece.crease.path.elements.singleOrNull() as? Curve3Element.Arc3 ?: return null
+        if (arc.radius <= Geom3.WELD_TOL) return null
+        val up = piece.crease.e1.normalized()
+        val axis = arc.normal.normalized()
+        val along = up.dot(axis)
+        if (abs(abs(along) - 1.0) > AXIS_TOL) return null
+        val at0 = arc.at(0.0)
+        val outward = (at0 - arc.center).normalized()
+        if (outward.length() <= Vec3.EPS) return null
+        // the section's own frame at the run's start: x along the crease's upright, y along the radius out of
+        // the axis — the very placement [Frame3.place] makes there, with the *exact* radial instead of a chord's
+        val plane = Plane3(at0, up, outward)
+        // …and the axis in that plane's coordinates: the line through the centre, along the upright
+        val axisOrigin = Vec2(0.0, -arc.radius)
+        val axisDir = Vec2(1.0, 0.0)
+        // which way the turn runs: the plane's own normal is `up × outward`, the tangent at the start for a
+        // right-handed arc, so a positive sweep about that normal is the arc's own direction and the sign of
+        // the arc's sweep against the upright is the whole of the correspondence
+        val sweep = if (along >= 0.0) arc.sweepAngle else -arc.sweepAngle
+        // …and the one thing a revolve cannot do, said in the words the sweep says it in: a section that
+        // reaches **past** the axis is a ball wider than the rim it runs along, and revolving it would fold
+        // the shell through itself. Reaching *to* the axis is the degenerate case above and is legal — a
+        // profile touching the axis is what a turned part's pole is made of ([Geom3.revolve]).
+        val into = -piece.grown.minOf { it.y }
+        if (into > arc.radius + Geom3.WELD_TOL) {
+            return null to
+                "the profile's reach into the bend (${Frames3.mm(into)} mm) is larger than the bend " +
+                "the run starts with (radius ${Frames3.mm(arc.radius)} mm, ${Frames3.mm(0.0)} mm along " +
+                "the path), so the sweep would pass through itself"
+        }
+        return Geom3.revolve(Sketch3(plane, listOf(piece.grownRegion)), axisOrigin, axisDir, sweep)
+    }
+
+    /** How nearly a crease's own upright must lie along the axis it turns about for the band to be a revolve. */
+    private const val AXIS_TOL = 1e-9
 
     /**
      * The groups in **dependency order**: an upright's own group before the group whose corner pivots about

@@ -2620,11 +2620,14 @@ class BrowserE2ETest {
             assertTrue(solids() == 1, "and a solid is in the tree: ${tree()}")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/40-loft-over-sections.png")))
 
-            // …and a Match on the two sides just clicked: an edit of that body, not a second one
+            // …and a Match on the two sides just clicked: an edit of that body, not a second one.
+            // The near section's **left** side, deliberately: a four-piece correspondence has exactly one
+            // quarter turn whose stated split does not fold the band, and the other is refused by name
+            // (session 82, `LoftTest.theOtherQuarterTurnFoldsTheBandAndIsRefusedByName`).
             page.click("#tool-${Tools.MATCH_SECTIONS}")
             page.mouse().click(cx, cy + 70.0)
             page.selectOption("#v-space", "station2")
-            page.mouse().click(cx + 45.0, cy)
+            page.mouse().click(cx - 45.0, cy)
             assertTrue(status().contains("now runs to"), "the shell states the pair: ${status()}")
             assertEquals(1, solids(), "and made no second body: ${tree()}")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/41-loft-matched.png")))

@@ -2438,34 +2438,32 @@ class Construction {
         }
 
     /**
-     * The same embedding as [sketchOn], seen **from behind**: the very same points in the world, on
-     * [plane]'s flipped frame — so an [extrude] of it sweeps the plane's **−normal**.
+     * The **tool a *Cut* takes out of a body**: [region] read on [plane] from behind and swept [depth] into
+     * the material, standing a micron proud of [plane] in the air so that no face of it lies in a face of
+     * the body — *a tool never shares a face with the body* (OP-9, GitHub #33).
      *
-     * This is how *Cut* goes into the material (`Document.cutOnFace`), and the reason it is a sketch rather
-     * than an offset plane the sweep runs back from is **exactness**: starting `depth` behind the plane and
-     * sweeping forward lands the tool's cap on the face only up to rounding (the in-plane terms are added
-     * before the offset cancels), and a cap a femtometre off a face it is meant to be flush with is exactly
-     * the near-tangency the general boolean cannot close. Flipping the frame and mirroring the drawing in it
-     * is bit-exact — a negation and a product of negations — so the cap lies *on* the face, as it did when a
-     * face plane still pointed inwards.
-     *
-     * Mirroring keeps each loop's own orientation ([GeomMath.transform] re-orients after a reflection), so
-     * the sketch is a legal one: outer boundaries still run counter-clockwise in the frame they are read in.
+     * One node rather than a sketch and an extrusion, because the step-off is a property of *this* tool and
+     * of nothing else that is sketched or extruded. [stepOff] is whether the plane is a **face** of the body
+     * (a datum may lean through the material, where a micron is not air) and is decided by the gesture, so a
+     * replay reaches the same answer the click did. The geometry, the micron and the argument for both are at
+     * [constructit.geom.Geom3.cutTool].
      */
-    fun sketchBehind(
+    fun cutTool(
         plane: PlaneRef,
-        vararg regions: RegionRef,
-    ): SketchRef =
-        op(plane, *regions) { args ->
-            if (regions.isEmpty()) return@op EvalResult.Invalid("a sketch needs at least one region")
-            val p = (args[0] as PlaneValue).plane
-            val m = Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)
-            val rs =
-                args.drop(1).map { v ->
-                    val r = (v as RegionValue).region
-                    Region(GeomMath.transform(r.outer, m), r.holes.map { GeomMath.transform(it, m) })
-                }
-            EvalResult.Ok(SketchValue(Sketch3(p.flipped(), rs)))
+        region: RegionRef,
+        depth: ScalarRef,
+        stepOff: Boolean,
+    ): SolidRef =
+        op(plane, region, depth) {
+            val d = sc(it[2]).requireDim(Dimension.LENGTH, "cut depth")
+            val (solid, why) =
+                Geom3.cutTool(
+                    (it[0] as PlaneValue).plane,
+                    listOf((it[1] as RegionValue).region),
+                    d.mm,
+                    stepOff,
+                )
+            if (solid == null) EvalResult.Invalid(why ?: "cannot cut") else EvalResult.Ok(SolidValue(solid))
         }
 
     /** The plane a sketch is embedded on — the accessor a further datum is offset from. */

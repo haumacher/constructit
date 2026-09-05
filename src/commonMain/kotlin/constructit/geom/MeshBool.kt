@@ -210,8 +210,56 @@ object MeshCanon {
     /**
      * Why [mesh] is not a closed, consistently wound shell **and free of flaps**, or null when it is —
      * the two halves stated separately below so a caller that built its own mesh can ask them apart.
+     *
+     * **The flap half is production, from session 82.** It shipped test-side only in session 81, with the
+     * measurement that said why: sixteen bodies the build made then carried a fold, in four families, and
+     * turning the gate on would have taken them away from users as the side effect of a bug fix. All four
+     * are now retired at their causes — the *Cut* tool stepped off the face it is sketched on
+     * ([Geom3.cutTool]), the band along a circular rim built as the surface of revolution it is
+     * ([Blend3]'s `revolvedBand`), the loft's and the skin's folded correspondences refused by name, and the
+     * one remaining knife edge measured and found sound — so what is left when this fires is a defect, and
+     * *watertight or refused* (OP-9) means what it says.
+     *
+     * **There are exactly two degenerate closed shells and both are named here.** A [flap] is a surface with
+     * no *thickness* — two sheets back to back — and [hollow] is a surface with no *inside*: a shell that
+     * passes through itself so thoroughly that what it encloses cancels to nothing. Neither is visible to
+     * [notClosed], because both use every directed edge exactly once with exactly one opposite use, and the
+     * second is invisible to [flap] as well — nothing about it need be coplanar. The orchestrator's probe of
+     * session 82 found one: three rulings of a twisted triangular skin, each joining a corner to the
+     * vertical of its neighbour, sweeping three quads through the axis whose contributions sum to **zero**.
      */
-    fun fault(mesh: Mesh3): String? = notClosed(mesh)
+    fun fault(mesh: Mesh3): String? = notClosed(mesh) ?: flap(mesh) ?: hollow(mesh)
+
+    /**
+     * Why the shell **encloses no volume** — it passes through itself and what it bounds cancels — or null
+     * when it bounds something.
+     *
+     * *Why a tolerance and not `≤ 0`.* The divergence integral of a shell that cancels comes out at exactly
+     * zero only when the arithmetic happens to be exact; a float32 mesh leaves a residue, and a residue is
+     * not an inside. So the bar is the mesh's **own resolution over its own footprint**: one weld cell
+     * ([weldTol], a float32 ULP at this mesh's scale) times the square of its longest side. A body below
+     * that is a sheet thinner than the engine can place a vertex to — it has no inside that survives being
+     * written down — while an honestly small body scales with it and passes (a 0.1 mm cube clears its own
+     * bar by six orders).
+     *
+     * A **negative** volume is the same defect read the other way and is included: a shell wound inside out
+     * bounds the complement of a body, which no consumer of this can use.
+     */
+    fun hollow(mesh: Mesh3): String? {
+        if (mesh.vertices.isEmpty()) return null
+        var lo = mesh.vertices[0]
+        var hi = mesh.vertices[0]
+        for (v in mesh.vertices) {
+            lo = Vec3(minOf(lo.x, v.x), minOf(lo.y, v.y), minOf(lo.z, v.z))
+            hi = Vec3(maxOf(hi.x, v.x), maxOf(hi.y, v.y), maxOf(hi.z, v.z))
+        }
+        val span = maxOf(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)
+        val floor = weldTol(mesh.vertices) * span * span
+        val volume = Geom3.volume(mesh)
+        if (volume > floor) return null
+        return "the general boolean's result encloses no volume ($volume mm³ against a floor of $floor mm³): " +
+            "the surface passes through itself, so what it bounds cancels and there is no inside to it"
+    }
 
     /**
      * Why the shell **folds back on itself** — two triangles sharing an edge that are coplanar with

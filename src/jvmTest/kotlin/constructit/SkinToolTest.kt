@@ -22,6 +22,9 @@ import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -128,6 +131,25 @@ class SkinToolTest {
         click(at)
         assertTrue(doc.activeSpace.isStation, "the station opened: $statusHint")
         return doc.activeSpace
+    }
+
+    /** A regular hexagon of circumradius [r] about the station's origin — six pieces, one per side. */
+    private fun Editor.hexHere(r: Double): Element {
+        count = 6
+        setTool(Tools.POLYGON)
+        click(Vec2(0.0, 0.0))
+        click(Vec2(r, 0.0))
+        return assertNotNull(doc.elements.lastOrNull { it.kind == ElementKind.SEGMENT }, "the section: $statusHint")
+    }
+
+    /** The midpoint of side [i] of [hexHere]'s hexagon — where a pick lands on that piece and no other. */
+    private fun hexSide(
+        r: Double,
+        i: Int,
+    ): Vec2 {
+        val a = PI * i / 3.0
+        val b = PI * (i + 1) / 3.0
+        return Vec2(r * (cos(a) + cos(b)) / 2.0, r * (sin(a) + sin(b)) / 2.0)
     }
 
     /** A square of half-width [half], drawn on the station that is active — four pieces, one per side. */
@@ -348,7 +370,11 @@ class SkinToolTest {
         return ed
     }
 
-    /** **The first stated pair is the seam**: matching a corner to its neighbour twists the skin, and stores. */
+    /**
+     * **The first stated pair is the seam**: matching a corner to its neighbour turns the correspondence, and
+     * stores — asserted here on the **square**, where the quarter turn it asks for is refused by name and the
+     * pair is stored, replayed and byte-equal all the same.
+     */
     @Test
     fun aStatedPairTwistsAnEqualCountSkinAndTheTwistIsStored() {
         val ed = Editor()
@@ -372,11 +398,52 @@ class SkinToolTest {
         ed.setActiveSpace("station2")
         ed.click(Vec2(20.0, 0.0))
         val twisted = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.SOLID })
-        assertManifold(meshOf(twisted), "the twisted prism", foldsBackOnItself = true)
-        assertTrue(
-            Geom3.volume(meshOf(twisted)) < 180.0 * 1600.0 - 1000.0,
-            "the twist is a smaller body: ${Geom3.volume(meshOf(twisted))}",
-        )
+        // **A quarter turn of four pieces is the one turn this correspondence cannot take** (session 82): the
+        // polyhedron a ruled strip *is* folds back along every rail it shares, so the gesture refuses by name
+        // rather than handing back a shell that encloses a third of what it draws. The pair is still stated,
+        // still stored and still replayed — a refusal is a value (OP-3), and it heals at another vertex or on
+        // a section with more pieces (`aStatedPairOneCornerRoundTwistsAHexagonalSkin`, below).
+        val fold = assertNotNull((Evaluator().eval(twisted.ref.node) as? EvalResult.Invalid)?.reason, "the quarter turn is refused")
+        assertTrue("folds this skin's shell back on itself" in fold, "and the fold is what it names: $fold")
+        assertTrue("another vertex" in fold, "with the cure beside it: $fold")
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue("match=" in text, "the stated twist is stored: $text")
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal with the pair in it")
+    }
+
+    /**
+     * **…and the same gesture on a section with more pieces is a body**: two hexagons, the pair stated one
+     * corner round, is a sixth of a turn — the twisted antiprism, watertight and smaller than the prism.
+     *
+     * The pair with the square above and this one is the whole of the rule: what a stated pair may turn the
+     * correspondence by is bounded by how many pieces the sections have, and a four-piece quarter turn is the
+     * one that goes over it.
+     */
+    @Test
+    fun aStatedPairOneCornerRoundTwistsAHexagonalSkin() {
+        val ed = Editor()
+        run300(ed)
+        ed.stationOn("60", Vec2(100.0, 0.0))
+        ed.hexHere(20.0)
+        ed.stationOn("240", Vec2(200.0, 0.0))
+        ed.hexHere(20.0)
+        ed.setTool(Tools.LOFT_RULED)
+        ed.click(hexSide(20.0, 0))
+        ed.setActiveSpace("station1")
+        ed.click(hexSide(20.0, 0))
+        ed.key("Enter")
+        val straight = Geom3.volume(meshOf(ed.solids().single()))
+        assertClose(straight, 180.0 * 6.0 * 0.5 * 20.0 * 20.0 * kotlin.math.sin(PI / 3.0), 1e-9, "an untwisted hexagonal prism, exactly")
+
+        ed.setActiveSpace("station1")
+        ed.setTool(Tools.MATCH_SECTIONS)
+        ed.click(hexSide(20.0, 0))
+        ed.setActiveSpace("station2")
+        ed.click(hexSide(20.0, 1))
+        val twisted = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.SOLID })
+        assertNull((Evaluator().eval(twisted.ref.node) as? EvalResult.Invalid)?.reason, "a sixth of a turn is an ordinary skin: ${ed.statusHint}")
+        assertManifold(meshOf(twisted), "the twisted hexagonal prism")
+        assertTrue(Geom3.volume(meshOf(twisted)) < straight - 1000.0, "the twist is a smaller body: ${Geom3.volume(meshOf(twisted))}")
         val text = DocumentFormat.save(ed.doc)
         assertTrue("match=" in text, "the stated twist is stored: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal with the pair in it")

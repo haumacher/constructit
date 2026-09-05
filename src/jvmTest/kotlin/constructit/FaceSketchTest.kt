@@ -275,7 +275,12 @@ class FaceSketchTest {
         val db = assertNotNull(Geom3.bounds(ed.meshOf(drill)))
         assertClose((db.first.x + db.second.x) / 2, 25.0, tol = 0.02, msg = "the bore is where the frame put it")
         assertClose((db.first.z + db.second.z) / 2, 12.0, tol = 0.02)
-        assertClose(db.first.y, 0.0, tol = 1e-9, msg = "it starts on the face itself")
+        assertClose(
+            db.first.y,
+            -Geom3.TOOL_STEP_MM,
+            tol = 1e-9,
+            msg = "it starts one micron off the face, in the air — a tool never shares a face with the body (GitHub #33)",
+        )
         assertClose(db.second.y, 10.0, tol = 1e-9, msg = "and runs 10 mm into the material")
         assertClose(db.second.x - db.first.x, 5.0, tol = 0.05, msg = "a ⌀5 drill")
 
@@ -562,7 +567,12 @@ class FaceSketchTest {
             tol = 0.02,
             msg = "still 15 mm back from the edge's midpoint, which moved to x = 30",
         )
-        assertClose(moved.first.y, -10.0, tol = 1e-9, msg = "and still on the face, which moved to y = -10")
+        assertClose(
+            moved.first.y,
+            -10.0 - Geom3.TOOL_STEP_MM,
+            tol = 1e-9,
+            msg = "and still one micron off the face, which moved to y = -10",
+        )
         assertClose((moved.first.z + moved.second.z) / 2, 12.0, tol = 0.02)
 
         // thicken the plate: v is measured up from the picked edge, so the bore stays where it is

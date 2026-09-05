@@ -14286,6 +14286,55 @@ the composition table is driven generically as well as by its own test.
   named and each of the sixteen is now recorded at its own assertion, which is *recorded, not discovered*
   applied to a finding nobody asked for.
 
+- **Turn 74 — the flap becomes the gate** (GitHub #33's by-product; session 81). Turn 73 left the refusal cut
+  and named: sixteen bodies the build made then folded back on themselves, in four families, so *a flap is a
+  fault* shipped as a test-side check with twelve records asserting that each fold was **still there**. This
+  turn retires all four and lets `MeshCanon.fault` — what every general boolean's result is handed to on both
+  platforms — answer `flap` as well as `notClosed`. What is worth the entry is how differently the four
+  behaved once measured. **One** was the same mistake Turn 73 was about, one tool over: a *Cut* sketched on a
+  face put its cap **exactly in** that face, on an argument about exactness that weighed the wrong pair of
+  risks, and only a **slanted** face ever showed it because two prisms along one axis never reach a mesh at
+  all. The cure is the blend's own micron, and the interesting part is where it had to stop — a **datum** may
+  lean straight through the material, where the same micron is not air but a slab, 2.26 mm³ on a 45° mitre,
+  so the step is asked of a face space and of nothing else and is decided by the drawing rather than by a
+  probe. **Two** was not a defect at all: five knife edges between 0.04° and 0.25°, real faces at a real angle
+  with material between them, a decade outside the band — measured, asserted, and left. **Three** was the
+  record being wrong about its own cause, and then the obvious cure being wrong too. It had been filed as
+  *"the far end of a tangent-continuous rim"*; every fold sits at the **centre of the fillet arc in the
+  middle of the run**, because both reporters drive the 2D fillet and the 3D rasp from **one parameter** —
+  sharing a node, which is this build's whole idea of equality. A ball of radius `r` rolls along a rim of
+  radius `r`, its centre runs on a circle of radius `R − r = 0`, and so **the ball stands still**: the band
+  is that one ball's own surface, the degenerate torus with its hole closed to a point, a sphere patch
+  taking `φ·r³/6`. That is a body this kernel's catalogue already holds — the Turn's pole, the Vertex's ball
+  — and every real CAD puts one on a rounded plate. The first cure written here **refused** it: widen the
+  bend criterion by the picture's own accuracy and call a section that all but fills its bend *"closing to a
+  point"*. It was built, measured and thrown away, because a refusal that takes a capability the build
+  already had away from the reporter's own drawing is a cut wearing a fix's clothes. What was actually wrong
+  was the construction. A crease that is one circular arc turns about a **fixed axis**, so its band is a
+  surface of revolution — and the general sweep carries a run as *chords*, which cannot place a section
+  point that lands on the axis anywhere nearer than a few tenths of a millimetre. Built as a revolve, the
+  pole is a pole, `MeshBuilder` drops the quads that collapse with it exactly as it has always done for a
+  turned part, and what is still refused is only a rasp **wider** than its rim, in the sentence it always
+  had — now firing at the rim's radius instead of a sagitta beyond it. **Four** was a semantic question
+  wearing a defect's clothes. A ruled band here *is* the polyhedron its stated split makes of it, and a
+  quarter turn of a four-piece correspondence folds that polyhedron along every rail — 21333 mm³ where the
+  ruled surface would hold 42667, every count silent. Refusing it by name is right under the semantics this
+  kernel states, and the alternative — refining the band by its own warp until the split stops mattering — is
+  recorded as an extension rather than taken, because it would change what a *ruled* loft **means**. The
+  probe of the delivery then made the fourth family say something sharper than the delivery had. Asking the
+  *mesh* was the wrong level: two congruent **triangles** turned one corner round fold with nothing coplanar
+  anywhere, so `flap` sees nothing, and the shell they close encloses **exactly zero** — a closed,
+  consistently wound surface with no inside, which is the second degenerate closed shell and which the gate
+  now names (`MeshCanon.hollow`, measured against the mesh's own resolution rather than against zero). And
+  the fold itself belongs to the **correspondence**, not to the triangles: a quad whose own split makes two
+  triangles that face into opposite half-spaces is folded, which is a fact about the rings and is asked
+  before a triangle exists. Warp and fold are separated by a whole half-space, so the criterion needs no
+  tolerance at all — it catches the rectangle, the triangle and the square, and leaves the hexagon and the
+  octagon exactly the bodies they were. The
+  through-line of all four is the one Turn 73 started: the checks a doctrine rests on have to be asked of the
+  thing the doctrine is about, and when they finally are, some of what they find is a bug, some is a wrong
+  record, some is sound, and one is a design decision nobody had noticed making.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -16281,7 +16330,9 @@ numbering had to stop depending on the origin (it rotated to "the corner nearest
 renumbered a space's own edges whenever its origin moved). Cut and Extrude kept their meanings by **losing**
 their exception rather than gaining one — with a face normal pointing out of the material, *Extrude follows
 +normal, Cut follows −normal* is now the rule for every space, and OP-25's lift sign goes with it. And the
-backward sweep had to be made **exact** (`Construction.sketchBehind`): the old "start `depth` behind the plane"
+backward sweep had to be made **exact** (`Construction.sketchBehind`, which session 81 folded into
+`Construction.cutTool` — the same bit-exact mirroring, plus the micron of step-off a tool owes a face it is
+sketched on): the old "start `depth` behind the plane"
 lands a tool's cap on the face only up to rounding, which the general boolean saw as a near-tangency and
 refused. What stays out is stated with the work: no gesture *removes* an anchor (undo is the route back), the
 anchor is a section corner rather than an arbitrary constructed point, and a plane not born from a face and a
@@ -17946,6 +17997,157 @@ found the two folds above: a **concave** 20° notch filled, a chamfer on the 19�
 dart's whole top face — a 19° `Joint`, two obtuse ones and the reflex `Turn` — with the tip upright and its
 ball patch on top of it. **2610 → 2620 green**, `assertManifold` on every solid in every one of them.
 
+#### Implementation status (as built — **the flap becomes the gate**, session 81; GitHub #33's by-product)
+
+**What was open.** Session 81 put *a flap is a fault* into the vocabulary (`MeshCanon.flap`) and asked it of
+every solid in every test, and cut the **production** half of it whole: sixteen bodies the build made then
+carried a fold, in four families, none of them a blend tool's coplanar face, and refusing them would have
+taken sixteen bodies away from users as the side effect of a bug fix. Each was pinned at its own call site
+with `assertManifold(..., foldsBackOnItself = true)` — twelve of them — so that a fix at a cause would fail
+the record and force it out. This is that session. All four are retired, the parameter is gone, and
+`MeshCanon.fault` — what both actuals of `MeshBool` hand every result to, through `MeshCanon.finish` — now
+answers `notClosed(mesh) ?: flap(mesh) ?: hollow(mesh)`.
+
+**There are exactly two degenerate closed shells, and the gate names both.** A **flap** is a surface with no
+*thickness*: two sheets back to back. A **hollow** is a surface with no *inside*: a shell that passes through
+itself so thoroughly that what it bounds cancels. Both use every directed edge exactly once with exactly one
+opposite use, so `notClosed` is blind to each; and the second is blind to `flap` as well, because nothing
+about it need be coplanar. The orchestrator's probe of this session found one and it is the reason the second
+clause exists — a twisted triangular skin whose three rulings each joined a corner to the vertical of its
+neighbour, closed and consistently wound and enclosing **exactly zero**. `MeshCanon.hollow` measures the
+divergence integral against the mesh's **own resolution over its own footprint** (one weld cell, a float32
+ULP at this mesh's scale, times the square of its longest side) rather than against zero, because a shell
+that cancels leaves a float32 residue and a residue is not an inside; an honestly small body scales with the
+bar and clears it by orders (a 0.1 mm cube by six). A **negative** volume is the same defect read the other
+way — a shell wound inside out bounds the complement of a body — and is included.
+
+**Family 1 — a drill through a pyramid's slanted face (four call sites, five bodies).** *The cause:* the
+*Cut* tool's cap lay **exactly in** the face it was sketched on. `Construction.sketchBehind` did that on
+purpose, and its reasoning was exactness — *"a cap a femtometre off a face it is meant to be flush with is
+exactly the near-tangency the general boolean cannot close"* — which weighs the wrong pair of risks. Flush is
+not near: two coplanar sheets facing the same way are a cancellation the engine has to adjudicate, and a
+float32 engine adjudicating it is a coin toss. It never showed on an upright drill because two prisms along
+one axis are combined by the slab algebra (OP-22) and never reach a mesh; a **slanted** face has no common
+axis, so the pair goes to Manifold, and nine zero-thickness flaps came back in the re-triangulation of that
+one face. *The cure:* `Geom3.cutTool`, one node in place of a sketch and an extrusion, which mirrors the
+drawing in the flipped frame exactly as before and then stands the whole tool `TOOL_STEP_MM = 1e-3` proud of
+the face — the same micron, and the same rule, as the blend's own `GROW_MM`. The step is added to the sweep as
+well as to the start, so the far cap lands where the typed depth says: a blind pocket is the depth that was
+typed, and what moves is a micron of *air*. Nine flaps to none; 192 triangles to 162; the volume from
+295495.650719 to 295495.652839, seven parts in a billion, which is the tessellation of the bore's rim reading
+one chord differently and not material removed or left.
+
+*And the line the cure had to be drawn at, which a measurement drew.* Applied to **every** *Cut* the step-off
+cost 2.26 mm³ on this suite's 45° mitre — a ten-thousandth of the body — because a **datum** plane is not a
+face: it may lean straight through the material, and there the micron is a micron-thick slab off the whole cut
+cross-section. So the step is asked of a face space and of nothing else, and that is a fact about the drawing
+(`SketchSpace.piece >= 0`) rather than a measurement, so a replay reaches the same answer the click did. A
+datum that *happens* to lie in a face keeps the coin toss it always had; that is recorded here rather than
+hidden, and the exact reading of it is the blend's — ask the dressed face list, not the triangles.
+
+**Family 2 — the near-tangent fuse: sound, and now said so.** *The cause:* nothing. The user's session-63
+plate and handle, trimmed by two mirrored chains and fused, leaves five pairs of wall triangles meeting at
+dihedrals of **0.037°, 0.104°, 0.107°, 0.175° and 0.245°**, where the twice-trimmed handle's outline crosses
+the plate's rim at a very shallow angle. Those are **knife edges** — two faces at a real angle with material
+between them, growing linearly away from the edge — and a flap has no thickness at all. `FLAP_COS = -1 + 1e-9`
+admits a dihedral of 0.0026°, so the sharpest of the five stands more than a decade outside it. The band is
+unchanged and the finding is now asserted rather than described (`FlapGateTest`), because the alternative
+reading — a near-coincident contact to refuse or step off — would have taken the user's own body away.
+
+**Family 3 — the ball that stands still (three call sites).** *The cause is not what the record guessed.*
+The record said *"the far end of a tangent-continuous rim, where the last band stops against the one rim
+piece that is not rounded"*. Measured, all ten folds sit at **the centre of the fillet arc in the middle of
+the run**, and the reason is the same in both reporters' drawings: one parameter `r` drives the 2D fillet
+*and* the 3D rasp — which is what sharing a node **means** here, and what a user means by *"round everything
+at 5"*. The middle piece of the run is that fillet's own arc, so the rasp rolls a ball of radius `r` along a
+rim of radius `r`. The ball's centre runs on a circle of radius `R − r`, so at `R = r` **it does not run at
+all**: the band is that one ball's own surface, the degenerate torus with its hole closed to a point, which
+is a sphere patch over the arc's angle `φ` and takes `φ·r³/6` of material (the cylinder sector under the rim,
+`φr³/2`, less the sphere's own, `φr³/3`). That is an ordinary body — it is already in this kernel's catalogue
+as the Turn's pole and the Vertex's ball, and every rounded-rectangle plate with a spherical corner is one.
+
+*What was actually wrong was the construction, not the geometry.* A crease that is one circular arc was swept
+by the general `Geom3.sweep`, and `Frames3` carries a run as **chords**: a section point that lands *on* the
+axis is then placed within a chord's own error of it — `10·sin(Δ/4)`, four tenths of a millimetre at the
+run's ends, and the chord's sagitta a few microns in the middle — so instead of a pole the sweep traces a
+tiny ring, and the fan over it folds back on itself. *The cure:* `Blend3.revolvedBand`. A crease that is one
+circular arc **turns about a fixed axis**, and the section stands in the plane through that axis at every
+station, so the tool is a solid of revolution and `Geom3.revolve` builds exactly that — a profile *touching*
+the axis is the normal case for a turned part, the collapsed quads are dropped by `Geom3.MeshBuilder` (which
+carries that rule for this very reason), and what comes out is one pole. Ten flaps to none, and it costs no
+other body: every circular-crease blend in the suite is unchanged or better, and the switch is unconditional
+because a revolve is not an approximation of the sweep but the exact thing the sweep was approximating.
+
+*What is still refused, and in the words it always had.* A rasp **wider** than the rim it runs along reaches
+past the axis, which is a surface passing through itself, and `revolvedBand` says so with the sweep's own
+sentence — *"the profile's reach into the bend (…) is larger than the bend the run starts with (radius …), so
+the sweep would pass through itself"*. The boundary is now exactly the rim's radius: it used to sit `0.017`
+mm beyond it, because the sweep measured the section's reach off its **chords** and so under-read it by a
+sagitta, which is the band in which the folds were reachable at all.
+
+*One cure tried and rejected, recorded because it is the obvious one.* Widening the bend criterion by the
+picture's own accuracy (`2·TESS_TOL_MM`) does make every folding radius refuse, and it was built and
+measured. It is wrong: it takes the reporter's own body away and tells them to type a smaller rasp, for a
+body that is sound geometry every real CAD builds. A refusal that removes a capability the build had is a
+cut, not a fix.
+
+**Family 4 — the correspondence that folds a band (five call sites).** *The cause:* a ruled band in this
+kernel **is** the polyhedron its stated split makes of it — every quad split from its own lower rail, which
+`SkinTest` asserts to the last bit against a hand-written figure. Turn a **four**-piece correspondence one
+piece round between two sections of the same shape and that polyhedron folds: the triangle each strip puts
+against the rail it shares with its neighbour is exactly coplanar with the neighbour's and wound against it,
+so the surface doubles back along all four rails and encloses 21333 mm³ where the ruled surface would hold
+42667. Every count passes it. *The cure, in two layers.* The **correspondence** is judged on its own quads,
+before a triangle exists: `Geom3.foldedQuad` asks whether the two triangles a quad's stated split makes of it
+face into opposite half-spaces, and the loft and the skin lay their rows out, ask every quad, and only then
+emit. A merely *warped* quad — which every twisted band has — keeps its two normals on the same side, so the
+warp and the fold are separated by a whole half-space rather than by a tolerance. And the **shell** is then
+asked of `MeshCanon.fault` as a backstop, for a fold no single quad makes. That is the one thing about a loft
+and a skin that is no longer lazy, and the trade is stated: the laziness bought a `Feature3` nobody meshes,
+and *watertight or refused* outranks it. `crossingRails` had recorded exactly this gap — *"two rails may pass
+close without meeting while the patch between them folds"* — and this closes it.
+
+*And what the quad criterion catches that no mesh check can* (the orchestrator's probe of the gate, session
+82). Two congruent **triangles** turned one corner round send every ruling to the vertical of its neighbour;
+the three quads sweep through the axis and the shell that closes over them is closed, consistently wound,
+**nothing in it coplanar** — and it encloses **exactly zero**. `notClosed` is silent, `flap` is silent, and
+what came back was a `Solid3` no consumer could use. Measured over the three fixtures the probe states: the
+30 × 10 rectangle (a quarter turn of four pieces), the equilateral triangle (a third of a turn of three) and
+the square are all caught by the quad criterion; the hexagon and the octagon build, bit for bit as before. The **tube** of `TubeCornerBendTest` is the one member of the
+family that really is self-crossing, and `Geom3.sweep` had already refused it since session 65; that test
+builds its folded body round the refusal on purpose, and now says so in the engine's own vocabulary
+(`MeshCanon.notClosed` silent, `MeshCanon.flap` not) instead of through an inverted assertion.
+
+*What is left as an extension, not a cut.* Which of the two quarter turns folds depends on the **split**, not
+on the surface: seam 1 of `LoftTest`'s turned frustum builds and seam 3, its mirror image, does not. Refining
+a ruled band by its own **warp** — the rule `Geom3.sweep` already follows through `GeomMath.warpSteps`, and
+which converges the body to the 42667 the two splits bracket — would make both buildable. It is not done here
+because it changes what a *ruled* loft **means** (the stated-split polyhedron is a decision with a test on
+it), and that is a design change rather than a defect fix.
+
+**What moved.** One drilled-pyramid body, by seven parts in a billion. No golden moved (they are 2D). Every
+reporter's body from #27, #28, #31, #32 and #33 is unchanged, and every `save → load → save` in the touched
+tests is still byte-equal. Three drills whose *tool* was asserted to start exactly on its face now assert the
+micron instead (`FaceSketchTest` twice, `SpaceOriginTest`). Two bodies are gone and were replaced by refusals
+with cures: the equal-square quarter-turn skin and the turned frustum's seam 3. **No** body was taken away by
+family 3: the reporters' own drawings build where they used to fold, and the band along a circular rim is
+built by a revolve rather than a chord sweep, which moves no volume in the suite by more than its own
+tessellation.
+
+Tests: `FlapGateTest` (4) — the drill through a slanted face flap-free with the tool measured a micron proud,
+the datum's flush cap and its 16000 mm³, the five knife edges of the near-tangent fuse with their dihedrals,
+and the gate itself on a hand-built fold through `MeshCanon.finish`, the seam both actuals use. Plus, at the
+reporters' own drawings: `BlendRunTangencyTest.theReportersOwnRadiusIsTheBallStandingStillAndBuilds` (the
+verbatim script, flap-free through the gate, its removed volume bracketed between `r²(1 − π/4)·L + φ·r³/6`
+and the same arithmetic over the tessellation's own inscribed chords, one pole on the top face and every
+vertex of the patch its own radius from the ball's centre) with
+`aRaspWiderThanTheRimItRunsAlongIsRefused` beside it,
+`FilletSupersedesCornerProbeTest.aRaspAsWideAsTheRoundedCornerIsTheBallStandingStill`,
+`SkinTest.aQuarterTurnOfAFourPieceCorrespondenceIsRefusedAsAFold`,
+`SkinToolTest.aStatedPairOneCornerRoundTwistsAHexagonalSkin` and
+`LoftTest.theOtherQuarterTurnFoldsTheBandAndIsRefusedByName`. **2639 → 2644 green**, twelve records gone and
+the parameter that carried them with them.
+
 #### Implementation status (as built — the **scalar half**, session 71)
 
 `constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
@@ -19286,23 +19488,26 @@ patch, one sign convention and one growth direction, argued rather than flipped 
 otherwise the ball's own and the figure is the same `(2 − 7π/12) r³` read the other way. A shelled box's inner
 corner is the acceptance.
 
-**Queued in session 81 — the folds the flap check found in bodies that are not blends (GitHub #33's own
-by-product).** *A flap is a fault* is now in the vocabulary (`MeshCanon.flap`) and asked of every solid in every
-test, and asking it showed that **sixteen bodies the build makes today fold back on themselves** in four
-families, none of them a blend tool's coplanar face: (1) the general engine's re-triangulation around a **drill
-through a pyramid's slanted face**; (2) a **near-tangent fuse** of two chains along a wall (let through by the
-0.003° band, because it has thickness where a flap has none — but it is a knife edge, and it is listed here so
-it is not mistaken for sound); (3) the **far end of a tangent-continuous rim**, where the last band stops
-against the one rim piece that is not rounded and leaves a cluster of micron folds; (4) **self-crossing lofts,
-skins and tubes**, which this kernel builds on purpose today and which are therefore not watertight in the
-strict sense the export doctrine states. Each is pinned where it stands (`assertManifold(...,
-foldsBackOnItself = true)` at twelve call sites asserts the fold is *still there*), so a fix at the cause fails
-the record and forces it out. Until every family is retired the check is test-side only; the production gate
-(*watertight or refused*) takes it the day the last family goes. Order of attack: (3) is the blend's own and
-shares its mechanism with the pivot's micron disc; (1) is a boolean-engine artefact and wants the tool stepped
-off the slanted face the same way a blend's tool is stepped off its walls; (4) is a construction whose
-self-crossing is a *value* — the honest answer is a refusal by name where the tube's radius exceeds the bend's,
-which is the swept-cut's own rule one feature over.
+**Retired in session 81 — the folds the flap check found in bodies that are not blends (GitHub #33's own
+by-product), and with them the production gate.** All four families are cured at their causes, the twelve
+`assertManifold(..., foldsBackOnItself = true)` records are gone with the parameter that carried them, and
+`MeshCanon.fault` — the general boolean's own gate, on both platforms — now answers `flap` as well as
+`notClosed`, so *watertight or refused* (OP-9) means what it has always claimed. (1) The **drill through a
+pyramid's slanted face** was the *Cut* tool sharing a face with the body by construction: its cap lay exactly
+in the face it was sketched on, which the slab algebra never noticed and Manifold answers with a coin toss;
+the tool is now stepped a micron into the air, and only on a **face** space, because a datum may lean straight
+through the material. (2) The **near-tangent fuse** was measured and is **sound** — five knife edges between
+0.04° and 0.25°, a decade and more outside the band, with real thickness — and the band stands. (3) The **far
+end of a tangent-continuous rim** was not the far end at all: both reporters drive the 2D fillet and the rasp
+from *one* parameter, so the band runs along an arc of its own radius, **the ball stands still**, and the band
+is that ball's own sphere patch closing on the arc's centre — sound geometry the chord-carried sweep could not
+place a pole for. A band along a circular rim is now built as the **surface of revolution** it is, so the
+reporters' own drawings build where they used to fold, and only a rasp *wider* than its rim is refused. (4) **Self-crossing lofts and skins** are refused by name where the correspondence folds the
+band, and the self-crossing **tube** already was. See *the flap becomes the gate* under the edge-blend
+entries. What it leaves is one recorded extension, not a cut: a ruled band is the polyhedron of its stated
+split, so which quarter turn of a four-piece correspondence folds depends on that split — refining the band by
+its own **warp** (the rule `Geom3.sweep` already follows) would make both turns buildable and is a change to
+what a ruled loft *means* rather than a defect fix.
 
 **Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
 

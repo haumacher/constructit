@@ -57,6 +57,15 @@ class SkinTest {
 
     private fun square(half: Double) = polygon(Vec2(-half, -half), Vec2(half, -half), Vec2(half, half), Vec2(-half, half))
 
+    /** A regular hexagon of circumradius [r] about the origin, first corner on the +x axis. */
+    private fun hexCorners(r: Double) = (0 until 6).map { Vec2(r * kotlin.math.cos(PI * it / 3.0), r * kotlin.math.sin(PI * it / 3.0)) }
+
+    private fun hexagon(r: Double) = polygon(*hexCorners(r).toTypedArray())
+
+    /** An equilateral triangle of circumradius [r] about the origin, first corner on the +x axis. */
+    private fun triangle(r: Double) =
+        polygon(*(0 until 3).map { Vec2(r * kotlin.math.cos(2.0 * PI * it / 3.0), r * kotlin.math.sin(2.0 * PI * it / 3.0)) }.toTypedArray())
+
     private fun section(
         z: Double,
         loop: Loop,
@@ -185,27 +194,97 @@ class SkinTest {
         assertTrue(abs(smooth - Geom3.volume(mesh)) > 1.0, "the twisted strip really does make a difference")
     }
 
-    /** A stated pair offset by one piece **twists** the skin — the seam's job, done by the same mechanism. */
+    /**
+     * A stated pair offset by one piece **twists** the skin — the seam's job, done by the same mechanism —
+     * and it is asserted on a hexagon, because a **square** twisted one piece round is a quarter turn and
+     * that is the one turn a four-piece correspondence cannot survive (see the test below).
+     */
     @Test
     fun aStatedPairOffsetByOnePieceTwistsAnEqualCountSkin() {
-        val sections = listOf(section(0.0, square(20.0)), section(40.0, square(20.0)))
+        val sections = listOf(section(0.0, hexagon(20.0)), section(40.0, hexagon(20.0)))
         val (straight, _) = skin(sections)
         val (twisted, why) = skin(sections, matches = listOf(SkinMatch(0, 0, 1)))
         assertNull(why, "a twist is an ordinary skin: $why")
         val a = assertNotNull(straight).mesh
         val b = assertNotNull(twisted).mesh
-        assertManifold(a, "the prism")
-        assertManifold(b, "the twisted prism", foldsBackOnItself = true)
+        assertManifold(a, "the hexagonal prism")
+        assertManifold(b, "the twisted hexagonal prism")
         // the untwisted body is the prism, exactly; the twisted one is the antiprism, which is smaller
-        assertClose(Geom3.volume(a), 40.0 * 1600.0, 1e-9, "the prism's volume")
+        assertClose(Geom3.volume(a), 40.0 * areaOf(hexCorners(20.0)), 1e-9, "the prism's volume")
         assertTrue(Geom3.volume(b) < Geom3.volume(a) - 1000.0, "the twisted skin is a smaller body: ${Geom3.volume(b)}")
-        // and it is the twist the pair states: the strip that leaves corner (−20, −20) now arrives at the
-        // *next* corner round, which is (20, −20) lifted
+        // and it is the twist the pair states: the strip that leaves the first corner now arrives at the
+        // *next* corner round, lifted
         val plan = assertNotNull(Skin3.plan(sections, SkinRow.RULED, listOf(SkinMatch(0, 0, 1))).first)
         val rail0 = plan.railPoint(plan.strips[0][0].family, 0, 0)
         val rail1 = plan.railPoint(plan.strips[0][0].family, 0, 1)
-        assertClose((rail0 - Vec3(-20.0, -20.0, 0.0)).length(), 0.0, 1e-9, "the strip starts at the matched corner")
-        assertClose((rail1 - Vec3(20.0, -20.0, 40.0)).length(), 0.0, 1e-9, "and lands one corner round")
+        val corners = hexCorners(20.0)
+        assertClose((rail0 - Vec3(corners[0].x, corners[0].y, 0.0)).length(), 0.0, 1e-9, "the strip starts at the matched corner")
+        assertClose((rail1 - Vec3(corners[1].x, corners[1].y, 40.0)).length(), 0.0, 1e-9, "and lands one corner round")
+    }
+
+    /**
+     * **The quarter turn a square cannot take is refused by name** (session 82, family 4 of GitHub #33's
+     * by-product; this call site used to assert the fold instead).
+     *
+     * A ruled strip in this kernel *is* the polyhedron its stated split makes of it — two triangles from the
+     * strip's own lower rail, which is what `aRuledSkinBetweenTwoEqualPolygonsIsThePolyhedronOfItsSplit`
+     * asserts to the last bit. Turn a **four**-piece correspondence one piece round between two sections of
+     * the same shape and that polyhedron folds: the triangle each strip puts against the rail it shares with
+     * its neighbour is exactly coplanar with the neighbour's and wound against it, so the surface doubles
+     * back along all four rails and encloses a third of what the picture shows (21333 mm³ where the ruled
+     * surface would hold 42667). Every structural check passes it — the shell is closed and consistently
+     * wound — which is why it stood for three sessions, and it is the flap check that names it.
+     *
+     * It heals the way every refusal here does: state the pair at another vertex, or twist a section with
+     * more pieces (the hexagon above takes the same gesture and builds).
+     */
+    @Test
+    fun aQuarterTurnOfAFourPieceCorrespondenceIsRefusedAsAFold() {
+        val sections = listOf(section(0.0, square(20.0)), section(40.0, square(20.0)))
+        val (twisted, why) = skin(sections, matches = listOf(SkinMatch(0, 0, 1)))
+        assertNull(twisted, "a quarter turn of four pieces is not a body")
+        val said = assertNotNull(why, "and it says why")
+        assertTrue("folds this skin's shell back on itself" in said, "the fold is named: $said")
+        assertTrue("two triangles its own split makes of it face against each other" in said, "…as the quad it is: $said")
+        assertTrue("another vertex" in said, "and the cure is stated: $said")
+        // …and the plan itself is sound — it is the *shell* that cannot be made, so the correspondence the
+        // gesture stated is still exactly the one it stated
+        val plan = assertNotNull(Skin3.plan(sections, SkinRow.RULED, listOf(SkinMatch(0, 0, 1))).first)
+        assertClose(
+            (plan.railPoint(plan.strips[0][0].family, 0, 1) - Vec3(20.0, -20.0, 40.0)).length(),
+            0.0,
+            1e-9,
+            "the pair lands one corner round, refused or not",
+        )
+        // a section of different size does not save it: the quarter turn is what folds, not the taper
+        assertNull(
+            skin(listOf(section(0.0, square(20.0)), section(40.0, square(12.0))), matches = listOf(SkinMatch(0, 0, 1))).first,
+            "a tapered quarter turn folds the same way",
+        )
+    }
+
+    /**
+     * **A third of a turn of a three-piece correspondence is refused too, and it is the case no *mesh* check
+     * can see** (session 82, the orchestrator's probe of the gate).
+     *
+     * Two congruent triangles turned one corner round send every ruling to the vertical of its neighbour, so
+     * the three quads sweep through the axis. The shell that closes over them is closed, consistently wound
+     * and has **nothing coplanar in it** — `notClosed` is silent and so is `flap` — and it encloses exactly
+     * **zero**: it is a surface with no inside, which is the second degenerate closed shell and which
+     * `MeshCanon.hollow` now names (`FlapGateTest`). The correspondence that asks for it is refused a level
+     * above that, by the same criterion the quarter turn above meets: the two triangles a quad's own split
+     * makes of it face against each other, which is a fact about the **rings** and needs no triangle.
+     */
+    @Test
+    fun aThirdOfATurnOfAThreePieceCorrespondenceIsRefusedAsAFold() {
+        val sections = listOf(section(0.0, triangle(20.0)), section(40.0, triangle(20.0)))
+        assertNull(skin(sections).second, "the untwisted prism is an ordinary skin")
+        val (twisted, why) = skin(sections, matches = listOf(SkinMatch(0, 0, 1)))
+        assertNull(twisted, "a third of a turn of three pieces is not a body")
+        val said = assertNotNull(why, "and it says why")
+        assertTrue("folds this skin's shell back on itself" in said, "the fold is named: $said")
+        assertTrue("two triangles its own split makes of it face against each other" in said, "…as the quad it is: $said")
+        assertTrue("another vertex" in said, "and the cure is stated: $said")
     }
 
     /**

@@ -13,10 +13,12 @@ import constructit.editor.ElementKind
 import constructit.editor.Tools
 import constructit.geom.Geom3
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -132,7 +134,14 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "rounding + anchoring round-trip together")
     }
 
-    /** A single 3D pick on a leg's rim runs round the path's own rounded corner: leg, arc, leg — three edges. */
+    /**
+     * A single 3D pick on a leg's rim runs round the path's own rounded corner: leg, arc, leg — three edges.
+     *
+     * The rasp is the drawing's own `r`, which is also the radius the two ortho corners are rounded at — one
+     * parameter for both, which is what sharing a node *means* here. The middle piece of the run is therefore
+     * an arc of exactly the rasp's own radius: the ball **stands still** over it and the band is that ball's
+     * own sphere patch, closing on the arc's centre. See `aRaspAsWideAsTheRoundedCornerIsTheBallStandingStill`.
+     */
     @Test
     fun aSinglePickRunsRoundTheRoundedOrthoCorner() {
         val ed = load(issue25)
@@ -144,10 +153,61 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "the blend was made: ${ed.statusHint}")
         assertTrue("(3 edges)" in ed.statusHint, "leg, the corner's own arc, leg: ${ed.statusHint}")
         val body = ((Evaluator().eval(solid(ed).ref.node) as EvalResult.Ok).value as SolidValue).solid
-        assertManifold(body.mesh, "the rasped rounded corner", foldsBackOnItself = true)
+        assertManifold(body.mesh, "the rasped rounded corner")
         assertTrue(Geom3.volume(body.mesh) < before, "a convex run loses material")
         val saved = DocumentFormat.save(ed.doc)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "the run's step round-trips")
+    }
+
+    /**
+     * **A rasp as wide as the corner it runs round is the ball standing still** (session 82) — the same
+     * geometry GitHub #29's own fixture carries, met here on the ortho path's rounded corner.
+     *
+     * Rolling a ball of radius `r` along a rim of radius `r` puts the ball's centre **on** the arc's axis for
+     * the whole sweep: the ball does not travel at all, and the band it leaves is that one ball's own surface
+     * — the degenerate torus whose hole has closed to a point, which is a sphere patch over the arc's angle.
+     * It is an ordinary body and every real corner rounding on a rounded-rectangle plate is one, so it builds:
+     * what it needed was for the band to be constructed as the **surface of revolution** it is, where the
+     * general sweep carries the run as chords and cannot put the pole on the axis at all.
+     *
+     * The claim asserted here is the shape of the removed material, not merely that something built: the top
+     * face's own hole is the arc's centre point, so the body loses exactly `φ·r³/6` there — the cylinder
+     * sector under the rim less the sphere's own sector — and the run's two straight pieces lose their
+     * ordinary `r²(1 − π/4)` per millimetre.
+     */
+    @Test
+    fun aRaspAsWideAsTheRoundedCornerIsTheBallStandingStill() {
+        val ed = load(issue25)
+        ed.activeScalar = ed.doc.scalars.first { it.name == "r" }
+        val before = volume(solid(ed))
+        ed.setTool(Tools.BLEND_EDGE)
+        ed.click(Vec2(-73.625, 50.0))
+        val body = ((Evaluator().eval(solid(ed).ref.node) as EvalResult.Ok).value as SolidValue).solid
+        assertManifold(body.mesh, "the ball standing still over the ortho corner")
+        assertNull(constructit.geom.MeshCanon.fault(body.mesh), "and the production gate is silent on it")
+        assertTrue(Geom3.volume(body.mesh) < before, "a convex run loses material")
+
+        // **and the band over the arc is the ball's own surface.** The corner at (−73.625, 84.125) is
+        // rounded at r = 5, so its arc's centre is (−68.625, 79.125) and the ball that rasps the rim there
+        // sits with its own centre on that arc's axis, 5 below the top face — one sphere, standing still.
+        val r = 5.0
+        val axis = Vec2(-68.625, 79.125)
+        val centre = Vec3(axis.x, axis.y, 18.0 - r)
+        val mesh = body.mesh
+        assertTrue(
+            mesh.vertices.any { (it - Vec3(axis.x, axis.y, 18.0)).length() < 1e-3 },
+            "the band closes on the arc's own centre — one pole, on the top face",
+        )
+        val patch =
+            mesh.vertices.filter {
+                it.z > 13.0 + 1e-6 && it.z < 18.0 - 1e-6 &&
+                    it.x <= axis.x + 1e-6 && it.y >= axis.y - 1e-6 &&
+                    kotlin.math.hypot(it.x - axis.x, it.y - axis.y) < r + 0.1
+            }
+        assertTrue(patch.size >= 8, "the sphere patch is meshed: ${patch.size} vertices")
+        for (v in patch) {
+            assertClose((v - centre).length(), r, tol = 0.05, msg = "every vertex of the band stands on the ball's own surface: $v")
+        }
     }
 
     /** Undo peels the roundings back to the sharp loop; redo rounds them again. */

@@ -166,7 +166,7 @@ class ExportSceneTest {
         val scene = ExportScene.extract(ed.doc, "drilled")
         assertEquals(listOf(ed.doc.nameOf(tip)), scene.nodes.map { it.name }, "the part tip only: ${scene.notes}")
         assertTrue(scene.notes.isEmpty(), "an operand is material, not a skipped body: ${scene.notes}")
-        assertManifold(scene.nodes.single().mesh, "the drilled pyramid, as exported", foldsBackOnItself = true)
+        assertManifold(scene.nodes.single().mesh, "the drilled pyramid, as exported")
     }
 
     /** A wall with an opening cut into it: one watertight body out of the architectural route (OP-21). */

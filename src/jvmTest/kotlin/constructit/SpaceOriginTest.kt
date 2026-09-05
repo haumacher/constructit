@@ -239,7 +239,12 @@ class SpaceOriginTest {
         val bb = assertNotNull(Geom3.bounds(mesh))
         assertClose((bb.first.x + bb.second.x) / 2, 25.0, tol = 0.02, msg = "25 mm from the corner it is measured from")
         assertClose((bb.first.z + bb.second.z) / 2, 12.0, tol = 0.02)
-        assertClose(bb.first.y, 0.0, tol = 1e-9, msg = "it starts on the face")
+        assertClose(
+            bb.first.y,
+            -Geom3.TOOL_STEP_MM,
+            tol = 1e-9,
+            msg = "it starts one micron off the face, in the air (GitHub #33)",
+        )
         assertClose(bb.second.y, 10.0, tol = 1e-9, msg = "and still drills *into* the material")
         roundTrips(ed)
     }

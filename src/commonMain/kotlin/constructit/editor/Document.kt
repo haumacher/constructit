@@ -10893,9 +10893,10 @@ class Document {
      * face means into the material (the face's normal points out of it — [createFaceSpace]) and is what makes
      * a drill a drill. Its twin *Extrude* builds the same footprint the other way as a boss ([extrudeSolid]),
      * so the pair covers both intents by naming them rather than by a sign the user cannot see. The backward
-     * sweep is [Construction.sketchBehind] — the drawing read on the flipped frame — rather than an offset
-     * plane the sweep runs back from, because only that keeps the tool's cap **exactly** on the face; see
-     * that function for the near-tangency an offset's rounding produces.
+     * sweep is [Construction.cutTool] — the drawing read on the flipped frame — rather than an offset plane
+     * the sweep runs back from, because only that keeps the tool's wall over the drawn outline to the last
+     * bit; the tool's *cap* deliberately stands a micron off the face in the air, which is the one rule
+     * GitHub #33 left with no exception (see that function).
      *
      * Nothing here is new machinery: it is an extrude followed by [combineSolids], which is the click
      * path a user can also take by hand — with *Cut* rather than *Extrude* as the first half, since a
@@ -10927,7 +10928,10 @@ class Document {
             return null
         }
         val region = regionOf(el) ?: return null
-        val tool = add(cx.extrude(cx.sketchBehind(on, region), depth), ElementKind.SOLID, Styles.SOLID)
+        // a **face** space has air on its outward side by construction, so the tool is stepped a micron off
+        // it (*a tool never shares a face with the body*, GitHub #33); a **datum** may lean straight through
+        // the material, where that micron would be material rather than air — see [Geom3.cutTool]
+        val tool = add(cx.cutTool(on, region, depth, activeSpace.piece >= 0), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
             .also {
                 madeSolid(it, "${nameOf(el)} cut ${lengthWord(depth)} into ${nameOf(part)} on ${activeSpace.name}")

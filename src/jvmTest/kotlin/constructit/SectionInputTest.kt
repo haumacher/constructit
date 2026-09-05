@@ -142,7 +142,7 @@ class SectionInputTest {
         ed.type("40")
         ed.click(Vec2(incentre.x + 6.0, incentre.y))
         val part = ed.solids().last()
-        assertManifold(ed.meshOf(part), "drilled pyramid", foldsBackOnItself = true)
+        assertManifold(ed.meshOf(part), "drilled pyramid")
         assertTrue(ed.volumeOf(part) < 300000.0 - 100.0, "the bore took material out: ${ed.volumeOf(part)}")
         roundTrip(ed)
     }
