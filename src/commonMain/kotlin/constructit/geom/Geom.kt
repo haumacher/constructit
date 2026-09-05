@@ -492,22 +492,25 @@ object GeomMath {
             else -> null
         }
 
+    /** Every point two carriers cross at, in the ordered set the pair's own intersection states (OP-1). */
+    fun carrierCrossings(
+        a: Pair<Line?, Circle?>,
+        b: Pair<Line?, Circle?>,
+    ): List<Vec2> =
+        when {
+            a.first != null && b.first != null -> intersectLL(a.first!!, b.first!!).points
+            a.first != null && b.second != null -> intersectLC(a.first!!, b.second!!).points
+            a.second != null && b.first != null -> intersectLC(b.first!!, a.second!!).points
+            a.second != null && b.second != null -> intersectCC(a.second!!, b.second!!).points
+            else -> emptyList()
+        }
+
     /** Where two carriers meet, taking the solution nearest the corner they replace. */
     fun carrierJunction(
         a: Pair<Line?, Circle?>,
         b: Pair<Line?, Circle?>,
         near: Vec2,
-    ): Vec2? {
-        val pts =
-            when {
-                a.first != null && b.first != null -> intersectLL(a.first!!, b.first!!).points
-                a.first != null && b.second != null -> intersectLC(a.first!!, b.second!!).points
-                a.second != null && b.first != null -> intersectLC(b.first!!, a.second!!).points
-                a.second != null && b.second != null -> intersectCC(a.second!!, b.second!!).points
-                else -> emptyList()
-            }
-        return pts.minByOrNull { (it - near).length() }
-    }
+    ): Vec2? = carrierCrossings(a, b).minByOrNull { (it - near).length() }
 
     /**
      * One piece restated on its (possibly offset) [carrier] between two re-solved corners — null when the

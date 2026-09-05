@@ -1656,14 +1656,31 @@ object Section3 {
         return out.ifEmpty { null }
     }
 
-    /** The loops sorted into areas: the ones no other contains are outers, the rest are their holes. */
+    /**
+     * The loops sorted into areas: the ones no other contains are outers, the rest are their holes — and
+     * every one of them **normalised** to the drawing's own convention, outer counter-clockwise and holes
+     * clockwise (OP-14).
+     *
+     * *Not a courtesy* (session 82). A chained loop's direction is whatever the first piece it happened to
+     * pick up happened to face — the face list's own order, which a rounding may reorder — so the sign of
+     * the area this hands back would otherwise be a fact about the *iteration* and not about the shape. It
+     * came out backwards for the first section that ever assembled two free ends' notches on one face, and
+     * `Construction.regionArea` read the negative sum as *"the holes remove more area than the outer
+     * boundary encloses"* over a region with no holes at all. Every other producer of a [Region] in this
+     * drawing already normalises (see `Geom3.sectionAt`'s prismatic branch), and now so does this one.
+     */
     private fun nest(loops: List<Loop>): List<Region> {
         val rings = loops.map { Geom3.tessellateLoop(it) }
         val inside = loops.indices.map { i -> loops.indices.filter { j -> j != i && RegionBool.contains(listOf(rings[j]), rings[i].first()) } }
         val out = ArrayList<Region>()
         for (i in loops.indices) {
             if (inside[i].isNotEmpty()) continue
-            out.add(Region(loops[i], loops.indices.filter { j -> inside[j] == listOf(i) }.map { loops[it] }))
+            out.add(
+                Region(
+                    GeomMath.orient(loops[i], ccw = true),
+                    loops.indices.filter { j -> inside[j] == listOf(i) }.map { GeomMath.orient(loops[it], ccw = false) },
+                ),
+            )
         }
         return out
     }

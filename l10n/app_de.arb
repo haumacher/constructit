@@ -2162,5 +2162,7 @@
   "note.intersectionCurves.closedComma": "geschlossen, ",
   "note.projectionOntoFace.exactnessAndLanding": " — {exactness}, {landing}",
   "note.sphereLocus.positiveSide": "positiv",
-  "note.sphereLocus.negativeSide": "negativ"
+  "note.sphereLocus.negativeSide": "negativ",
+  "@@x-geom-session-81-corners": "geom: session 81 corners",
+  "refusal.blend.freeEndNotchReachesPast": "{word} {sizePhrase} entlang {name} endet frei in einer eigenen Fläche, und die Kerbe, die seine Stirnfläche aus dieser Fläche nimmt, reicht über das hinaus, was von der Berandung dieser Fläche übrig ist – am größten passt dort {fitPhrase}"
 }

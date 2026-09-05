@@ -14495,6 +14495,45 @@ the composition table is driven generically as well as by its own test.
   budget slice 1 set, because the table now holds every sentence of the app in every language; nothing about
   the engine is to blame and the cure is a chunk per language, recorded on the queue.
 
+- **Turn 80 — a dressed list must not depend on how many gestures made it** (the queued section limit (a) and
+  the catalogue's fourth corner; session 81). Two queue entries, and the interesting thing is what the first
+  one turned out to be *about*. The stated fault was small and the fix was the sentence the queue already
+  wrote — a free end's cap stands in a third face and notches it, so state the notch. What made it a package
+  is that the notch **does not compose the way a trim does**: a strip of constant width off a boundary piece
+  can be taken level by level down a chain and summed, but a corner replaced by a curve cannot, because the
+  next level offsetting the piece beside it has to re-solve a junction against an arc that is *tangent* to
+  that piece — two solutions exactly as far from the corner they replace, which nearness cannot choose
+  between. So the feature grew a second list (`trimmedFaces` under `dressedFaces`) and the notches are cut
+  **once, at the tip**, which is also the only reading that is right: an end a later gesture turns into a
+  corner must never have had one. **Fixing the outline honestly then exposed two things that had been hiding
+  behind a stale one**, and both are the same sentence — a dressed list must not depend on how many gestures
+  made it. `sameCurve` asked a boundary piece for *equal endpoints* against its edge, so the moment a chain
+  rounded two edges of one face the trim matched nothing and the face quietly kept the outline it had; and
+  `tangenciesFit`, once the outlines were right, made *whether a rounding fits between two faces* a question
+  about what earlier roundings had taken off them, so a **bullnose** — two opposite rims rounded until they
+  meet — built in one pass and was refused as a chain. It now asks the **undressed** faces, which is session
+  80's own lesson taken to its end and OP-30's invariant restated. And the queue entry's own diagnosis was
+  half the case: two adjacent rim edges at different radii make no corner, so the *bands* run into each other
+  and the boolean trims them, which the drawing never said — a second, separate statement (a line crossing a
+  wedge, with the free end's inside-ness read as the **parity** of the crossings behind it) that no amount of
+  outline work would have supplied. **The fourth corner, by contrast, was one line short of nothing.** The
+  ball at a room's own corner is the ball at a box corner; the stations solve identically; and the sign
+  session 80 declined to guess is, once asked of the fill's own wedge, not a sign at all but two facts that
+  were already written down — `outwardAt` steps a leg *out of the wedge*, which at a concave crease is into
+  the material, and a tool's outside is the side its interior is not on. The **fill's own winding does not
+  turn**, because the corner cell keeps the ball's octant either way — of material at a convex vertex, of air
+  at a concave one — which is why the figure is the same `(2 − 7π/12) r³` read from the other side. The
+  lesson worth keeping is the one session 80 half-stated: *a construction that guesses a sign has not found
+  its argument yet*. Both halves are statements about what the drawing **says** and neither moves a volume in
+  the suite, which is what a correction to a face list ought to be able to claim. **And a third sign was
+  hiding in the plumbing**, found by the first section that ever assembled two notches on one face: a chained
+  loop's *direction* is whatever the piece it happened to start from happened to face, so `Section3.nest`
+  was handing out regions whose signed area was a fact about the iteration order rather than about the
+  shape — a perfectly correct simple ring came back clockwise and `regionArea` answered *"the holes remove
+  more area than the outer boundary encloses"* over a region with no holes. Every other producer of a region
+  here normalises to OP-14; this one now does too. The pattern is the same one twice in one package: **where
+  a value's sign is not derived from the geometry it describes, it is derived from an accident.**
+
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -18997,6 +19036,180 @@ vertex of the patch its own radius from the ball's centre) with
 `LoftTest.theOtherQuarterTurnFoldsTheBandAndIsRefusedByName`. **2639 → 2644 green**, twelve records gone and
 the parameter that carried them with them.
 
+#### Implementation status (as built — **the free end's notch**, session 81; the queued section limit (a))
+
+**What the fault was, and it was one face out.** A band that ends without a corner — a fillet along *one*
+rim edge of a plate — closes on a flat cap standing in the plane square to its own edge, and that plane is a
+**third** face: the side face at the edge's end, which is neither of the two the band runs between. The cap
+takes the wedge's own section out of that face, at the corner the edge ends at. `Blend3.dressedFaces`
+corrected the outlines of the band's *own* two faces only, so the end face kept a stale rectangle, a level
+section crossed a boundary that is not where the drawing said it was, and the loop did not close: *"the
+plane's section of this solid does not close into an area"* on a 60 × 40 × 20 plate with one 4 mm round.
+
+**The cure is the same analytic correction, and nothing new is asked of the vocabulary.** The wedge's section
+is already stated exactly in the crease's own `(e1, e2)` frame, and at a free end of a **straight** edge that
+frame *lies in* the end face's plane — the cap is square to the edge and so is the face — so the notch is
+that very section carried through one rigid map (`Blend3.Notch`, `notchAt`). The correction is then the
+ring's corner replaced by *setback along one face → the section → setback along the other*, each junction an
+ordinary crossing of two carriers: line against line, line against circle, `GeomMath.offsetCarrier`'s own
+words, nothing sampled (`notchedOutline`, `spliceAll`, `meetOnSpan`).
+
+**Two things the junction knows that `carrierJunction` cannot.** Where the ring piece has not moved the
+tangency **is** the answer and is taken verbatim. Where it has — a neighbouring rounding trimmed it — a
+fillet's arc is *tangent* to that piece's old place, so its two crossings with the trimmed line stand
+**equally far** from the corner they replace and nearness cannot choose between them; the one on the
+section's **own span** is the corner. And where there is no crossing at all the notch takes **nothing**: the
+strips the bands already took reach further into the corner than the cap's section does, which is provable
+rather than hopeful (the section lies inside the box of its two setbacks, so a trim as deep as either setback
+leaves it nothing to cut) and is why a 3 mm round beside a 4 mm one adds no notch to a face the 4 mm one has
+already cut past.
+
+**A trim composes down the chain and a notch does not, so there are two lists.** `Feature3.Blend` now carries
+`trimmedFaces` beside `dressedFaces`: the first is the base's own list with every level's strips composed
+onto it, the second is that list with the notches cut. A strip of `d₁` and then one of `d₂` off one piece is
+one strip of `d₁ + d₂`, so each level may take its own off the level below's answer; a notch replaces a
+*corner* with a curve, and a later level offsetting the piece beside it would be re-solving a junction
+against the tangency above. So the notches are cut **once, at the tip**, over the whole chain's free ends —
+which is also the only reading that is right: an end that a later gesture turns into a corner never gets a
+notch at all rather than getting one and having it taken back. The two lists are index-parallel to the
+undressed body's, piece for piece, because `GeomMath.offsetCycle` restates a ring rather than re-cutting it,
+so a notch located on the undressed boundary is spliced into the tip's.
+
+**Two latent defects came out with it, and both are the same one: a dressed list must not depend on how many
+gestures made it.**
+
+- *`Blend3.sameCurve` asked for equal endpoints.* A dressed face's boundary piece is the base edge's own
+  curve **already shortened** wherever a neighbouring edge was rounded, so the moment a chain rounded two
+  edges of one face — a box corner taken one gesture at a time — the trim matched *"0 pieces"* and the face
+  silently lost its outline and kept a stale one. The question is now whether the piece **lies along** the
+  edge: the same carrier, its own run inside the edge's, with `hits.size != 1` still the guard.
+- *`Blend3.tangenciesFit` asked the dressed faces.* With the outlines finally honest, that made *whether a
+  section fits between two faces* a question about what other roundings had already taken off them — and a
+  plate whose two opposite rims are rounded until they meet (a **bullnose**, an ordinary thing to want) built
+  in one pass and was refused as a chain. It now asks the **undressed** faces, which is session 80's own
+  lesson carried to its end, makes the two routes agree (OP-30's invariant), and still catches the case the
+  refusal exists for: a 20 mm round on the rim of a 10 mm plate reaches past the plate itself.
+
+**And the other half of the *"two sizes"* section: two bands that meet at a free vertex run into each
+other.** Two adjacent rim edges rounded to sizes that are not congruent build **no** corner (session 79's cut
+2), so the boolean trims the two bands against one another — exactly, and every time — while `Blend3.spanOf`
+still ran each of them the whole length of its edge, and the section came back as two rulings crossing rather
+than meeting. The extent now says so (`endsRunInto`, `runsInto`): the other band's tool is its wedge carried
+along a straight run, so this band's ruling reads in that band's section frame as a **line** moving affinely
+with the station, where it crosses the wedge's boundary is line against line and line against circle, and
+whether the free end starts *inside* is the **parity** of the crossings behind it — nothing sampled, no
+containment guessed. It is a statement about the drawing only: no tool, no boolean and no volume moves.
+
+**The refusal, and it heals.** Where two notches on one face reach past each other — a 5 mm plate with a 4 mm
+round on the top rim over one side and a 3 mm round on the bottom rim over the same side, whose caps notch
+the two ends of the same 5 mm upright — the face says so by name and states the fraction of its own size that
+would fit, found by halving exactly as `largestFitting` finds a radius:
+*"a fillet of radius 3 mm along boundary edge #1 of the bottom face ends free in a face of its own, and the
+notch its cap takes out of that face reaches past what is left of that face's boundary — the largest that
+fits there is about 1 mm"*. The face keeps its index and its reason, as every unreachable correction does.
+
+**And one thing the first section to assemble *two* notches found: a chained loop's direction is not a fact
+about the shape.** With both top rims of a plate rounded at two radii, each end face is notched at **both**
+of its top corners and the level section closes on one simple loop — which came back wound **clockwise**,
+because `Section3.nest` handed the loops out in whatever direction the piece it happened to chain from
+happened to face, and that order moves when a rounding reorders the face list. `Construction.regionArea`
+reads the drawing's own convention (OP-14 — outer counter-clockwise, holes clockwise), so it answered *"the
+holes remove more area than the outer boundary encloses"* over a region with no holes at all. `nest` now
+**normalises** what it hands back, as every other producer of a `Region` in this drawing already does; the
+outlines themselves were right, and the face notched at two, three or four of its corners is one simple ring
+either way.
+
+**Cuts, each named and none silent.** (1) **A free end of a curved edge** states no notch — the cap is then
+not one plane square to the run, and the map that carries the section into the end face is not rigid; such an
+end keeps exactly what it kept. (2) **An end face this drawing cannot name** — two coplanar candidates, or a
+face that is not a plane — keeps what it kept for the same reason. (3) **A fill's cap notches nothing**: it
+closes a void rather than standing in a face's own boundary. (4) **A drawn profile whose section carries a
+piece with no exact crossing** (a Bézier) states no clip against a neighbouring band, so such a pair is left
+as it was rather than trimmed by a fitted curve.
+
+**What moved.** No golden. Every volume in the suite is unchanged — the notch, the run-in and the
+normalisation are all statements about what the drawing *says*, and the construction is deliberately kept on the trimmed faces so
+that it cannot be otherwise (`Blend3.creaseOf`). Two assertions were rewritten because the thing they
+asserted is now cured: `DressedBodyOnePassTest.twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords` became
+`…twoAdjacentSizesSectionExactlyAndTheChainAgreesToTheLastBit`, and `BlendVertexTest`'s crowded-vertex
+fixture now meets the honest face refusal first (its 12 mm rim between two corners is also 12 mm of top face
+between two 7 mm rounds, and the two conditions turn out to be the same one).
+
+Tests: `BlendFreeEndTest` (11) — one free-ended fillet sectioning at `60 × (40 − (4 − 2√3))` and at two more
+heights with the notch asserted as the quarter arc it is; the same free end bevelled and drawn; two adjacent
+rim edges at 4 mm and 3 mm sectioning at `(60 − (3 − 2√2)) × (40 − (4 − 2√3))` in both orders to the last
+bit; a face notched at **two** of its corners (both rims of a plate, at 4 mm and 3 mm) at two heights with
+the insets told apart by which side they stand on, as one dressing of two entries *and* as a chain, agreeing
+to the last bit, and with the radii **swapped** so the two cannot trade places; a face notched at **three**
+of its four corners (two top rims and a bottom one) with the same arithmetic and seven pieces to a ring; a
+whole-face rounding untouched, four pieces to a side face and no arc anywhere; the overlap refusal with the
+size that fits and its heal; and GitHub #33's chevron, whose **upright** ends in the two caps, with the tip's
+own `r²(cot(θ/2) − (π−θ)/2)` bracketed by the band's 64 sampled rulings and the same figure at every height,
+plus its file still a fixed point of save.
+
+#### Implementation status (as built — **the three-concave vertex**, session 81; the catalogue's fourth corner)
+
+**Session 80 named the cut and it is now built.** *"A concave vertex — three bands meeting at an inside
+trihedral corner — is not built: the patch is the ball's octant **added** rather than taken, and the sign of
+the fill is the one thing the construction guesses rather than derives."* Three fills meet at a **room's own
+corner** — a shelled box's inside corner — and the ball sits against the three faces from the *air* side,
+touching all three at once. Its centre stands at `(r, r, r)` from the vertex **along** the three outward
+normals rather than against them, and `Blend3.vertexOf`'s solve is unchanged: each pair of bands shares a
+face, on which their two tangency lines cross at one point, and the three answers agreeing is the statement
+that a ball of this size sits there.
+
+**One sign and one growth direction, argued from the fill's own wedge rather than flipped by trial.**
+`Blend3.outwardAt` already steps each leg **out of the wedge**, which at a convex crease is out of the
+material and at a concave one is *into* it — so the grown leg stands a micron on the far side of its face
+from the tool either way, and the vertex's three flat quads follow it to the same side (`step = ±GROW_MM`).
+The tool's own **outside** at such a quad is the side its interior is not on: the face's normal where the
+tool is subtracted, its negative where it is united. And the **fill does not turn at all**: the corner cell
+keeps the ball's own octant — of material at a convex vertex, of air at a concave one — so the tool is
+outside the ball in both readings and its surface there faces the ball's centre, which is what session 80
+already wrote. `cornersOf` therefore asks for three bands **of one sign** where it used to ask for three
+convex ones; a *mixed* trio is still the pair pivoting about the band between them, untouched.
+
+**The figure, derived.** Put the vertex at the origin with the void in the octant `x, y, z ≥ 0`. Each fill
+adds its wedge — the corner square less the quarter disc, `(1 − π/4) r²` — along its own run, so three of
+them would add `(1 − π/4) r² · ΣL` if nothing overlapped. In the corner cell `[0, r]³` what the finished body
+keeps is exactly the **ball's own octant of air**, so the fill adds `r³ − (π/6) r³` there against the three
+bands' own `3(1 − π/4) r³`, and the corner takes back
+
+```
+3(1 − π/4) r³ − (1 − π/6) r³ = (2 − 7π/12) r³
+```
+
+— the very figure the convex vertex reads the other way round, which is what says it is one ball. It is
+asserted two-sided (never below the exact figure, never above it by more than the chords, and an inscribed
+chord makes a *fill's* wedge larger rather than smaller), and the **discriminator is the surface**: without
+the patch the three fills leave the tricylinder's corner, `(2 − √2) r³` of air rather than `(π/6) r³`, with a
+spike of air poking at the vertex that no ball of radius `r` can reach. Every direction inside the patch,
+walked out from the ball's centre, leaves the body at exactly `r`.
+
+**Named, sectioned and unchanged in every other respect.** The patch is a `FaceName.BlendCorner` carrying the
+sphere as its surface, exactly as the convex one does, and `Blend3.ballCut` needs no sign at all: it clips
+the cut circle to the three great circles by the side **the vertex itself** is on, which is the same
+statement read from either side. A **bevel**'s three planes still meet in a point of their own, so its patch
+is the three bevel triangles running to that apex and there is no facet — the convex reading verbatim.
+
+**Cuts, each named.** (1) **A trio that is not of one sign** is not a vertex — it is the pair turning about
+the band between them, which is where it stays. (2) **Sections that are not congruent** make no corner of any
+kind, convex or concave: two 3 mm fills and one 4 mm one land on no common ring, no ball is named, and the
+boolean trims the three bands against each other exactly as before. (3) **Four or more bands at one vertex**
+stays the future extension it was: a ring is shared by two tubes and the ball's patch is bounded by three
+arcs.
+
+**What moved.** Nothing that was already built: the sign only widens what `cornersOf` will look at, and every
+convex vertex, pivot and crossing in the suite is bit-identical. What is new is the body a room's own corner
+builds, which is the fix.
+
+Tests: `BlendConcaveVertexTest` (6) — three fills at a shelled box's floor corner adding
+`(1 − π/4) r² ΣL − (2 − 7π/12) r³` bracketed by the chords with the ball named as the sphere it is; the air
+at the corner standing at the ball's own radius along thirteen directions inside the patch; all **six**
+orders of the three gestures one body; a fill of another radius making no corner at all; the mixed vertex
+still the ring torus and no ball; and a working plane through the added patch cut as a real arc of
+`√(r² − 1.5²)` about the ball's own centre, clipped to the patch's share of that circle.
+
 #### Implementation status (as built — the **scalar half**, session 71)
 
 `constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
@@ -20325,17 +20538,17 @@ straight away — a tool's fold at a pivot is *not* harmless, the body inherits 
 older than the package: the step-off lifting a pivot's own axis off itself, and the ball patch at a sharp
 vertex wound one triangle at a time. None of the sixteen recorded folds heals with them; all sixteen stand.
 
-**Queued in session 81 — the fourth corner of the catalogue: the three-concave vertex.** Three fills meeting at
-a **room's own corner**: the ball sits against the three faces from *outside* the material, touching all three
-at once, and the patch is its spherical triangle **added** rather than taken. Session 80 left it because *"the
-sign of the fill is the one thing the construction guesses rather than derives"*, and session 81 checked
-whether `vertexOf` could take it in one line: it cannot. The stations solve identically (three tangency-line
-crossings on the three shared faces, the three answers agreeing being the statement that a ball of this size
-sits there), but `vertexPatch` orients its triangles outward from the vertex and its three flat quads lie a
-micron *outside* the three faces — both of which are the convex reading, and both reverse for a fill. It is one
-patch, one sign convention and one growth direction, argued rather than flipped by trial; the geometry is
-otherwise the ball's own and the figure is the same `(2 − 7π/12) r³` read the other way. A shelled box's inner
-corner is the acceptance.
+**Retired in session 81 — the fourth corner of the catalogue: the three-concave vertex.** Three fills at a
+**room's own corner** are one body, and the corner is the ball's own spherical triangle **added** rather than
+taken. Session 80 left it because *"the sign of the fill is the one thing the construction guesses rather than
+derives"*; the sign is now argued from the fill's own wedge and turns out to be two things and not three:
+where the three flat quads are grown to (out of the wedge, which at a concave crease is *into* the material,
+as `outwardAt` already reads it) and which way they face (the tool's outside is the side its interior is not
+on). The **fill does not turn at all** — the corner cell keeps the ball's own octant, of material at a convex
+vertex and of air at a concave one — so the figure is the same `(2 − 7π/12) r³` read the other way, asserted
+against a shelled box's floor corner in all six gesture orders, with the air at the corner standing at the
+ball's own radius rather than at the tricylinder's `(2 − √2) r³` spike. See the as-built note *the
+three-concave vertex* under the edge-blend entries.
 
 **Retired in session 81 — the folds the flap check found in bodies that are not blends (GitHub #33's own
 by-product), and with them the production gate.** All four families are cured at their causes, the twelve
@@ -20384,7 +20597,26 @@ step left where it stood, declaring one name fewer and carrying `removed=<bands>
 meaning moved, so the version stays 6. See the as-built note *the next step* under the OP-30 entry.
 
 
-**Queued in session 81 — level sections through a rounded body; (b) retired in session 81 as not-a-bug, (a) still open.** Both pre-date OP-30 and both speak the same sentence (*"the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead"*): (a) a **single band with a free end** — a fillet along one rim edge of a plate — notches the two side faces its caps stand in with the wedge's own section, and `dressedFaces` corrects the outlines of the band's *own* two faces only, so those side faces keep a stale outline and the level section cannot close; the cure is the same analytic correction for the **end** faces (a wedge of two lines and an arc taken out of a corner of the outline — line against line, line against circle, nothing new). ~~(b) a **chain of roundings** — the second level's trims land on faces the first already corrected, and the correction is not composed.~~ **(b) was a misdiagnosis and is retired in session 81, unfixed because there was nothing to fix**: the chain composes its corrections perfectly, and the one-pass follow-up (OP-30's next step) proved it by answering the identical number. A plate rounded 3 mm on its top rim and 5 mm on its bottom one sections into the analytic area at a plane through either band, both as a chain of two levels and as one pass, to the last bit (`DressedBodyOnePassTest.aLevelSectionThroughTwoSizesIsExact`). What the *"two sizes"* symptom really is, is **(a) one edge further along**: two *adjacent* rim edges at different radii are not congruent, so **no corner is built** between them and each band has a **free end** at the vertex they meet at — and a free end is exactly what (a) is about. That case refuses identically before and after the follow-up (`twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords`), so what is queued here is (a) alone, and its cure is the whole of it. A whole-face rounding (a closed chain) sections exactly today, which is why the OP-30 probe uses one — and so now does a dressing of several closed chains at several sizes.
+**Retired in session 81 — level sections through a rounded body; (b) retired in session 81 as not-a-bug, (a)
+cured in session 81.** ~~(a) a **single band with a free end** notches the two side faces its caps stand in,
+and `dressedFaces` corrects the band's own two faces only.~~ ~~(b) a **chain of roundings** — the second
+level's trims land on faces the first already corrected, and the correction is not composed.~~ **(b) was a
+misdiagnosis, retired in session 81 unfixed because there was nothing to fix**: the chain composes its
+corrections perfectly, and the one-pass follow-up answered the identical number
+(`DressedBodyOnePassTest.aLevelSectionThroughTwoSizesIsExact`). **(a) is cured in session 81**, and it was two
+things rather than one. The **free end's notch** is now the same analytic correction one face out — the
+wedge's own section carried through one rigid map into the end face's plane and spliced into its ring, line
+against line and line against circle — cut once at the **tip** over the whole chain's free ends, because a
+trim composes down a chain and a notch does not. And the *"two sizes"* symptom's other half, which (a)'s own
+statement did not name: two **adjacent** rim edges at different radii build no corner, so the boolean trims
+the two bands against each other and `spanOf` had them each running the whole length of their edge; the
+extent now states the crossing exactly. With both, the plate with one free-ended fillet sections at
+`60 × (40 − (4 − 2√3))`, two adjacent rim edges at 4 mm and 3 mm section at
+`(60 − (3 − 2√2)) × (40 − (4 − 2√3))` in either order to the last bit, and a chamfer, a drawn profile and
+GitHub #33's chevron section too. Two latent defects came out with it — `sameCurve` asking a *shortened*
+boundary piece for equal endpoints, and `tangenciesFit` asking the **dressed** faces, which refused as a
+chain what one pass built (a bullnose). See the as-built note *the free end's notch* under the edge-blend
+entries.
 
 **Queued in session 81 — languages (OP-29); slices 1 and 2 retired, slices 3 and 4 still open.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*. What is left is **(3)** number and unit formatting in the UI — the decimal comma, the display unit, and with them the `Frames3.mm`/`Format.num` strings that slice 2 deliberately kept as pre-formatted arguments — and **(4)** the review loop, proven on a third language.
 

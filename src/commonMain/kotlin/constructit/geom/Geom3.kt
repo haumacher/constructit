@@ -546,6 +546,15 @@ sealed interface Feature3 {
          */
         internal val dressedFaces: Pair<List<FacePatch>?, Msg?> by lazy { Blend3.deriveDressedFaces(this) }
 
+        /**
+         * The same list **before the free ends' notches**, and the notches themselves — the base every
+         * level of the chain composes its own trims onto, memoized for the reason [dressedFaces] states.
+         *
+         * A trim composes down the chain and a notch does not, which is the whole reason there are two
+         * lists rather than one; [Blend3.deriveDressedFaces] argues it.
+         */
+        internal val trimmedFaces: Blend3.Trimmed by lazy { Blend3.deriveTrimmedFaces(this) }
+
         /** The dressed edge list, memoized for the reason [dressedFaces] states. */
         internal val dressedEdges: Pair<List<SolidEdge>?, Msg?> by lazy { Blend3.deriveDressedEdges(this) }
     }

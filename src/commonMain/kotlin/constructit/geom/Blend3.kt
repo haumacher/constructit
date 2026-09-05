@@ -403,6 +403,20 @@ object Blend3 {
         val leg2: FilletLeg,
         val face1: FacePatch,
         val face2: FacePatch,
+        /**
+         * The same two faces on the **undressed** body — what [tangenciesFit] asks, and only it.
+         *
+         * *Whether a section fits between two faces is a question about the body, not about what other
+         * roundings have already taken off them* (session 81; session 80's own lesson carried to its end).
+         * A dressed face's boundary steps inward wherever a neighbour was rounded, so asking the dressed
+         * one made the answer depend on **how many gestures** the same dressing had been delivered in — a
+         * plate whose two opposite rims are rounded until they meet (a bullnose, an ordinary thing to want)
+         * built in one pass and was refused as a chain. Asking the undressed face makes the two agree,
+         * which is OP-30's own invariant, and it still catches the case the refusal exists for: a 20 mm
+         * round on the rim of a 10 mm plate reaches past the plate itself.
+         */
+        val base1: FacePatch,
+        val base2: FacePatch,
         val length: Double,
     )
 
@@ -576,7 +590,13 @@ object Blend3 {
         // an edge a blend already consumed keeps its index and its carrier, but it is no longer a crease of
         // the body — so building on it is refused in the words the dressed list put there (slice 3)
         edge.reason?.let { return null to it }
-        val (faces, whyFaces) = Section3.faces(feature)
+        // **the construction reads the trimmed faces, never the notched ones** (session 81). A free end's
+        // notch is a statement about a *corner* of a face's boundary; whether a section fits between two
+        // faces is not a question about that corner, and asking it there would refuse a rounding that fits
+        // — session 80's `tangenciesFit` lesson, one boundary detail further on. Keeping the whole
+        // construction on the trimmed list is also what says the notch changes what the drawing **states**
+        // and never what the solid **is**: every volume in the suite is unmoved by it.
+        val (faces, whyFaces) = trimmedFacesOf(feature)
         if (faces == null) return null to whyFaces
         val face1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to Msgs.refusalBlendThisSolidHasNo(name = edge.between.a.label)
         val face2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to Msgs.refusalBlendThisSolidHasNo(name = edge.between.b.label)
@@ -620,7 +640,10 @@ object Blend3 {
                 leg2 = b
             }
         }
-        return Crease(edge, path, e1, stations, stations[at], leg1!!, leg2!!, face1, face2, length) to null
+        val undressed = undressedFacesOf(feature)
+        val base1 = undressed?.firstOrNull { it.name == face1.name } ?: face1
+        val base2 = undressed?.firstOrNull { it.name == face2.name } ?: face2
+        return Crease(edge, path, e1, stations, stations[at], leg1!!, leg2!!, face1, face2, base1, base2, length) to null
     }
 
     // ---- which sector the blend fills, and whether it is material ----
@@ -960,7 +983,7 @@ object Blend3 {
         wedge: Wedge,
     ): Boolean {
         for (st in crease.stations) {
-            for ((face, t) in listOf(crease.face1 to wedge.t1, crease.face2 to wedge.t2)) {
+            for ((face, t) in listOf(crease.base1 to wedge.t1, crease.base2 to wedge.t2)) {
                 val plane = face.plane ?: continue
                 val rings = Project3.ringsOf(face.outline)
                 if (rings.isEmpty()) continue
@@ -1708,8 +1731,16 @@ object Blend3 {
     }
 
     /**
-     * A **convex vertex**: three bands meet, the ball touches all three faces at once, and the corner is the
-     * patch its own surface makes between the three band ends (GitHub #32).
+     * A **trihedral vertex**: three bands meet, the ball touches all three faces at once, and the corner is
+     * the patch its own surface makes between the three band ends (GitHub #32; session 81's concave reading).
+     *
+     * *One ball, read from either side.* At a **convex** vertex the ball sits in the material and the corner
+     * cell keeps its octant of material. At a **concave** one — three fills at a room's own corner — the
+     * ball sits against the three faces from the *air* side, its centre at `(r, r, r)` from the vertex
+     * **along** the three outward normals rather than against them, and the corner cell keeps its octant of
+     * **air**: the patch is added rather than taken. Everything below is the same object; what turns with
+     * the sign is where the three flat quads are grown to and which way they face, both of them read off the
+     * fill's own wedge in [vertexPatch].
      *
      * *Why the ball reaches further than the three bands do.* Each band keeps the material inside its own
      * cylinder, so three of them keep the intersection of three cylinders — and that intersection has a
@@ -1847,6 +1878,10 @@ object Blend3 {
      * (the ball is at distance `r` from all three faces and every tangency is its own foot); for a
      * **chamfer** they do when the three faces turn through the same angle at the vertex — a box corner,
      * and every prism whose plan turns a right angle — and where they do not, the pair is left as it was.
+     *
+     * The solve is **the same arithmetic for a concave vertex** (session 81): the tangency lines still cross
+     * where the ball's own foot is, and the only thing that reads differently is which side of each face the
+     * ball stands on, which is already carried by the wedge the tangencies come out of.
      */
     private fun vertexOf(
         pieces: List<Piece>,
@@ -1930,6 +1965,16 @@ object Blend3 {
         onFace: List<List<Int>>,
         at: Vec3,
     ): Pair<List<Triple<Vec3, Vec3, Vec3>>, Pair<Vec3, Double>?>? {
+        // **the one sign the whole patch turns on** (session 81). Every step below is stated from the
+        // fill's own wedge rather than flipped by trial: [outwardAt] steps each leg *out of the wedge*,
+        // which at a convex crease is out of the material and at a concave one **into** it, so the grown
+        // leg stands a micron on the far side of its face from the tool; and the tool's own outside there
+        // is the side its interior is not on, which is the face's normal for a corner that is subtracted
+        // and its negative for one that is united. The ball is the same object either way — the corner cell
+        // keeps the ball's own octant, of material at a convex vertex and of air at a concave one — so the
+        // fill's winding, which faces the ball's centre, does not turn at all.
+        val convex = pieces[trio[0].first].choice.convex
+        val step = if (convex) GROW_MM else -GROW_MM
         val rings = members.map { m -> pieces[m.first].grown.map { m.third.at(it) } }
         if (rings.any { it.size < 5 }) return null
         val tangency = arrayOfNulls<Vec3>(3)
@@ -1939,7 +1984,7 @@ object Blend3 {
             val n = ring.size
             for ((plain, stepped) in listOf(ring[2] to ring[1], ring[n - 2] to ring[n - 1])) {
                 val k = faces.indices.firstOrNull { abs(offPlane(faces[it].plane!!, plain)) <= RING_TOL } ?: return null
-                if (abs(offPlane(faces[k].plane!!, stepped) - GROW_MM) > RING_TOL) return null
+                if (abs(offPlane(faces[k].plane!!, stepped) - step) > RING_TOL) return null
                 val known = tangency[k]
                 if (known != null && (known - plain).length() > RING_TOL) return null
                 tangency[k] = plain
@@ -1956,11 +2001,11 @@ object Blend3 {
             meetOfPlanes(
                 faces.map { f ->
                     val n = f.plane!!.normal.normalized()
-                    n to (f.plane.origin.dot(n) + GROW_MM)
+                    n to (f.plane.origin.dot(n) + step)
                 },
             ) ?: return null
         for (k in faces.indices) {
-            val want = faces[k].plane!!.normal.normalized()
+            val want = faces[k].plane!!.normal.normalized() * (if (convex) 1.0 else -1.0)
             val cp = rings[onFace[k][0]][0]
             val cq = rings[onFace[k][1]][0]
             val tk = steppedTangency[k]!!
@@ -2226,7 +2271,13 @@ object Blend3 {
             for (j in i + 1 until pieces.size) {
                 for (k in j + 1 until pieces.size) {
                     val three = listOf(i, j, k)
-                    if (three.any { pieces[it].seg == null || !pieces[it].choice.convex }) continue
+                    // **three of one sign**, and that is the whole of what a vertex asks (session 81). Three
+                    // convex bands is the ball sitting in the corner; three **fills** is the same ball
+                    // standing in a room's own corner from the air side, and the patch is its spherical
+                    // triangle added rather than taken. A *mixed* trio is neither: there the pair pivots
+                    // about the band between them ([Turn]), which the pass below builds.
+                    if (three.any { pieces[it].seg == null }) continue
+                    if (three.any { pieces[it].choice.convex != pieces[three[0]].choice.convex }) continue
                     val (trio, at) = endsMeeting(pieces, three, taken) ?: continue
                     val vertex = vertexOf(pieces, trio, at) ?: continue
                     out.add(vertex)
@@ -3505,14 +3556,79 @@ object Blend3 {
     fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> = f.dressedFaces
 
     /**
-     * The derivation itself — run at most **once per feature instance**, behind the memo on
-     * [Feature3.Blend.dressedFaces], which is the whole of GitHub #35's first cause (OP-5). The seam stays
-     * where it was: [Section3.faces] still asks [dressedFaces], and what changed is only how often the
-     * answer has to be worked out.
+     * A solid's faces **with every trim of the chain composed and no notch cut yet** — the base a dressing
+     * builds its own answer on ([deriveDressedFaces] says why the two halves are separate lists).
+     *
+     * For anything that is not a dressing this *is* the face list; there is nothing to hold back.
+     */
+    private fun trimmedFacesOf(feature: Feature3): Pair<List<FacePatch>?, Msg?> =
+        if (feature is Feature3.Blend) feature.trimmedFaces.let { it.faces to it.why } else Section3.faces(feature)
+
+    /**
+     * The dressed list itself: the **trimmed** one with each free end's notch cut out of the face its cap
+     * stands in (session 81, the queued section limit (a)).
+     *
+     * The two halves of the correction are separate because they compose differently. A **trim** is a strip
+     * of constant width off one boundary piece, so a strip of `d₁` and then one of `d₂` off the same piece
+     * is one strip of `d₁ + d₂` and each level may take its own off the level below's answer. A **notch**
+     * replaces a *corner* of the ring with the wedge's own section, and a later level offsetting the piece
+     * beside it would have to re-solve a junction against an arc that is **tangent** to that piece — two
+     * solutions exactly as far from the corner they replace, which nearness alone cannot choose between. So
+     * the trims are composed down the chain on their own and the notches are applied **once, at the tip**,
+     * over the whole chain's free ends ([Notch]).
+     *
+     * That is also the only reading that is *right*: an end that is free at one level and closed by a
+     * corner at the next must lose its notch, and at the tip it simply never gets one.
      */
     internal fun deriveDressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> {
+        val trimmed = f.trimmedFaces
+        val faces = trimmed.faces ?: return null to trimmed.why
+        if (trimmed.notches.isEmpty()) return faces to null
+        val out = ArrayList<FacePatch>(faces.size)
+        for ((i, patch) in faces.withIndex()) {
+            val mine = trimmed.notches.filter { it.face == i }
+            if (mine.isEmpty() || patch.reason != null) {
+                out.add(patch)
+                continue
+            }
+            val (outline, why) = notchedOutline(patch, mine)
+            out.add(if (outline == null) patch.copy(reason = why) else patch.copy(outline = outline))
+        }
+        return out to null
+    }
+
+    /**
+     * The trimmed list and the notches the tip owes, derived at most **once per feature instance** behind
+     * the memo on [Feature3.Blend.trimmedFaces] — GitHub #35's first cause (OP-5). The seam stays where it
+     * was: [Section3.faces] still asks [dressedFaces], and what changed is only how often the answer has to
+     * be worked out.
+     */
+    internal class Trimmed(val faces: List<FacePatch>?, val why: Msg?, val notches: List<Notch>)
+
+    /** See [Trimmed]. */
+    internal fun deriveTrimmedFaces(f: Feature3.Blend): Trimmed {
+        val (faces, why) = deriveTrimmedList(f)
+        val pristine = if (faces == null) null else undressedFacesOf(f)
+        return Trimmed(faces, why, if (pristine == null) emptyList() else notchesOf(f, pristine))
+    }
+
+    /**
+     * The faces of the **undressed** body under a chain of roundings — where a free end still stands on a
+     * corner of the face its cap fills, and where the piece indices of every level's list come from.
+     *
+     * A dressed list is the base's *restated* — [GeomMath.offsetCycle] gives one piece back per piece it
+     * takes and [deriveTrimmedList] one face back per face — so face `i` and its boundary piece `k` mean the
+     * same thing at every depth of the chain, and a notch located down here is spliced in up there.
+     */
+    private fun undressedFacesOf(f: Feature3): List<FacePatch>? {
+        var under = f
+        while (under is Feature3.Blend) under = under.base
+        return Section3.faces(under).first
+    }
+
+    private fun deriveTrimmedList(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> {
         derivations++
-        val (baseFaces, whyFaces) = Section3.faces(f.base)
+        val (baseFaces, whyFaces) = trimmedFacesOf(f.base)
         if (baseFaces == null) return null to whyFaces
         val (dressings, whyDress) = dressingsOf(f)
         if (dressings == null) return null to whyDress
@@ -4203,9 +4319,123 @@ object Blend3 {
         }
         val lo = ends[true]
         val hi = ends[false]
+        // …and where a band simply **runs into** one no corner joins it to — two edges of a face rounded to
+        // sizes that are not congruent, so the pair lands on no common ring (session 79's cut (2)) — the
+        // boolean trims the two against each other, and the drawing has to say where (session 81)
+        val met = endsRunInto(pieces, at, corners)
         return { p ->
-            (lo?.let { stationOf(piece, it.at(p)) } ?: 0.0) to (hi?.let { stationOf(piece, it.at(p)) } ?: len)
+            var from = lo?.let { stationOf(piece, it.at(p)) } ?: 0.0
+            var to = hi?.let { stationOf(piece, it.at(p)) } ?: len
+            for ((atStart, other) in met) {
+                val s = runsInto(piece, pieces[other], p, atStart) ?: continue
+                if (atStart) from = max(from, s) else to = min(to, s)
+            }
+            from to to
         }
+    }
+
+    /**
+     * The **free** ends of band [at] that another free end stands at — where two bands butt with no corner
+     * between them, which since session 80 means only one thing: the pair is **not congruent** there, so no
+     * ring is shared and session 79's cut (2) leaves the two to the boolean.
+     *
+     * The boolean does trim them, exactly and every time; what was missing is the *drawing* saying so, which
+     * is what makes a level section through such a pair close ([runsInto]).
+     */
+    private fun endsRunInto(
+        pieces: List<Piece>,
+        at: Int,
+        corners: List<Corner>,
+    ): List<Pair<Boolean, Int>> {
+        val seg = pieces[at].seg ?: return emptyList()
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        for (c in corners) claimed.addAll(c.ends)
+        val out = ArrayList<Pair<Boolean, Int>>()
+        for (atStart in listOf(true, false)) {
+            if ((at to atStart) in claimed) continue
+            val v = if (atStart) seg.start else seg.end
+            for (j in pieces.indices) {
+                if (j == at || pieces[j].choice.convex != pieces[at].choice.convex) continue
+                val other = pieces[j].seg ?: continue
+                val meets =
+                    listOf(true, false).any { bStart ->
+                        (j to bStart) !in claimed && ((if (bStart) other.start else other.end) - v).length() <= RING_TOL
+                    }
+                if (meets) out.add(atStart to j)
+            }
+        }
+        return out
+    }
+
+    /**
+     * How far band [a]'s ruling through section point [p] runs before it enters band [b]'s own tool — or
+     * null where it never does, which is every pair that only touches.
+     *
+     * *Exact, and the same arithmetic as everything else here.* [b]'s tool is its wedge carried along a
+     * straight run, so the ruling — itself a straight line — reads in [b]'s section frame as a **line**
+     * moving affinely with the station along [a]. Where that line crosses the wedge's own boundary is line
+     * against line and line against circle; whether the free end starts *inside* the wedge is the parity of
+     * the crossings behind it, so nothing is sampled and no containment is guessed at. A wedge piece this
+     * vocabulary cannot cross exactly — a drawn profile's Bézier — states no crossing, so such a pair is
+     * left as it was rather than clipped by a fitted curve (OP-15's honesty line).
+     */
+    private fun runsInto(
+        a: Piece,
+        b: Piece,
+        p: Vec2,
+        atStart: Boolean,
+    ): Double? {
+        val ea = a.seg ?: return null
+        val eb = b.seg ?: return null
+        val va = ea.end - ea.start
+        val la = va.length()
+        val lb = (eb.end - eb.start).length()
+        if (la <= Geom3.WELD_TOL || lb <= Geom3.WELD_TOL) return null
+        val ua = va * (1.0 / la)
+        val ub = (eb.end - eb.start) * (1.0 / lb)
+        val origin = worldOnStraight(a.crease, ea.start, ua, p, 0.0)
+        val q0 = Vec2((origin - b.crease.ref.at).dot(b.crease.e1), (origin - b.crease.ref.at).dot(b.crease.ref.e2))
+        val d = Vec2(ua.dot(b.crease.e1), ua.dot(b.crease.ref.e2))
+        if (d.length() <= DIR_EPS) return null
+        val from = if (atStart) 0.0 else la
+        // the tool is only there over [b]'s own run, and the ruling has to be standing in it to be cut by it
+        val t0 = (origin - eb.start).dot(ub)
+        val dt = ua.dot(ub)
+        if ((t0 + from * dt) < -Geom3.WELD_TOL || (t0 + from * dt) > lb + Geom3.WELD_TOL) return null
+        val crossings = wedgeCrossings(b.wedge, q0, d)
+        if (crossings.isEmpty()) return null
+        // **inside is a parity, not a containment test**: a line comes in from outside, so the run just past
+        // the free end stands in the wedge exactly when an odd number of crossings lie at or behind that end
+        // — *at* included, because the two bands share a face and [b]'s own leg lies in it, which is a
+        // crossing standing exactly where [a]'s cap does
+        val inward = if (atStart) 1.0 else -1.0
+        if (crossings.count { inward * (it - from) <= Geom3.WELD_TOL } % 2 == 0) return null
+        return crossings.filter { inward * (it - from) > Geom3.WELD_TOL }.minByOrNull { inward * (it - from) }
+    }
+
+    /** Where the line `q0 + s·d` crosses the wedge's own boundary, as stations along [a]'s run. */
+    private fun wedgeCrossings(
+        wedge: Wedge,
+        q0: Vec2,
+        d: Vec2,
+    ): List<Double> {
+        val line = Line(q0, d.normalized())
+        val dd = d.dot(d)
+        val out = ArrayList<Double>()
+        for (e in wedge.region.outer.elements) {
+            val pts =
+                when (e) {
+                    is ProfileElement.Seg -> {
+                        val v = e.segment.b - e.segment.a
+                        if (v.length() <= Vec2.EPS) emptyList() else GeomMath.intersectLL(line, Line(e.segment.a, v)).points
+                    }
+                    is ProfileElement.ArcE -> GeomMath.intersectLC(line, Circle(e.arc.center, e.arc.radius)).points
+                    is ProfileElement.CircleE -> GeomMath.intersectLC(line, e.circle).points
+                    else -> emptyList()
+                }
+            for (q in pts) if (onSpanOf(e, q)) out.add((q - q0).dot(d) / dd)
+        }
+        return out.sorted()
     }
 
     /**
@@ -4464,6 +4694,270 @@ object Blend3 {
         return out
     }
 
+    // ---- the outline correction: the notch a band's own **free end** takes out of the face it ends in ----
+
+    /**
+     * A band's **free end**, read as the notch its cap takes out of the face that cap stands in (session
+     * 81; the queued section limit (a)).
+     *
+     * *What the fault was.* A band that ends without a corner — a fillet along one rim edge of a plate —
+     * closes on a cap standing in the plane square to its edge, and that plane is a **third** face: the side
+     * face at the edge's end, which is neither of the two the band runs between. The cap takes the wedge's
+     * own section out of that face at the corner the edge ends at, and [deriveTrimmedList] corrects the
+     * outlines of the band's *own* two faces only — so the end face kept a stale rectangle, a level section
+     * through the body crossed a boundary that is not where the drawing says it is, and the loop did not
+     * close ([Section3.regionsOf]'s *"does not close into an area"*).
+     *
+     * *What the cure is, and why it is the same arithmetic.* The wedge's section is already stated exactly,
+     * in the crease's own `(e1, e2)` frame, and at a free end of a **straight** edge that frame lies in the
+     * end face's plane — the cap is square to the edge and so is the face. So the notch is that very section
+     * carried through one rigid map into the face's own plane coordinates, and the correction is the corner
+     * of the ring replaced by *setback along one face → the section → setback along the other*: line against
+     * line and line against circle, [GeomMath.offsetCarrier]'s own vocabulary, nothing sampled and nothing
+     * new (OP-15's exact tier).
+     *
+     * [before] and [after] are the ring pieces the corner stands between, as indices into the face's own
+     * **undressed** boundary — which every level's list is piece for piece parallel to, because
+     * [GeomMath.offsetCycle] restates a ring rather than re-cutting it. [pieces] runs from [before]'s
+     * carrier to [after]'s, so the assembly is one splice.
+     */
+    internal class Notch(
+        val edge: SolidEdge,
+        val sec: BlendSection,
+        val face: Int,
+        val before: Int,
+        val after: Int,
+        /** The free end itself, in the face's own plane — what a size that would fit is scaled about. */
+        val at: Vec2,
+        val pieces: List<ProfileElement>,
+    )
+
+    /**
+     * Every notch this dressing owes: one per **free end** of every band in the chain, over the whole chain
+     * at once.
+     *
+     * An end is free when no corner claims it — no crossing, no pivot, no ball ([cornersOf]) — which is
+     * exactly when the tool closes it with a flat cap instead. Asked of [piecesOf], so an end that a *later*
+     * gesture turns into a corner never gets a notch at all rather than getting one and having it taken back.
+     */
+    private fun notchesOf(
+        f: Feature3.Blend,
+        faces: List<FacePatch>,
+    ): List<Notch> {
+        val pieces = piecesOf(f) ?: return emptyList()
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        for (c in cornersOf(pieces).list) claimed.addAll(c.ends)
+        val out = ArrayList<Notch>()
+        for ((j, piece) in pieces.withIndex()) {
+            // a **fill** adds material rather than taking it, so its cap closes a void and notches nothing;
+            // and only a straight run has a cap that stands in one plane at all
+            if (!piece.choice.convex) continue
+            val seg = piece.seg ?: continue
+            for (atStart in listOf(true, false)) {
+                if ((j to atStart) in claimed) continue
+                val at = if (atStart) seg.start else seg.end
+                val away = (if (atStart) seg.start - seg.end else seg.end - seg.start)
+                if (away.length() <= Geom3.WELD_TOL) continue
+                out.add(notchAt(faces, piece, at, away.normalized()) ?: continue)
+            }
+        }
+        return out
+    }
+
+    /**
+     * The notch one free end takes, or null where this drawing does not state one: the face the cap stands
+     * in has to be a **plane** of the body that is not one of the band's own two, standing square to the
+     * edge with the end point on it, and there has to be exactly one such face — two coplanar candidates is
+     * a body whose end the drawing cannot name, and it keeps what it kept (OP-3).
+     */
+    private fun notchAt(
+        faces: List<FacePatch>,
+        piece: Piece,
+        at: Vec3,
+        away: Vec3,
+    ): Notch? {
+        var index = -1
+        for ((i, face) in faces.withIndex()) {
+            if (face.name == piece.crease.face1.name || face.name == piece.crease.face2.name) continue
+            val plane = face.plane ?: continue
+            if (face.reason != null) continue
+            if (abs(plane.normal.normalized().dot(away)) < 1.0 - TANGENT_TOL) continue
+            if (abs(plane.distanceTo(at)) > ON_BOUNDARY_TOL) continue
+            val rings = Project3.ringsOf(face.outline)
+            if (rings.isEmpty() || !onFace(rings, plane.toLocal(at))) continue
+            if (index >= 0) return null
+            index = i
+        }
+        if (index < 0) return null
+        val face = faces[index]
+        val plane = face.plane ?: return null
+        // the crease's own frame, planted at the free end: `e1` and `e2` are both square to the edge and the
+        // face's normal **is** the edge, so both lie in this plane and the map is a rigid one
+        val o = plane.toLocal(at)
+        val ax = plane.toLocal(at + piece.crease.e1) - o
+        val ay = plane.toLocal(at + piece.crease.ref.e2) - o
+        if (abs(ax.x * ay.y - ax.y * ay.x) <= DIR_EPS) return null
+        val map = Affine(ax.x, ax.y, ay.x, ay.y, o.x, o.y)
+        val v = plane.toLocal(at)
+        val before = face.outline.indices.filter { (GeomMath.endOf(face.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        val after = face.outline.indices.filter { (GeomMath.startOf(face.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        if (before.size != 1 || after.size != 1 || before[0] == after[0]) return null
+        val chain = piece.wedge.pieces.map { GeomMath.transform(it, map) }
+        // the section runs from the tangency on `face1` to the one on `face2`; which of the two ring pieces
+        // each of those lies on is read off the pieces themselves, so no face-name bookkeeping decides it
+        val head = GeomMath.startOf(chain.first())
+        val forwards = offCarrier(face.outline[before[0]], head) <= offCarrier(face.outline[after[0]], head)
+        return Notch(
+            piece.crease.edge,
+            piece.sec,
+            index,
+            before[0],
+            after[0],
+            v,
+            if (forwards) chain else chain.reversed().map { GeomMath.reverse(it) },
+        )
+    }
+
+    /**
+     * [patch]'s boundary with every one of [notches] spliced in — the corner replaced by the section, and
+     * the two pieces beside it re-trimmed on their own carriers.
+     *
+     * The junction is the ordinary intersection of two carriers with **two** things said about it that
+     * [GeomMath.carrierJunction] cannot know on its own. Where the ring piece has not moved the tangency
+     * *is* the answer and is taken verbatim; where it has, a fillet's arc is **tangent** to the piece's old
+     * place, so the two solutions stand equally far from the corner they replace and nearness cannot choose
+     * — the one on the section's **own span** is the corner ([meetOnSpan]).
+     *
+     * And where there is no meeting at all, the notch takes **nothing**: the strips the bands took off this
+     * face already reach further into the corner than the cap's own section does, so the boundary is
+     * already where it should be and the notch is dropped rather than drawn. (It is provable rather than
+     * hopeful: the section lies inside the box of its two setbacks, so a trim as deep as either setback
+     * leaves it nothing to cut.)
+     */
+    private fun notchedOutline(
+        patch: FacePatch,
+        notches: List<Notch>,
+    ): Pair<List<ProfileElement>?, Msg?> {
+        spliceAll(patch, notches, null, 1.0)?.let { return it to null }
+        // …the one whose absence makes the rest fit is the one to name, and the size that would fit there is
+        // found by halving exactly as [largestFitting] finds a radius (OP-3 — a refusal that heals)
+        val blame = notches.firstOrNull { spliceAll(patch, notches, it, 0.0) != null } ?: notches.first()
+        var lo = 0.0
+        var hi = 1.0
+        repeat(FIT_STEPS) {
+            val mid = (lo + hi) / 2.0
+            if (spliceAll(patch, notches, blame, mid) != null) lo = mid else hi = mid
+        }
+        return null to
+            Msgs.refusalBlendFreeEndNotchReachesPast(
+                word = blame.sec.kind.word,
+                sizePhrase = blame.sec.sizePhrase(),
+                name = blame.edge.name.label,
+                fitPhrase = blame.sec.fitPhrase(lo),
+            )
+    }
+
+    /**
+     * The boundary with the notches spliced in, or null where one of them cannot stand there — [adjust]
+     * taken at [k] times its own size, and dropped altogether at zero.
+     */
+    private fun spliceAll(
+        patch: FacePatch,
+        notches: List<Notch>,
+        adjust: Notch?,
+        k: Double,
+    ): List<ProfileElement>? {
+        val cutStart = HashMap<Int, Vec2>()
+        val cutEnd = HashMap<Int, Vec2>()
+        val splice = HashMap<Int, List<ProfileElement>>()
+        for (n in notches) {
+            if (n === adjust && k <= 0.0) continue
+            if (n.before !in patch.outline.indices || n.after !in patch.outline.indices) return null
+            val pieces =
+                if (n === adjust) n.pieces.map { GeomMath.transform(it, Affine.scaling(n.at, k)) } else n.pieces
+            val chain = spliceOf(patch.outline, n, pieces) ?: continue
+            // two free ends notching **one** corner of one face is a body this drawing cannot state the
+            // boundary of, and it is refused rather than half-drawn
+            if (n.before in cutEnd || n.after in cutStart || n.before in splice) return null
+            cutEnd[n.before] = chain.first
+            cutStart[n.after] = chain.second
+            splice[n.before] = chain.third
+        }
+        val out = ArrayList<ProfileElement>(patch.outline.size + notches.sumOf { it.pieces.size })
+        for (i in patch.outline.indices) {
+            val e = patch.outline[i]
+            if (i in cutStart || i in cutEnd) {
+                val carrier = GeomMath.offsetCarrier(e, 0.0) ?: return null
+                out.add(GeomMath.onCarrier(e, carrier, cutStart[i] ?: GeomMath.startOf(e), cutEnd[i] ?: GeomMath.endOf(e)) ?: return null)
+            } else {
+                out.add(e)
+            }
+            splice[i]?.let { out.addAll(it) }
+        }
+        return out
+    }
+
+    /**
+     * Where one notch meets its two neighbours, and the section trimmed between — null where the boundary
+     * as it now stands does not meet it at all (see [notchedOutline]).
+     */
+    private fun spliceOf(
+        outline: List<ProfileElement>,
+        n: Notch,
+        pieces: List<ProfileElement>,
+    ): Triple<Vec2, Vec2, List<ProfileElement>>? {
+        val head = pieces.first()
+        val tail = pieces.last()
+        val s1 = meetOnSpan(outline[n.before], head, GeomMath.startOf(head)) ?: return null
+        val s2 = meetOnSpan(outline[n.after], tail, GeomMath.endOf(tail)) ?: return null
+        val cut = pieces.toMutableList()
+        cut[0] = GeomMath.onCarrier(cut[0], GeomMath.offsetCarrier(cut[0], 0.0) ?: return null, s1, GeomMath.endOf(cut[0])) ?: return null
+        val last = cut.size - 1
+        cut[last] = GeomMath.onCarrier(cut[last], GeomMath.offsetCarrier(cut[last], 0.0) ?: return null, GeomMath.startOf(cut[last]), s2) ?: return null
+        return Triple(s1, s2, cut)
+    }
+
+    /** Where the ring piece [ring] and the section's end piece [end] meet — see [notchedOutline]. */
+    private fun meetOnSpan(
+        ring: ProfileElement,
+        end: ProfileElement,
+        known: Vec2,
+    ): Vec2? {
+        val a = GeomMath.offsetCarrier(ring, 0.0) ?: return null
+        if (offCarrier(ring, known) <= SAME_CURVE_TOL) return if (onSpanOf(ring, known)) known else null
+        val b = GeomMath.offsetCarrier(end, 0.0) ?: return null
+        return GeomMath.carrierCrossings(a, b)
+            .filter { onSpanOf(end, it) && onSpanOf(ring, it) }
+            .minByOrNull { (it - known).length() }
+    }
+
+    /** How far [q] stands off the carrier of [e] — the distance a line, a circle or nothing states. */
+    private fun offCarrier(
+        e: ProfileElement,
+        q: Vec2,
+    ): Double {
+        val (line, circle) = GeomMath.offsetCarrier(e, 0.0) ?: return Double.MAX_VALUE
+        if (line != null) return abs((q - line.origin).dot(line.dir.perp().normalized()))
+        if (circle != null) return abs((q - circle.center).length() - circle.radius)
+        return Double.MAX_VALUE
+    }
+
+    /** Whether [q] stands on [e]'s **own** run rather than merely on the carrier it lies along. */
+    private fun onSpanOf(
+        e: ProfileElement,
+        q: Vec2,
+    ): Boolean =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val d = e.segment.b - e.segment.a
+                val len2 = d.dot(d)
+                if (len2 <= 1e-18) false else ((q - e.segment.a).dot(d) / len2) in -SAME_CURVE_TOL..(1.0 + SAME_CURVE_TOL)
+            }
+            is ProfileElement.ArcE -> onArc(e.arc, (q - e.arc.center).angle())
+            is ProfileElement.CircleE -> true
+            else -> false
+        }
+
     /**
      * Whether boundary piece [e] of the face in [plane] **is** the edge [edge] — the same curve in the
      * world, however each of the two happens to be traversed or indexed.
@@ -4476,42 +4970,63 @@ object Blend3 {
      * feature per cap, the two exact constructions are compared **as curves**: both come from the same
      * parameters, so they agree to the last bits, and comparing them discovers nothing that was not
      * constructed (OP-8's rule is about not reading names out of triangles, and there are no triangles here).
+     *
+     * *Along, not equal to* (session 81). A dressed face's boundary piece is the base edge's own curve
+     * **already shortened** wherever a neighbouring edge was rounded: the piece keeps its carrier and gives
+     * up an end. Asking for equal endpoints therefore answered *"matches 0 pieces"* the moment a chain
+     * rounded two edges of one face — a corner of a box taken one gesture at a time — and the face lost its
+     * outline for no reason at all. So the question is whether the piece **lies along** the edge: the same
+     * carrier, and its own run inside the edge's. The `hits.size != 1` guard in [correctedOutline] is what
+     * keeps that honest, and a run that stands off the carrier or past its ends is still no match.
      */
     private fun sameCurve(
         plane: Plane3,
         e: ProfileElement,
         edge: SolidEdge,
     ): Boolean {
-        fun near(
-            a: Vec3,
-            b: Vec3,
-        ) = (a - b).length() <= SAME_CURVE_TOL
-        val ends = listOf(plane.toWorld(GeomMath.startOf(e)), plane.toWorld(GeomMath.endOf(e)))
+        val marks = ArrayList<Vec3>(3)
+        marks.add(plane.toWorld(GeomMath.startOf(e)))
+        marks.add(plane.toWorld(GeomMath.endOf(e)))
+        sectionPointAt(e, 0.5)?.let { marks.add(plane.toWorld(it)) }
         return when (val g = edge.geom) {
-            is EdgeGeom.Straight -> {
-                if (e !is ProfileElement.Seg) {
-                    false
-                } else {
-                    (near(ends[0], g.a) && near(ends[1], g.b)) || (near(ends[0], g.b) && near(ends[1], g.a))
-                }
-            }
+            is EdgeGeom.Straight -> e is ProfileElement.Seg && marks.all { alongSeg(g.a, g.b, it) }
             is EdgeGeom.OnPlane -> {
-                val other = listOf(g.plane.toWorld(GeomMath.startOf(g.piece)), g.plane.toWorld(GeomMath.endOf(g.piece)))
-                val sameEnds =
-                    (near(ends[0], other[0]) && near(ends[1], other[1])) || (near(ends[0], other[1]) && near(ends[1], other[0]))
-                if (!sameEnds) {
-                    false
-                } else {
-                    val ca = centreAndRadius(plane, e)
-                    val cb = centreAndRadius(g.plane, g.piece)
+                val ca = centreAndRadius(plane, e)
+                val cb = centreAndRadius(g.plane, g.piece)
+                val sameCarrier =
                     when {
                         ca == null && cb == null -> e is ProfileElement.Seg && g.piece is ProfileElement.Seg
                         ca == null || cb == null -> false
-                        else -> near(ca.first, cb.first) && abs(ca.second - cb.second) <= SAME_CURVE_TOL
+                        else -> (ca.first - cb.first).length() <= SAME_CURVE_TOL && abs(ca.second - cb.second) <= SAME_CURVE_TOL
                     }
-                }
+                sameCarrier && marks.all { onPieceIn(g.plane, g.piece, it) }
             }
         }
+    }
+
+    /** Whether [p] stands on the run [piece] draws in [plane] — in the plane, on the carrier, within the span. */
+    private fun onPieceIn(
+        plane: Plane3,
+        piece: ProfileElement,
+        p: Vec3,
+    ): Boolean {
+        if (abs(plane.distanceTo(p)) > SAME_CURVE_TOL) return false
+        val q = plane.toLocal(p)
+        return offCarrier(piece, q) <= SAME_CURVE_TOL && onSpanOf(piece, q)
+    }
+
+    /** Whether [p] stands on the straight run from [a] to [b] — on its line, and between its two ends. */
+    private fun alongSeg(
+        a: Vec3,
+        b: Vec3,
+        p: Vec3,
+    ): Boolean {
+        val d = b - a
+        val len = d.length()
+        if (len <= Geom3.WELD_TOL) return (p - a).length() <= SAME_CURVE_TOL
+        val u = d * (1.0 / len)
+        val t = (p - a).dot(u)
+        return (p - (a + u * t)).length() <= SAME_CURVE_TOL && t >= -SAME_CURVE_TOL && t <= len + SAME_CURVE_TOL
     }
 
     /** A curved piece's world centre and radius — null for a straight one, which its endpoints already fix. */

@@ -376,23 +376,28 @@ tool extrude els=e3 clicks=20,0 scalar="depth" -> e9
     }
 
     /**
-     * **What the *"two sizes"* symptom really is: limit (a), one edge further along.** Two *adjacent* rim
-     * edges rounded at different radii build **no** corner between them (they are not congruent), so each
-     * band has a **free end** at the vertex where they meet, and a free end notches faces whose outlines
-     * nobody corrects — which is limit (a) verbatim. The level section there refuses, in (a)'s own sentence,
-     * **exactly as it did before this package and exactly as the chain still does**: one pass neither cures
-     * it nor makes it worse, and the cure is (a)'s own (the end faces' analytic correction), still queued.
+     * **What the *"two sizes"* symptom really was: limit (a), one edge further along — and it is cured.**
+     * Two *adjacent* rim edges rounded at different radii build **no** corner between them (they are not
+     * congruent), so each band has a **free end** at the vertex where they meet. Two things were missing
+     * there and session 81 states both: the end face's outline, which the free end's cap **notches**, and
+     * the two bands' own extents, which the boolean trims against each other and the drawing did not say.
+     *
+     * With both, the level section closes on the figure the four radii state exactly. At `z = 18`, two
+     * millimetres under a rim of radius `r`, the band has taken `r − √(r² − (r−2)²)` off that side, so the
+     * `40 × 30` plate rounded 3 mm on its `y` rims and 5 mm on its `x` rims sections into
+     * `(40 − 2·1) × (30 − 2(3 − 2√2))` — and one pass and the chain answer it to the **last bit**, which is
+     * the OP-30 invariant this case used to be the counter-example to.
      */
     @Test
-    fun twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords() {
+    fun twoAdjacentSizesSectionExactlyAndTheChainAgreesToTheLastBit() {
         val onePass = assertNotNull(featureOf(bodyOf(DocumentFormat.load(fourRim(6)))) as? Feature3.Blend, "one pass")
         assertEquals(listOf(8, 9, 10, 11), onePass.targets, "all four rim edges in one pass")
-        val (regions, why) = Section3.regionsOf(onePass, Plane3(Vec3(0.0, 0.0, 18.0), Vec3.X, Vec3.Y))
-        assertNull(regions, "the section does not close")
-        assertTrue("does not close into an area" in assertNotNull(why), "…and it is (a)'s own sentence: $why")
+        val exact = (40.0 - 2.0 * (5.0 - kotlin.math.sqrt(25.0 - 9.0))) * (30.0 - 2.0 * (3.0 - kotlin.math.sqrt(9.0 - 1.0)))
+        assertClose(areaAt(onePass, 18.0), exact, 1e-9, "the four radii's own figure, 2 mm under the rim")
 
         val chain = assertNotNull(featureOf(bodyOf(DocumentFormat.load(fourRim(5)))) as? Feature3.Blend, "the chain")
-        assertEquals(why, Section3.regionsOf(chain, Plane3(Vec3(0.0, 0.0, 18.0), Vec3.X, Vec3.Y)).second, "the chain says the same")
+        assertTrue(chain.base is Feature3.Blend, "the reference really is a chain")
+        assertEquals(areaAt(onePass, 18.0), areaAt(chain, 18.0), "the chain's own answer, to the last bit")
     }
 
     private fun areaAt(

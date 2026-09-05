@@ -18295,5 +18295,24 @@
   "@note.sphereLocus.negativeSide": {
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the sphere as a locus: distance carried in space (OP-28). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "x-translated": "2f88e37e"
+  },
+  "@@x-geom-session-81-corners": "geom: session 81 corners",
+  "refusal.blend.freeEndNotchReachesPast": "a {word} {sizePhrase} along {name} ends free in a face of its own, and the notch its cap takes out of that face reaches past what is left of that face's boundary — the largest that fits there is {fitPhrase}",
+  "@refusal.blend.freeEndNotchReachesPast": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "word": {
+        "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      },
+      "fitPhrase": {
+        "type": "message"
+      }
+    }
   }
 }
