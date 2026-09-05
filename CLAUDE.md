@@ -35,9 +35,11 @@ parameters so recompute/undo/reload are deterministic.
 Kotlin Multiplatform (JVM + JS/IR browser), Gradle wrapper included, JDK 17+.
 The Playwright E2E needs Playwright's browsers installed and only runs under `-De2e=1`.
 
-Two siblings are **composite builds**, checked out next to this repo by convention (see
-`settings.gradle.kts`, which carries a `-P` escape hatch for each): `../kotlinJT` for the JT
-writer/reader, and `../auto-translate` for the `translateArb` task below.
+One sibling is a **composite build**, checked out next to this repo by convention (see
+`settings.gradle.kts`, which carries a `-Pkotlinjt.path=` escape hatch): `../kotlinJT` for the JT
+writer/reader. The `translateArb` task comes from the **published** plugin `de.haumacher.auto-translate-arb`
+(version in `build.gradle.kts`); `-Pautotranslate.path=<checkout>` swaps in a sibling composite only when
+developing that plugin against this repository — never by default, so a bare checkout (CI) configures.
 
 Lint is ktlint (official style) via the `org.jlleitschuh.gradle.ktlint` plugin. `.editorconfig`
 relaxes two rules to match this codebase's deliberate style: `max_line_length = off` (the

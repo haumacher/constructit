@@ -1,15 +1,10 @@
-// The user's own DeepL front-end (https://github.com/haumacher/auto-translate), checked out next to this
-// repo by the same convention the JT sibling below follows — and a *plugin* composite, because that is
-// what `plugins { id("de.haumacher.auto-translate-arb") }` resolves against.
-//
-// A composite rather than the Gradle Plugin Portal, and the reason is a gap rather than a preference: the
-// portal's newest publication of this plugin is **1.1.1**, while the plugin's own README documents 1.1.4.
-// Everything OP-29's design asks of it landed after 1.1.1 — the ARB `description` sent to DeepL as
-// *context*, DeepL glossaries, and the re-translate-on-checksum-mismatch fix — so the published one cannot
-// produce the German this repository commits. `-Pautotranslate.path=...` points a build at another
-// checkout, exactly as the JT sibling's escape hatch does.
+// The user's own DeepL front-end (https://github.com/haumacher/auto-translate) is a **published** plugin:
+// `de.haumacher.auto-translate-arb` from the Gradle Plugin Portal, versioned in build.gradle.kts, so a
+// checkout with nothing beside it — the CI runner — configures. `-Pautotranslate.path=<checkout>` swaps in a
+// sibling composite instead, for developing the plugin against this repository; it is never the default,
+// because a default that needs a second checkout is a build that fails everywhere but here (session 81).
 pluginManagement {
-    includeBuild(providers.gradleProperty("autotranslate.path").getOrElse("../auto-translate"))
+    providers.gradleProperty("autotranslate.path").orNull?.let { includeBuild(it) }
 }
 
 rootProject.name = "constructit"

@@ -3,11 +3,13 @@ import constructit.gradle.GenerateMessagesTask
 plugins {
     kotlin("multiplatform") version "1.9.24"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
-    // OP-29: the user's own DeepL front-end (haumacher/auto-translate), resolved from the sibling
-    // composite declared in settings.gradle.kts (which says why the published one will not do). It
-    // contributes the `translateArb` task and nothing else — see `translateArb { }` below and the note in
-    // CLAUDE.md: it is *not* part of the ordinary build, because it spends DeepL characters.
-    id("de.haumacher.auto-translate-arb")
+    // OP-29: the user's own DeepL front-end (haumacher/auto-translate), the published plugin — 1.1.4 is the
+    // first release with the ARB `description` sent to DeepL as context and with glossaries, which is what
+    // the German this repository commits was made with. It contributes the `translateArb` task and nothing
+    // else — see `translateArb { }` below and the note in CLAUDE.md: it is *not* part of the ordinary build,
+    // because it spends DeepL characters. `-Pautotranslate.path=` in settings.gradle.kts swaps in a sibling
+    // checkout for developing the plugin itself.
+    id("de.haumacher.auto-translate-arb") version "1.1.4"
 }
 
 repositories {

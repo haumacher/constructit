@@ -16164,6 +16164,8 @@ German as the first target and the mechanism proven on a third language.
 
 ### Implementation status (as built — **slice 1: the mechanism, applied to the chrome**, session 81)
 
+**Where the plugin comes from (corrected in session 81, after the first CI run).** Slice 1 applied `de.haumacher.auto-translate-arb` as a composite build of the sibling checkout, because the Plugin Portal then carried 1.1.1 and the German was made with the description-as-context and glossary features that came later. That made the build depend on a second checkout, and the GitHub build failed with *"Included build '…/auto-translate' does not exist"*. The plugin's 1.1.4 release — the first with those features — is on the Portal, so the build applies the **published** plugin, versioned in `build.gradle.kts`, and `-Pautotranslate.path=` swaps in a sibling composite only for developing the plugin against this repository. A build that needs a checkout beside it is a build that fails everywhere but on the machine it was written on; the JT sibling is the one deliberate exception, and CI checks it out by name.
+
 Slice 1 is delivered whole and the chrome speaks two languages. What follows is the shape it actually took,
 the three places the design's own sentences had to be corrected by contact with the tools, and what is
 deliberately still English.
