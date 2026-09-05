@@ -2162,5 +2162,16 @@
   "note.intersectionCurves.closedComma": "geschlossen, ",
   "note.projectionOntoFace.exactnessAndLanding": " — {exactness}, {landing}",
   "note.sphereLocus.positiveSide": "positiv",
-  "note.sphereLocus.negativeSide": "negativ"
+  "note.sphereLocus.negativeSide": "negativ",
+  "@@x-section-slice3": "l10n: session 81 slice 3",
+  "format.length": "{value} mm",
+  "format.angle": "{value}°",
+  "format.area": "{value} mm²",
+  "format.volume": "{value} mm³",
+  "format.plain": "{value}",
+  "format.other": "{value} [{dim}]",
+  "unit.mm": "mm",
+  "unit.deg": "°",
+  "unit.millimetres": "Millimeter",
+  "unit.degrees": "Grad"
 }

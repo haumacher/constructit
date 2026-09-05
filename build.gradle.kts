@@ -108,7 +108,24 @@ val generateMessages by tasks.registering(GenerateMessagesTask::class) {
     description = "Compile l10n/app_*.arb into typed Kotlin message accessors (OP-29)"
     bundles.from(l10nDir.asFileTree.matching { include("app_*.arb") })
     outputDir.set(layout.buildDirectory.dir("generated/l10n/commonMain"))
+    jvmOutputDir.set(layout.buildDirectory.dir("generated/l10n/jvmMain"))
+    chunkDir.set(layout.buildDirectory.dir("generated/l10n/jsResources"))
 }
+
+/**
+ * The generator's three outputs, each wired into the source set that wants it (OP-29 slice 3). A file
+ * collection with an explicit `builtBy` rather than the bare provider, because a `DirectoryProperty` set
+ * from `layout.buildDirectory` carries no producer of its own and every compilation must wait for this one.
+ *
+ * The split is the whole of "one chunk per language": English is `commonMain` and rides in both binaries,
+ * the other languages are Kotlin on the JVM (a test renders German synchronously) and a `<script>` chunk in
+ * the browser (`l10n/<lang>.js`, fetched when the reader picks that language). The Pages workflow copies
+ * the whole `productionExecutable` directory, so the chunks deploy with the page and are asked for by a
+ * **relative** path.
+ */
+val messagesCommonSrc = files(generateMessages.flatMap { it.outputDir }).builtBy(generateMessages)
+val messagesJvmSrc = files(generateMessages.flatMap { it.jvmOutputDir }).builtBy(generateMessages)
+val messagesJsChunks = files(generateMessages.flatMap { it.chunkDir }).builtBy(generateMessages)
 
 /**
  * DeepL, through the user's own plugin (OP-29). **Not part of the ordinary build**: it costs characters, so
@@ -141,9 +158,9 @@ kotlin {
                 // the JT writer/reader (sibling project, substituted by the composite build in settings)
                 implementation("de.haumacher.kotlinjt:kotlinJT:0.1.0-SNAPSHOT")
             }
-            // the compiled ARB bundles (OP-29). A task provider rather than a path, so the dependency is
-            // the build's own and every compilation waits for the generator.
-            kotlin.srcDir(generateMessages)
+            // the compiled ARB bundles (OP-29) — the English table and the typed accessors, which both
+            // binaries carry. The other languages are wired into jvmMain and into jsMain's resources below.
+            kotlin.srcDir(messagesCommonSrc)
         }
         val commonTest by getting {
             dependencies {
@@ -151,6 +168,9 @@ kotlin {
             }
         }
         val jvmMain by getting {
+            // every language but English, compiled in (OP-29 slice 3): the browser fetches a chunk, the JVM
+            // cannot, because a headless test renders `de` and `en` in one expression and may not wait.
+            kotlin.srcDir(messagesJvmSrc)
             dependencies {
                 // ICU MessageFormat's reference implementation (OP-29) — the JVM actual of `formatMessage`.
                 // 13 MB of locale data, which is exactly why the browser gets FormatJS's 40 KB instead.
@@ -187,6 +207,9 @@ kotlin {
             }
             // ...and its two files ride along as resources, so they land next to index.html
             resources.srcDir(manifoldWasm)
+            // …as does one `l10n/<lang>.js` per language (OP-29 slice 3), which the shell adds to the page
+            // when that language is chosen and never otherwise
+            resources.srcDir(messagesJsChunks)
         }
     }
 }

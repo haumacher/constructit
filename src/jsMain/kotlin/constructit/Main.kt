@@ -26,6 +26,7 @@ import constructit.geom.Justification
 import constructit.geom.MeshBool
 import constructit.geom.MeshQuality
 import constructit.geom.Vec2
+import constructit.l10n.Bundle
 import constructit.l10n.L10n
 import constructit.l10n.Messages
 import constructit.l10n.Msg
@@ -38,10 +39,14 @@ import org.khronos.webgl.ArrayBuffer
 import org.khronos.webgl.Int8Array
 import org.khronos.webgl.Uint8Array
 import org.w3c.dom.CanvasRenderingContext2D
+import org.w3c.dom.EventInit
 import org.w3c.dom.HTMLCanvasElement
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.HTMLInputElement
+import org.w3c.dom.HTMLScriptElement
 import org.w3c.dom.HTMLSelectElement
+import org.w3c.dom.events.Event
+import org.w3c.dom.events.KeyboardEvent
 import org.w3c.dom.events.MouseEvent
 import org.w3c.dom.events.WheelEvent
 import org.w3c.dom.url.URL
@@ -50,7 +55,64 @@ import org.w3c.files.BlobPropertyBag
 import org.w3c.files.FileReader
 
 fun main() {
-    window.addEventListener("load", { setupApp() })
+    window.addEventListener("load", {
+        // The language first, and the first paint **waits for its text** (OP-29 slice 3): only English
+        // rides in the main bundle now, every other language is the chunk `l10n/<lang>.js`, and a page that
+        // painted English and corrected itself a frame later would be a flash of the wrong language rather
+        // than a saving. The wait is one same-origin request against a 600 KB bundle already parsed.
+        L10n.locale = chooseLocale()
+        withLanguage(L10n.locale) { setupApp() }
+    })
+}
+
+/**
+ * Bring [locale]'s text into the page, then run [then] — the browser half of OP-29 slice 3's chunking.
+ *
+ * The chunk is a **classic script** (`l10n/<lang>.js`) that assigns a flat `[key, pattern, …]` array under
+ * `window.constructitL10n`, added to the page here and never by the markup. Two reasons it is a script and
+ * not a `fetch` of JSON: the page runs from `file:` in half of `BrowserE2ETest` and whenever anyone opens
+ * the distribution from disk, where a browser refuses an XHR but still loads a `<script src>`; and a
+ * **relative** src is what makes the same file work at the root of a dev server and under
+ * `/constructit/` on GitHub Pages, which copies the whole distribution directory as it stands.
+ *
+ * A chunk that will not load is not an error either: [Bundle] answers nothing, every key falls back to
+ * English (`Messages.patternOrNull`), and the app runs. English itself is already here, so this is a
+ * straight call for the language the main bundle carries.
+ */
+private fun withLanguage(
+    locale: String,
+    then: () -> Unit,
+) {
+    if (Bundle.isLoaded(locale)) {
+        then()
+        return
+    }
+    val script = document.createElement("script") as HTMLScriptElement
+    script.src = "l10n/$locale.js"
+    val arrived = {
+        chunkOf(locale)?.let { flat ->
+            val patterns = HashMap<String, String>(flat.size)
+            var i = 0
+            while (i + 1 < flat.size) {
+                patterns[flat[i]] = flat[i + 1]
+                i += 2
+            }
+            Bundle.install(locale, patterns)
+        }
+        then()
+    }
+    script.addEventListener("load", { arrived() })
+    script.addEventListener("error", { then() })
+    document.head?.appendChild(script)
+}
+
+/** What the chunk assigned, if it ran: `[key, pattern, key, pattern, …]`, flat because that reads back plainly. */
+private fun chunkOf(locale: String): Array<String>? {
+    val all: dynamic = js("(typeof window !== 'undefined' ? window.constructitL10n : null)")
+    if (all == null || all == undefined) return null
+    val table = all[locale]
+    if (table == null || table == undefined) return null
+    return table.unsafeCast<Array<String>>()
 }
 
 /**
@@ -121,8 +183,7 @@ private fun applyStaticText() {
 }
 
 private fun setupApp() {
-    // The language first, before anything is drawn or measured: every label below reads it (OP-29).
-    L10n.locale = chooseLocale()
+    // The language is already chosen and its chunk already here (see `main`), so every label below reads it
     applyStaticText()
     val canvas = document.getElementById("canvas") as HTMLCanvasElement
     val canvas3 = document.getElementById("canvas3") as HTMLCanvasElement
@@ -789,7 +850,7 @@ private fun setupApp() {
     // ---- parameters panel ----
     (document.getElementById("p-add") as HTMLElement).addEventListener("click", {
         val name = (document.getElementById("p-name") as HTMLInputElement).value.ifBlank { "p" }
-        val v = (document.getElementById("p-value") as HTMLInputElement).value.toDoubleOrNull() ?: 0.0
+        val v = Format.read((document.getElementById("p-value") as HTMLInputElement).value) ?: 0.0
         val unit = (document.getElementById("p-unit") as HTMLSelectElement).value
         val q =
             when (unit) {
@@ -877,17 +938,23 @@ private fun setupApp() {
         val t = it.target as? HTMLInputElement ?: return@addEventListener
         if (!t.className.contains("pval")) return@addEventListener
         val entry = editor.doc.scalars.firstOrNull { s -> s.id == t.getAttribute("data-sid") } ?: return@addEventListener
-        // an empty or half-typed field ("-", "1e") writes nothing and waits
-        val v = t.value.toDoubleOrNull() ?: return@addEventListener
+        // an empty or half-typed field ("-", "1e", a lone decimal comma) writes nothing and waits
+        val v = Format.read(t.value) ?: return@addEventListener
         editor.setParameter(entry, v, commit = false)
     })
+    // The nudge a `type="number"` field used to give and a text one does not (OP-29 slice 3): the arrow
+    // keys step the value by the field's own `data-step`, and the write is the same one typing performs —
+    // typing and nudging are the one operation (OP-13). Dispatched as the browser's own events rather than
+    // written twice, so the handlers below stay the single place a value is committed.
+    nudgeOnArrows(paramsList)
+    nudgeOnArrows(document.getElementById("params-form") as HTMLElement)
     // edit a parameter value (pval), rename it (pname) or wire it to another scalar (pbind), on commit
     paramsList.addEventListener("change", {
         val t = it.target as? HTMLElement ?: return@addEventListener
         val entry = editor.doc.scalars.firstOrNull { s -> s.id == t.getAttribute("data-sid") } ?: return@addEventListener
         when {
             t is HTMLInputElement && t.className.contains("pval") -> {
-                val v = t.value.toDoubleOrNull() ?: return@addEventListener
+                val v = Format.read(t.value) ?: return@addEventListener
                 editor.setParameter(entry, v) // commits: one undo step per committed change
                 repaint()
             }
@@ -936,7 +1003,9 @@ private fun setupApp() {
             fun field(
                 id: String,
                 fallback: Double,
-            ): Double = (document.getElementById(id) as? HTMLInputElement)?.value?.toDoubleOrNull() ?: fallback
+            ): Double =
+                (document.getElementById(id) as? HTMLInputElement)?.value?.let { Format.read(it) }?.coerceIn(0.0, 1.0)
+                    ?: fallback
             editor.setMaterial(
                 el,
                 Appearance(
@@ -949,10 +1018,11 @@ private fun setupApp() {
             return@addEventListener
         }
         val idx = t.getAttribute("data-fidx")?.toIntOrNull() ?: return@addEventListener
-        val v = t.value.toDoubleOrNull() ?: return@addEventListener
+        val v = Format.read(t.value) ?: return@addEventListener
         if (!editor.writeSelectionField(idx, v)) editor.note(Msgs.msgValueDerived())
         repaint()
     })
+    nudgeOnArrows(inspector)
     // Hovering a name in *built from* / *used by* points the canvas at that element, and clicking it goes
     // there. The set is on `mouseover` per chip and the clear is on `mouseleave` of the whole panel — never
     // per chip — because a repaint replaces these nodes under the pointer, and a per-chip clear would then
@@ -1339,15 +1409,20 @@ private fun setupApp() {
         Messages.locales.joinToString("") { "<option value=\"$it\">${LOCALE_NAMES[it] ?: it}</option>" }
     langSelect.value = L10n.locale
     langSelect.addEventListener("change", {
-        L10n.locale = langSelect.value
-        storeLocale(L10n.locale)
-        applyStaticText()
-        // the palette is rebuilt only when the *set* of tools changes, and the set did not — the words did
-        paletteShows = null
-        // …and the standing note **stays**, because since OP-29's slice 2 it is a value and not a sentence:
-        // the very note the last gesture produced is re-read here in the language just chosen, with no
-        // gesture repeated. Slice 1 had to throw it away, which is the difference this slice is about.
-        repaint()
+        // …and the language's *text* may still be a request away (OP-29 slice 3), so the switch happens
+        // when it lands and never half-way: nothing here reads a language whose chunk is not in.
+        val chosen = langSelect.value
+        withLanguage(chosen) {
+            L10n.locale = chosen
+            storeLocale(chosen)
+            applyStaticText()
+            // the palette is rebuilt only when the *set* of tools changes, and the set did not — the words did
+            paletteShows = null
+            // …and the standing note **stays**, because since OP-29's slice 2 it is a value and not a sentence:
+            // the very note the last gesture produced is re-read here in the language just chosen, with no
+            // gesture repeated. Slice 1 had to throw it away, which is the difference this slice is about.
+            repaint()
+        }
     })
 
     window.addEventListener("resize", { repaint() })
@@ -1687,9 +1762,12 @@ private fun renderPanel(
                     }
                 "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
                     name +
-                    // a native number field: the browser's own up/down arrows and arrow keys nudge it, and
-                    // every tick is a live write (OP-13 — typing and nudging are the same operation)
-                    "<input class=\"pval\" type=\"number\" step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
+                    // A **text** field rather than `type="number"`, because a native number field is
+                    // localized by the *browser's* language and this app is localized by its own (OP-29
+                    // slice 3): a German session must read and write `5,5` whatever Chrome was started
+                    // with. What the native field gave and this must not lose is the nudge — so the arrow
+                    // keys are handled below, and typing and nudging stay the one operation (OP-13).
+                    "<input class=\"pval\" type=\"text\" inputmode=\"decimal\" data-step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
                     "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
                     "<input class=\"pexpr\" data-sid=\"${s.id}\" value=\"$formula\" placeholder=\"${attr(Messages.uiParamFormula())}\"" +
                     " title=\"${attr(Messages.uiParamFormulaTitle())}\"" +
@@ -1809,9 +1887,11 @@ private fun materialRow(editor: Editor): String {
     return "<div class=\"frow\"><span class=\"flabel\">$shown</span>" +
         "<input id=\"insp-color\" class=\"fcolor\" type=\"color\" value=\"${m.color}\" " +
         "title=\"${attr(Messages.uiInspectorColorTitle())}\">" +
-        "<input id=\"insp-rough\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.roughness)}\" " +
+        // text fields for the same reason the parameter rows are (OP-29 slice 3); the 0..1 range the
+        // native field only advertised is now actually enforced, where the value is read
+        "<input id=\"insp-rough\" class=\"fmat\" type=\"text\" inputmode=\"decimal\" data-step=\"0.05\" value=\"${Format.display(m.roughness)}\" " +
         "title=\"${attr(Messages.uiInspectorRoughnessTitle())}\">" +
-        "<input id=\"insp-metal\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.metallic)}\" " +
+        "<input id=\"insp-metal\" class=\"fmat\" type=\"text\" inputmode=\"decimal\" data-step=\"0.05\" value=\"${Format.display(m.metallic)}\" " +
         "title=\"${attr(Messages.uiInspectorMetalnessTitle())}\">" +
         "</div>"
 }
@@ -1851,12 +1931,40 @@ private fun dependencyRows(editor: Editor): String {
     return from + by
 }
 
-private fun unitLabel(dim: Dimension): String =
-    when (dim) {
-        Dimension.LENGTH -> "mm"
-        Dimension.ANGLE -> "°"
-        else -> ""
-    }
+/** The unit beside a value field. A word in the bundle, because not every language writes every unit alike. */
+private fun unitLabel(dim: Dimension): String = Format.unitLabel(dim)
+
+/**
+ * **Arrow keys step a value field**, by the `data-step` it declares (OP-29 slice 3).
+ *
+ * A `type="number"` field gave this for free, and slice 3 had to give it up: a native number field is
+ * localized by the *browser's* language, and this app is localized by its own, so a German session in an
+ * English Chrome could neither type nor read `5,5`. What the native field also gave — the nudge — is worth
+ * keeping, so it is written here once for every field in [root] that says how far one step is, and the
+ * write goes out as the browser's own `input` and `change` events: the value is still committed in exactly
+ * one place, and typing and nudging stay the same operation (OP-13).
+ *
+ * `data-step` is *format*, written by this code and never by a reader, so it is read with the canonical
+ * rule (`"en"`) while the field's own value is read with the reader's.
+ */
+private fun nudgeOnArrows(root: HTMLElement) {
+    root.addEventListener("keydown", { e ->
+        val key = (e as KeyboardEvent).key
+        val by =
+            when (key) {
+                "ArrowUp" -> 1.0
+                "ArrowDown" -> -1.0
+                else -> return@addEventListener
+            }
+        val field = e.target as? HTMLInputElement ?: return@addEventListener
+        if (field.disabled) return@addEventListener
+        val step = field.getAttribute("data-step")?.let { Format.read(it, "en") } ?: return@addEventListener
+        e.preventDefault()
+        field.value = Format.display((Format.read(field.value) ?: 0.0) + by * step)
+        field.dispatchEvent(Event("input", EventInit(bubbles = true)))
+        field.dispatchEvent(Event("change", EventInit(bubbles = true)))
+    })
+}
 
 /**
  * The step a value field's spinner nudges by: 1 mm / 1° for the dimensions a drawing is measured in, 0.1
@@ -1869,9 +1977,16 @@ private fun stepFor(dim: Dimension): String =
         else -> "0.1"
     }
 
+/**
+ * What a value field shows: the figure **as this reader writes figures** (OP-29 slice 3).
+ *
+ * `Format.display` puts `Format.num`'s digits — the file's own rounding, identical everywhere — through the
+ * reader's `NumberFormat`, so a German session reads `5,5` where an English one reads `5.5` and the file
+ * keeps `5.5mm` either way. Its inverse is `Format.read`, which every handler below parses with.
+ */
 private fun displayValue(q: Quantity): String =
     when (q.dim) {
-        Dimension.ANGLE -> Format.num(q.deg)
-        Dimension.LENGTH -> Format.num(q.mm)
-        else -> Format.num(q.value)
+        Dimension.ANGLE -> Format.display(q.deg)
+        Dimension.LENGTH -> Format.display(q.mm)
+        else -> Format.display(q.value)
     }

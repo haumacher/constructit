@@ -51,6 +51,7 @@ class ChromeBundleTest {
             // JavaScript source handed to the browser through `js(…)`
             "typeof window.showSaveFilePicker === 'function' && window.location.protocol !== 'file:'",
             "typeof window.showOpenFilePicker !== 'function'",
+            "(typeof window !== 'undefined' ? window.constructitL10n : null)",
         )
 
     /** Words that stand in `index.html` as themselves: the product's name and two unit symbols. */

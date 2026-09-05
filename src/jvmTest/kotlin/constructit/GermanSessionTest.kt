@@ -5,10 +5,15 @@ import constructit.core.Evaluator
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
+import constructit.editor.Format
 import constructit.editor.Tools
 import constructit.geom.Vec2
 import constructit.l10n.L10n
+import constructit.l10n.Messages
+import constructit.l10n.Msgs
 import constructit.l10n.contains
+import constructit.units.Dimension
+import constructit.units.Quantity
 import constructit.units.mm
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -167,6 +172,162 @@ show els=e2
         L10n.locale = "en"
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "…and the same bytes under en")
     }
+
+    /**
+     * **The file is still locale-neutral now that the numbers are not** (OP-18 × OP-29 slice 3).
+     *
+     * The slice moved every measured figure the *reader* sees into the reader's own notation, and the one
+     * thing that must not have moved with it is the *writer*: `DocumentFormat` keeps the decimal point, in
+     * every language, or a drawing saved in Berlin would not reopen in London. Three reporter-supplied
+     * files rather than three built drawings, because a file full of coordinates like
+     * `41.999800864975384` is where a stray `NumberFormat` would show first — and one of them (#31) carries
+     * relative parameterizations whose own literals go through the same writer.
+     */
+    @Test
+    fun theWriterKeepsTheDecimalPointInEveryLanguage() {
+        val saved = ArrayList<String>()
+        for ((what, script) in listOf("#35" to issue35, "#31" to issue31, "connect" to connectScript)) {
+            L10n.locale = "en"
+            val inEnglish = DocumentFormat.save(DocumentFormat.load(script))
+            L10n.locale = "de"
+            val once = DocumentFormat.save(DocumentFormat.load(script))
+            assertEquals(inEnglish, once, "$what: the saved script must not depend on the reader's language")
+            assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "$what: save -> load -> save under de")
+            // the writer's own spelling, stated positively: every `<number>mm` literal keeps its point, and
+            // a comma is only ever the separator between the two coordinates of a click
+            for (literal in Regex("[-0-9.]+(?:mm|deg)\\b").findAll(once)) {
+                assertFalse(',' in literal.value, "$what: a decimal comma reached the file: ${literal.value}")
+            }
+            saved.add(once)
+        }
+        // …and the check above is worth something only if a decimal literal was there to be spoiled
+        assertTrue(Regex("[0-9]\\.[0-9]").containsMatchIn(saved.joinToString("\n")), "expected decimal literals to check")
+    }
+
+    /**
+     * **A refusal states its size in the reader's numbers** (OP-29 slice 3) — off *one* value, read twice.
+     *
+     * Slice 2 handed this message a `String` the engine had already spelled, which is why a German session
+     * read `5.5 mm` inside an otherwise German sentence. The figure is a `Num` now: the engine still states
+     * it once, in the file's own spelling and at the file's own precision, and the *reader* decides how it
+     * is punctuated. Note what does **not** change with the language — the digits, and the `mm`.
+     */
+    @Test
+    fun aRefusalStatesItsSizeInTheReadersNumbers() {
+        val why = Msgs.refusalShellShellNeedsPositiveWallThickness(Format.num(5.5))
+        assertEquals("a shell needs a positive wall thickness — this one is 5.5 mm", why.render("en"))
+        assertTrue("5,5 mm" in why.render("de"), why.render("de"))
+        assertFalse("5.5" in why.render("de"), "the decimal point is the file's, not the German reader's")
+        // …and the precision is the engine's in both: the locale moves the separator and nothing else
+        val fine = Msgs.refusalShellShellNeedsPositiveWallThickness(Format.num(0.1252))
+        assertTrue("0.125 mm" in fine.render("en"), fine.render("en"))
+        assertTrue("0,125 mm" in fine.render("de"), fine.render("de"))
+    }
+
+    /** An angle, an area and a plain factor — the units that are symbols, and the separator that is not. */
+    @Test
+    fun anAngleAndAnAreaAreSpelledTheReadersWay() {
+        val angle = Format.quantityMsg(Quantity.deg(12.5))
+        assertEquals("12.5°", angle.render("en"))
+        assertEquals("12,5°", angle.render("de"))
+        val area = Format.quantityMsg(Quantity(1234.5, Dimension.AREA))
+        assertEquals("1234.5 mm²", area.render("en"), "no grouping: the drawing's figures read against the file")
+        assertEquals("1234,5 mm²", area.render("de"))
+        assertEquals("0.25", Format.quantityMsg(Quantity.number(0.25)).render("en"))
+        assertEquals("0,25", Format.quantityMsg(Quantity.number(0.25)).render("de"))
+    }
+
+    /** A count inside a plural is a *number* to ICU, so both engines group it the way the language does. */
+    @Test
+    fun aCountInsideAPluralIsWrittenTheReadersWay() {
+        assertEquals("Loaded 1,234 elements", Messages.msgLoaded(1234, "en"))
+        assertEquals("Geladen 1.234 Elemente", Messages.msgLoaded(1234, "de"))
+        assertEquals("Loaded 1 element", Messages.msgLoaded(1, "en"))
+        assertEquals("Geladen 1 Element", Messages.msgLoaded(1, "de"))
+    }
+
+    /**
+     * **The parameter panel round trip** (OP-29 slice 3), through the editor's own API rather than the DOM:
+     * a German session types `5,5`, the file stores `5.5mm`, and the field shows `5,5` again.
+     *
+     * `Format.read` is the one place this project writes a rule instead of calling a library — there is no
+     * reference *parser* in either target — and `Format.display` is its inverse through `NumberFormat`. The
+     * three assertions are the three things that have to hold at once: what the reader typed became the
+     * value they meant, the writer did not follow them into a comma (OP-18), and reading it back gives the
+     * reader their own notation and not the file's.
+     */
+    @Test
+    fun theParameterPanelTakesADecimalCommaAndGivesOneBack() {
+        L10n.locale = "de"
+        val ed = Editor()
+        val r = ed.doc.newParameter("r", 1.0.mm)
+        val typed = assertNotNull(Format.read("5,5"), "a German session types a comma")
+        ed.setParameter(r, typed)
+
+        assertEquals(5.5, typed, "what was typed is what it means")
+        val script = DocumentFormat.save(ed.doc)
+        assertTrue("5.5mm" in script, "the file keeps the decimal point (OP-18): $script")
+        assertFalse("5,5" in script, "…and never the reader's: $script")
+        assertEquals("5,5", Format.display(5.5), "and the field shows it back the way it was typed")
+        assertEquals("5.5", Format.display(5.5, "en"), "…while an English session reads the same value its way")
+
+        // the rule is symmetric, and strict where it has to be: the *other* language's separator is not a
+        // number, because `1.234` would otherwise mean two different things in the two sessions
+        assertEquals(null, Format.read("5.5", "de"))
+        assertEquals(null, Format.read("5,5", "en"))
+        assertEquals(null, Format.read("", "de"))
+        assertEquals(-0.5, Format.read("-0,5", "de"))
+    }
+
+    /** **GitHub #35's attached file, verbatim** — seven roundings on one body, all by the one parameter `r`. */
+    private val issue35 =
+        """
+constructit 5
+orthostart -26.875,-32.375 -> e1
+orthovertex -26.875,15.375 -> e2,e3
+orthovertex 41.999800864975384,15.375 -> e4,e5
+orthovertex 41.999800864975384,-11.775083491926196 -> e6,e7
+orthovertex -5.521648428788623,-11.775083491926196 -> e8,e9
+orthovertex -5.521648428788623,-32.375 -> e10,e11
+orthoclose -> e12
+param "h" = 20mm
+tool extrude els=e11 clicks=-48.125,37.875 scalar="h" -> e13
+hide els=e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13
+show els=e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13
+param "r" = 5mm
+tool filletedge els=e13 clicks=-42.670739764447546,-4.867038301721209 scalar="r" signs=12;-1;1;0;1 -> e14
+tool filletedge els=e14 clicks=-31.533048614089623,14.504582242265968 scalar="r" signs=13;-1;1;0;1 -> e15
+tool filletedge els=e15 clicks=-15.209120508301623,-22.09480593584297 scalar="r" signs=1;-1;1;0;1 -> e16
+tool filletedge els=e16 clicks=-1.6336097588108203,35.97358839564461 scalar="r" signs=14;-1;1;0;1 -> e17
+tool filletedge els=e17 clicks=-11.301657028615722,8.858099327956722 scalar="r" signs=2;-1;1;0;-1 -> e18
+tool filletedge els=e18 clicks=56.88568755568988,21.122250050431774 scalar="r" signs=3;-1;1;0;1 -> e19
+tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" signs=15;-1;1;0;1 -> e20
+""".trimStart()
+
+    /** **GitHub #31's script, verbatim** — two roundings meeting in a concave corner, over two relative legs. */
+    private val issue31 =
+        """
+constructit 3
+orthostart -13.18902721970728,-16.006179064359657 -> e1
+orthovertex -13.18902721970728,31.488369994030137 -> e2,e3
+orthovertex 50.93454370701417,31.488369994030137 -> e4,e5
+orthovertex 50.93454370701417,21.488369994030137 -> e6,e7
+orthovertex -3.1890272197072793,21.488369994030137 -> e8,e9
+orthovertex -3.1890272197072793,-16.006179064359657 -> e10,e11
+orthoclose -> e12
+param "h" = 20mm
+tool extrude els=e11 clicks=-48.125,37.875 scalar="h" -> e13
+hide els=e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13
+show els=e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13
+tool makerel els=e10,e1 clicks=-5.003059576596437,-32.398104273234466;-27.16684620319296,-32.96159037391065 dofs=10mm
+tool makerel els=e6,e4 clicks=61.86395770364392,0.09626086575873762;62.80310120477089,14.934728183564884 dofs=-10mm
+param "r" = 3mm
+tool filletedge els=e13 clicks=-4.752493982761422,46.49095575601497 scalar="r" signs=13;-1;1;0;1 -> e14
+tool filletedge els=e14 clicks=30.09910577599922,89.3378106087082 scalar="r" signs=14;-1;1;0;1 -> e15
+""".trimStart()
+
+    /** The connect fixture, as a script — two welded points and the segment between them. */
+    private val connectScript = DocumentFormat.save(aConnectedPair().doc)
 
     private fun aConnectedPair(): Editor {
         val ed = Editor()
