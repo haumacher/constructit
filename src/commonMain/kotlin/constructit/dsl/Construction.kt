@@ -3474,51 +3474,75 @@ class Construction {
         // structure at build time (OP-21): whether this blend chains onto an earlier one is a fact about the
         // *graph*, so it decides the arity here rather than being read off a value inside compute
         val chained = applyTo !== base
-        // the operand indices are computed here, once, because two of them are optional: a chained blend
-        // carries its base, and a blend is stated by a size **or** by a drawn profile
+        // **the chain's undressed root, as an operand** (session 81). Rounding an upright that an earlier
+        // corner pivots about *changes* that corner, and the material the old one took cannot be given back
+        // by another cut — so the chain is rebuilt from the body it all started on. Which node that is, is a
+        // fact this builder already knows: every blend records the root of the chain it makes, so the next
+        // one reads it off the graph rather than looking for it in a value. The arity is structural, exactly
+        // as [chained] is, and nothing stored changes — no step, no `signs=`, no version.
+        val chainRoot = if (chained) null else blendChainRoot[base.node]
+        // the operand indices are computed here, once, because three of them are optional: a chained blend
+        // carries its base, a blend is stated by a size **or** by a drawn profile, and a blend of a blend
+        // carries the root of its chain
         val iBase = if (chained) 1 else 0
         val iSpace = iBase + 1
         val iSize = if (size == null) -1 else iSpace + 1
         val iProfile = if (profile == null) -1 else maxOf(iSpace, iSize) + 1
-        return op(*listOfNotNull<Ref<*>>(applyTo, base.takeIf { chained }, space, size, profile).toTypedArray()) {
-            val tip = (it[0] as SolidValue).solid
-            val body = if (chained) (it[iBase] as SolidValue).solid else tip
-            openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
-            val plane = (it[iSpace] as PlaneValue).plane
-            val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
-            val drawn = if (iProfile < 0) emptyList() else (it[iProfile] as ProfileValue).profile.elements
-            val sec = BlendSection(kind, r, drawn)
-            val (resolved, whyTargets) =
-                if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
-            val targets = resolved
-            if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
-            val (out, why) = Blend3.blended(body, tip, targets, sec, choices)
-            if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
-            val dressed =
-                if (!chained) {
-                    // **The dress-up feature** (session 71, slice 3): the body addressed *is* the body cut,
-                    // so the result is the base with its blend on it — a feature whose face list extends the
-                    // base's ([Feature3.Blend]). The triangles are the ones the boolean just made, restated
-                    // under the analytic feature and sharing the very same derivation, which is the whole
-                    // point of `Solid3.restated`: one mesh, two statements of the same body.
-                    val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size), drawn)
-                    // it must still say why, if the dressed list cannot be stated — otherwise a body would
-                    // claim faces it cannot produce, and every reader downstream would meet the refusal
-                    // instead of this node (OP-3: the refusal belongs where the decision is)
-                    val (faces, whyFaces) = Section3.faces(f)
-                    if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
-                    out.restated(f)
-                } else {
-                    // **The mesh tier, unchanged and stated**: the body cut is *not* the body addressed — a
-                    // blend after an ordinary boolean — so there is no face list to extend (the union's own
-                    // faces are emergent, OP-9's sink rule) and the result stays a mesh boolean. It gets a
-                    // plan ([Feature3.MeshBoolean.plan]) so it is drawn and clickable, computed once here
-                    // because this is the node that knows which plane the body is shown in (`Silhouette`).
-                    (out.feature as? Feature3.MeshBoolean)?.let { g -> out.restated(g.copy(plan = Silhouette.of(out.mesh, plane))) } ?: out
-                }
-            EvalResult.Ok(SolidValue(dressed))
-        }
+        val iRoot = if (chainRoot == null) -1 else maxOf(iSpace, iSize, iProfile) + 1
+        val made: SolidRef =
+            op(*listOfNotNull<Ref<*>>(applyTo, base.takeIf { chained }, space, size, profile, chainRoot).toTypedArray()) {
+                val tip = (it[0] as SolidValue).solid
+                val body = if (chained) (it[iBase] as SolidValue).solid else tip
+                openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
+                val plane = (it[iSpace] as PlaneValue).plane
+                val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
+                val drawn = if (iProfile < 0) emptyList() else (it[iProfile] as ProfileValue).profile.elements
+                val sec = BlendSection(kind, r, drawn)
+                val (resolved, whyTargets) =
+                    if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
+                val targets = resolved
+                if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
+                val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
+                val (out, why) = Blend3.blended(body, tip, targets, sec, choices, rootBody)
+                if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
+                val dressed =
+                    if (!chained) {
+                        // **The dress-up feature** (session 71, slice 3): the body addressed *is* the body cut,
+                        // so the result is the base with its blend on it — a feature whose face list extends the
+                        // base's ([Feature3.Blend]). The triangles are the ones the boolean just made, restated
+                        // under the analytic feature and sharing the very same derivation, which is the whole
+                        // point of `Solid3.restated`: one mesh, two statements of the same body.
+                        val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size), drawn)
+                        // it must still say why, if the dressed list cannot be stated — otherwise a body would
+                        // claim faces it cannot produce, and every reader downstream would meet the refusal
+                        // instead of this node (OP-3: the refusal belongs where the decision is)
+                        val (faces, whyFaces) = Section3.faces(f)
+                        if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
+                        out.restated(f)
+                    } else {
+                        // **The mesh tier, unchanged and stated**: the body cut is *not* the body addressed — a
+                        // blend after an ordinary boolean — so there is no face list to extend (the union's own
+                        // faces are emergent, OP-9's sink rule) and the result stays a mesh boolean. It gets a
+                        // plan ([Feature3.MeshBoolean.plan]) so it is drawn and clickable, computed once here
+                        // because this is the node that knows which plane the body is shown in (`Silhouette`).
+                        (out.feature as? Feature3.MeshBoolean)?.let { g -> out.restated(g.copy(plan = Silhouette.of(out.mesh, plane))) } ?: out
+                    }
+                EvalResult.Ok(SolidValue(dressed))
+            }
+        // …and this blend's own chain root, for whatever blends on it next: its base's, or its base itself
+        if (!chained) blendChainRoot[made.node] = chainRoot ?: base
+        return made
     }
+
+    /**
+     * The **undressed root** of each blend node's chain — the body its first rounding was cut out of.
+     *
+     * Recorded here, at build time, because that is where the answer *is*: a blend knows which node it
+     * chains on, so the root is an ordinary structural fact about the graph rather than something to be
+     * rediscovered from a feature or guessed at from a mesh (OP-21). Keyed by node identity, so a replay
+     * that rebuilds the same construction rebuilds the same map, and nothing about it is stored.
+     */
+    private val blendChainRoot = HashMap<Node, SolidRef>()
 
     // ---- shelling: a wall of a stated thickness, hollowed out by construction (session 75) ----
 

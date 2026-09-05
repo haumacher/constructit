@@ -1250,6 +1250,20 @@ object Blend3 {
         /** Which band ends this corner closes — `(piece, atStart)`. */
         val ends: List<Pair<Int, Boolean>>
 
+        /**
+         * The pieces this corner is a **function of** without closing their ends — the **upright** the pair
+         * pivots about, where that upright is itself a band (session 81, the mixed vertex).
+         *
+         * It is deliberately *not* in [ends]: the upright fills the opposite sector, so it is a boolean of
+         * the other sign and can never share a tool with the pair ([groupsOf] joins only what [ends] names).
+         * What it does name is the corner's **identity** — a corner about a rounded upright is a different
+         * corner from the one about the sharp edge, so it carries the upright's index in its face name
+         * ([cornerFacesOf]) and it is listed at the level where the *upright* is fresh, not only where an end
+         * is — and its **order**: the upright's own tool has to be applied before the pair's, which is what
+         * [blended] reads it for.
+         */
+        val extra: List<Int> get() = emptyList()
+
         /** The ring that end stands on. */
         fun ringAt(end: Pair<Int, Boolean>): Placement
 
@@ -1298,6 +1312,18 @@ object Blend3 {
      * the cone the bevel sweeps. Both are exact statements of the section revolved, and the volume it takes
      * is Pappus' to the last digit: `φ · ∫ δ(h)²/2 dh`, which is `φ·r³(5/6 − π/4)` for a round and
      * `φ·c³/6` for a bevel.
+     *
+     * **The pivot is about *whatever stands at the upright*, and that is the generalization** (session 81,
+     * the user's report on top of GitHub #31/#32). Session 80's sentence — *"its centre on a circle of
+     * radius `r`"* — assumed the upright is a **sharp** edge. Where the upright is itself a band the ball
+     * pivots about that band: for a fillet upright of radius `r_U` its centre runs on a circle of radius
+     * `r + r_U` about the upright's own axis and the surface is a **ring** torus, the horn torus being
+     * exactly the case `r_U = 0`. Said once for every kind of upright: **the pair's section follows the
+     * upright band's own end-section curve, piece by piece, turning about the vertical through each joint
+     * by the angle that curve's tangent turns there** — so a sharp upright is the degenerate curve of one
+     * point and one turn, a chamfer upright is a turn, a slide and a turn, and a drawn one is its own chain.
+     * Each of those is one [Leg], and the two bands' ends move from the corner itself to the **set-back**
+     * where the upright's tangency on each of their other faces meets their own edge.
      */
     private class Turn(
         val a: Int,
@@ -1307,14 +1333,17 @@ object Blend3 {
         val bAtStart: Boolean,
         val placeB: Placement,
         val shared: FacePatch,
-        /** The rings from [a]'s own end round to [b]'s, [a]'s section placed at each; the first is [placeA]. */
-        val rings: List<Placement>,
+        /** The walk from [a]'s own end round to [b]'s — one leg per piece of what stands at the upright. */
+        val legs: List<Leg>,
         val at: Vec3,
-        /** The in-face direction [a]'s wedge reaches along, which is the frame's own `θ = 0`. */
-        val ea: Vec3,
-        /** How far the pivot turns, signed about the shared face's normal. */
-        val total: Double,
+        override val extra: List<Int> = emptyList(),
     ) : Corner {
+        /** Every ring of the walk in order, a join between two legs counted once; the first is [placeA]. */
+        val rings: List<Placement> =
+            ArrayList<Placement>().also { out ->
+                for (leg in legs) for ((k, p) in leg.rings.withIndex()) if (out.isEmpty() || k > 0) out.add(p)
+            }
+
         override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart, b to bAtStart)
 
         override fun ringAt(end: Pair<Int, Boolean>): Placement = if (end.first == a && end.second == aAtStart) placeA else placeB
@@ -1343,56 +1372,146 @@ object Blend3 {
 
         override fun label(pieces: List<Piece>): String =
             "the inside corner where ${pieces[a].crease.edge.name.label} meets ${pieces[b].crease.edge.name.label} " +
-                "on ${shared.name.label}"
+                "on ${shared.name.label}" +
+                (if (extra.isEmpty()) "" else ", turned about ${pieces[extra.first()].crease.edge.name.label}")
 
         /**
-         * The pivot's own surface, as the **revolution it is**: the band's section turned about the axis
-         * square to the shared face, which [Revolve3] then names — a torus where the section is an arc, a
-         * cone where it is a bevel — and cuts by its own table, meridian column included.
+         * Where this corner **ends the upright's own band**, as that band's own section placed on its edge —
+         * and null where it turns about a sharp one.
+         *
+         * The pair's section touches the upright's surface at one point of itself, and that point travels
+         * along the whole walk at one depth below the shared face: the depth of the pair's own tangency
+         * there. So the upright's band stops on the plane at that depth, and above it the corner's own
+         * surface stands. This is [spanOf]'s business and not [toolMesh]'s — the upright's *tool* still runs
+         * the whole edge, and the corner's tool is what takes its top off (session 81).
+         */
+        fun uprightEnd(pieces: List<Piece>): Pair<Pair<Int, Boolean>, Placement>? {
+            val u = extra.firstOrNull() ?: return null
+            val up = pieces[u]
+            val seg = up.seg ?: return null
+            val n = shared.plane?.normal?.normalized() ?: return null
+            val atStart = (seg.start - at).length() <= RING_TOL
+            if (!atStart && (seg.end - at).length() > RING_TOL) return null
+            val along = ((if (atStart) seg.end else seg.start) - at).normalized()
+            val pair = pieces[a]
+            val other = otherFace(pair, shared) ?: return null
+            val t = if (other.name == pair.crease.face1.name) pair.wedge.t1 else pair.wedge.t2
+            val depth = -(pair.crease.e1 * t.x + pair.crease.ref.e2 * t.y).dot(n)
+            if (depth <= Geom3.WELD_TOL) return null
+            return (u to atStart) to Placement(at + along * depth, up.crease.e1, up.crease.ref.e2)
+        }
+
+        /**
+         * How this corner's faces are laid out: **leg by leg, one per piece of the pair's own section**.
+         *
+         * One [Leg] is one surface family — a revolution about its pivot, or the section carried straight
+         * along a run — so the pivot about a sharp upright still states exactly one face per section piece
+         * (its single leg) and a pivot about a bevelled one states three.
+         */
+        fun facePlan(pieces: List<Piece>): List<Pair<Leg, ProfileElement?>> {
+            val sections = orientedSections(pieces[a])
+            return legs.flatMap { leg -> sections.map { leg to it } }
+        }
+
+        /**
+         * The pivot's own surface, as the **revolution or the sweep it is**: the band's section turned about
+         * the axis square to the shared face — which [Revolve3] then names, a torus where the section is an
+         * arc and a cone where it is a bevel — or carried straight along the upright bevel's own run, which
+         * is the very sweep a band along a straight edge is ([Section3.sweptFace]).
          */
         override fun faces(
             pieces: List<Piece>,
             nameAt: (Int) -> FaceName,
-        ): List<FacePatch> {
-            val (frame, sections) = frameOf(pieces) ?: return emptyList()
-            return sections.mapIndexed { k, sr ->
-                val name = nameAt(k)
-                if (sr == null) {
-                    FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
-                } else {
-                    inCornersWords(Revolve3.bandPatch(frame, sr, name), name)
-                }
+        ): List<FacePatch> = facePlan(pieces).mapIndexed { k, (leg, sr) -> legPatch(pieces[a], leg, sr, nameAt(k)) }
+
+        private fun legPatch(
+            piece: Piece,
+            leg: Leg,
+            sr: ProfileElement?,
+            name: FaceName,
+        ): FacePatch {
+            if (sr == null) {
+                return FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
             }
+            if (leg.pivot != null) {
+                val (frame, map) =
+                    axisFrame(piece, leg)
+                        ?: return FacePatch(name, null, emptyList(), "${name.label} has no axis to turn about")
+                val mapped =
+                    mappedSection(sr, map)
+                        ?: return FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
+                return inCornersWords(Revolve3.bandPatch(frame, mapped, name), name)
+            }
+            val from = leg.rings.first()
+            val to = leg.rings.last()
+            val v = to.origin - from.origin
+            val len = v.length()
+            if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), "${name.label} has no length")
+            // the sweep runs along the section frame's own normal, so the run is stated from whichever end
+            // it leaves — the same right-handed convention [bandCarrier] states a straight band with
+            val u = from.cx.cross(from.cy).normalized()
+            val base = if (v.dot(u) >= 0.0) from else to
+            return inCornersWords(Section3.sweptFace(Plane3(base.origin, base.cx, base.cy), u, len, sr, name), name)
         }
 
         /**
-         * The pivot as an axis frame and the profile in its own `(s, r)` — all [Revolve3] ever needs, once
-         * per piece of the section (a drawn chain pivots into a chain of surfaces, GitHub #30).
+         * One leg as an axis frame and the pair's section in that frame's own `(s, r)` — all [Revolve3] ever
+         * needs, and null for a leg that slides rather than turns.
+         *
+         * The **radial offset** is the whole of session 81 in one number: the section's own origin stands
+         * `rho` out from the pivot, so the surface is a *ring* torus where the sharp upright's was a horn
+         * one, and `rho = 0` reproduces session 80 verbatim.
          */
-        fun frameOf(pieces: List<Piece>): Pair<Revolve3.Frame, List<ProfileElement?>>? {
-            val piece = pieces[a]
+        fun axisFrame(
+            piece: Piece,
+            leg: Leg,
+        ): Pair<Revolve3.Frame, Affine>? {
+            val pivot = leg.pivot ?: return null
             val n = shared.plane?.normal?.normalized() ?: return null
             val axis = n * -1.0
+            val off = leg.rings.first().origin - pivot
+            val rho = off.length()
+            val p = if (rho <= Geom3.WELD_TOL) leg.dir else off * (1.0 / rho)
             val frame =
                 Revolve3.Frame(
                     Vec2(1.0, 0.0),
                     Vec2(0.0, 1.0),
                     Vec2(0.0, 0.0),
-                    at,
+                    pivot,
                     axis,
-                    ea,
-                    axis.cross(ea),
-                    min(0.0, -total),
-                    max(0.0, -total),
+                    p,
+                    axis.cross(p),
+                    min(0.0, -leg.turn),
+                    max(0.0, -leg.turn),
                     false,
                 )
             val e1 = piece.crease.e1
             val e2 = piece.crease.ref.e2
-            // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius
-            val map = Affine(e1.dot(axis), e1.dot(ea), e2.dot(axis), e2.dot(ea), 0.0, 0.0)
-            return frame to orientedSections(piece).map { if (it == null) null else mappedSection(it, map) }
+            // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius,
+            // the whole section standing `rho` out from the axis it turns about
+            return frame to Affine(e1.dot(axis), e1.dot(p), e2.dot(axis), e2.dot(p), 0.0, rho)
         }
     }
+
+    /**
+     * One **leg of the pivot's walk**: the pair's section turned about one point, or slid along one straight
+     * run (session 81).
+     *
+     * A sharp upright is one leg — the whole exterior angle turned about the edge itself. A **fillet**
+     * upright is one leg too, turned about that fillet's own axis with the section standing `r_U` out from
+     * it. A **chamfer** upright is three: a turn about the first rail, the slide along the bevel, a turn
+     * about the second. A **drawn** one is its own chain read the same way.
+     */
+    private class Leg(
+        /** The rings this leg puts down — the first at its start, the last at its end. */
+        val rings: List<Placement>,
+        /** The point it turns about, in the shared face's own plane; null where it slides instead. */
+        val pivot: Vec3?,
+        /** How far it turns about [pivot], signed about the shared face's normal; zero for a slide. */
+        val turn: Double,
+        /** The in-face direction the pair's section reaches along at this leg's start — the frame's `θ = 0`. */
+        val dir: Vec3,
+    )
 
     /**
      * One already-oriented section piece carried through an affine [map], with *material to its left*
@@ -1484,14 +1603,19 @@ object Blend3 {
     private fun inCornersWords(
         patch: FacePatch,
         name: FaceName,
-    ): FacePatch =
-        patch.copy(
+    ): FacePatch {
+        // a leg that **slides** a bevel along a bevel states a real plane, and a plane is a face you can
+        // sketch on — so the restatement is for the surfaces that are not one, which is every corner patch
+        // this drawing had before session 81 (a ball states its surface and leaves the sentence to here)
+        if (patch.plane != null) return patch.copy(name = name)
+        return patch.copy(
             name = name,
             reason =
                 "${name.label} is ${patch.surface?.band?.label ?: "a surface this drawing has no name for"} and not " +
                     "a plane — it is where the rounding's own ball stands, so there is nothing to sketch on there; " +
                     "put a datum plane where you want to sketch",
         )
+    }
 
     /** Where the three planes `n·x = d` cross, or null when they have no single crossing. */
     private fun meetOfPlanes(planes: List<Pair<Vec3, Double>>): Vec3? {
@@ -1904,8 +2028,9 @@ object Blend3 {
      * - **Only two at a vertex.** A ring is shared by two tubes; a vertex where three or more blended edges
      *   meet is the vertex blend that is already on record as a future extension.
      */
-    private fun cornersOf(pieces: List<Piece>): List<Corner> {
+    private fun cornersOf(pieces: List<Piece>): Corners {
         val out = ArrayList<Corner>()
+        var refusal: String? = null
         val taken = HashSet<Pair<Int, Boolean>>()
         // **vertices first, and that order is the rule.** A ring is shared by two tubes, so three bands at
         // one point cannot be three crossings; taking the vertex first is what stops two of them claiming
@@ -1955,9 +2080,12 @@ object Blend3 {
                                 Joint(i, aAtStart, placeA, j, bAtStart, placeB, shared)
                             } else {
                                 // **the corner turns the other way**: an inside corner of the shared face,
-                                // where the two bands do not overlap at all. The ball pivots about the
-                                // upright and its section turns with it (GitHub #31, [Turn]).
-                                turnOf(pieces, i, aAtStart, j, bAtStart, shared, corner, ea, eb) ?: continue
+                                // where the two bands do not overlap at all. The ball pivots about whatever
+                                // stands at the upright and its section turns with it ([Turn], GitHub #31 and
+                                // session 81's generalization to an upright that is itself a band).
+                                val (turn, why) = turnOf(pieces, i, aAtStart, j, bAtStart, shared, corner, ea, eb)
+                                if (why != null && refusal == null) refusal = why
+                                turn ?: continue
                             }
                         out.add(made)
                         taken.add(i to aAtStart)
@@ -1966,8 +2094,19 @@ object Blend3 {
                 }
             }
         }
-        return out
+        return Corners(out, refusal)
     }
+
+    /**
+     * The corners among a tool's pieces, and the **one refusal** a corner that cannot be stated carries.
+     *
+     * A pair the drawing simply does not make a corner of is no refusal at all — it is left to overlap and be
+     * trimmed, as every pair was before session 79. What *is* a refusal is a corner the drawing **has** and
+     * cannot state: an inside corner whose upright is itself rounded and whose pivot this vocabulary cannot
+     * follow (session 81). Silently building the sharp-upright corner there would sweep a band over material
+     * the upright's own rounding took away, which is the defect this holder exists to make impossible.
+     */
+    private class Corners(val list: List<Corner>, val refusal: String?)
 
     /** The ends of [which] that all stand at one point and are not spoken for, with that point. */
     private fun endsMeeting(
@@ -1993,12 +2132,20 @@ object Blend3 {
     }
 
     /**
-     * The **turn** between two bands at an inside corner, or null where they cannot make one.
+     * The **turn** between two bands at an inside corner: the corner, or a reason it cannot be built, or
+     * neither where this pair simply does not make one.
      *
-     * The rings are the section carried round the axis square to the shared face through the corner: at zero
-     * turn the map is the identity, so the first ring **is** the first band's own end section, and at the
-     * full turn it must be the second band's — which is the same congruence the crossing asks for, put to
-     * [ringsAgree]. The turn is cut into steps by the same sag rule every arc in this drawing gets.
+     * The rings are the pair's section carried along **whatever stands at the upright**, in the shared
+     * face's own plane: at zero turn the map is the identity, so the first ring **is** the first band's own
+     * end section, and at the end of the walk it must be the second band's — which is the same congruence
+     * the crossing asks for, put to [ringsAgree]. Every turn is cut into steps by the same sag rule every
+     * arc in this drawing gets.
+     *
+     * Where the upright is a **sharp** edge that is one leg turned about the corner itself, which is session
+     * 80 verbatim. Where the upright is itself a band ([uprightAt]) the walk follows that band's own
+     * end-section curve — the set-back moves the two bands' ends off the corner and the pivot moves onto the
+     * upright's own axis — and where that walk cannot be stated the pair is **refused by name** rather than
+     * left to build the sharp corner over material that is no longer there (session 81; the user's report).
      */
     private fun turnOf(
         pieces: List<Piece>,
@@ -2010,27 +2157,355 @@ object Blend3 {
         at: Vec3,
         ea: Vec3,
         eb: Vec3,
-    ): Turn? {
+    ): Pair<Turn?, String?> {
         val a = pieces[i]
         val b = pieces[j]
-        val n = shared.plane?.normal?.normalized() ?: return null
+        val n = shared.plane?.normal?.normalized() ?: return null to null
         val perp = n.cross(ea)
-        if (abs(perp.length() - 1.0) > 1e-6) return null
+        if (abs(perp.length() - 1.0) > 1e-6) return null to null
         val total = atan2(eb.dot(perp), eb.dot(ea).coerceIn(-1.0, 1.0))
-        if (abs(total) <= TANGENT_TOL) return null
-        val placeA = Placement(at, a.crease.e1, a.crease.ref.e2)
-        val placeB = Placement(at, b.crease.e1, b.crease.ref.e2)
-        val reach = a.grown.maxOf { it.length() }
-        if (reach <= Geom3.WELD_TOL) return null
-        val steps = GeomMath.chordSteps(reach, abs(total), GeomMath.TESS_TOL_MM)
-        val rings =
-            (0..steps).map { l ->
-                val dir = ea * cos(total * l / steps) + perp * sin(total * l / steps)
-                Placement(at, turnAxis(dir, n, ea, a.crease.e1), turnAxis(dir, n, ea, a.crease.ref.e2))
-            }
-        if (!ringsAgree(a.grown.map { rings.last().at(it) }, b.grown.map { placeB.at(it) })) return null
-        return Turn(i, aAtStart, placeA, j, bAtStart, placeB, shared, rings, at, ea, total)
+        if (abs(total) <= TANGENT_TOL) return null to null
+        if (a.grown.maxOf { it.length() } <= Geom3.WELD_TOL) return null to null
+        val u = uprightAt(pieces, i, j, shared, at)
+        if (u == null) {
+            // **the sharp upright**: one leg, the pivot standing on the edge itself (session 80, unchanged)
+            val placeA = Placement(at, a.crease.e1, a.crease.ref.e2)
+            val placeB = Placement(at, b.crease.e1, b.crease.ref.e2)
+            val leg = turnLeg(a, placeA, at, n, ea, total)
+            val turn = Turn(i, aAtStart, placeA, j, bAtStart, placeB, shared, listOf(leg), at)
+            if (!ringsAgree(a.grown.map { turn.rings.last().at(it) }, b.grown.map { placeB.at(it) })) return null to null
+            return turn to null
+        }
+        val (legs, why) = uprightLegs(pieces, i, aAtStart, j, u, shared, at, ea, eb, total, n)
+        if (legs == null) return null to why
+        val placeA = legs.first().rings.first()
+        val placeB = Placement(legs.last().rings.last().origin, b.crease.e1, b.crease.ref.e2)
+        val turn = Turn(i, aAtStart, placeA, j, bAtStart, placeB, shared, legs, at, listOf(u))
+        if (!ringsAgree(a.grown.map { turn.rings.last().at(it) }, b.grown.map { placeB.at(it) })) {
+            return null to mismatchedTurn(pieces, i, j, u, shared)
+        }
+        return turn to null
     }
+
+    /**
+     * The **upright** two bands pivot about at [at], as an index into [pieces], or null where the upright is
+     * a sharp edge (or a band this pair cannot pivot about).
+     *
+     * Three conditions and each is structural, never measured: the upright fills the **opposite** sector
+     * (a concave fill between two convex bands, or a convex band between two fills), one of its ends stands
+     * at the corner, and its two faces are exactly the pair's two *other* faces — which is the statement
+     * that it is the edge those two faces cross at.
+     */
+    private fun uprightAt(
+        pieces: List<Piece>,
+        i: Int,
+        j: Int,
+        shared: FacePatch,
+        at: Vec3,
+    ): Int? {
+        val fa = otherFace(pieces[i], shared) ?: return null
+        val fb = otherFace(pieces[j], shared) ?: return null
+        val want = setOf(fa.name, fb.name)
+        for (k in pieces.indices) {
+            if (k == i || k == j) continue
+            val piece = pieces[k]
+            if (piece.choice.convex == pieces[i].choice.convex) continue
+            // whatever its carrier: a **ring** at a revolve's own inside corner is an upright too, and the
+            // walk says so by name rather than this reading quietly leaving it out (which would build the
+            // sharp-upright corner over material the ring's rounding took away)
+            val ends = listOfNotNull(piece.crease.path.start, piece.crease.path.end)
+            if (ends.none { (it - at).length() <= RING_TOL }) continue
+            if (setOf(piece.crease.face1.name, piece.crease.face2.name) != want) continue
+            return k
+        }
+        return null
+    }
+
+    /** The face of [piece]'s crease that is **not** [shared] — its other one. */
+    private fun otherFace(
+        piece: Piece,
+        shared: FacePatch,
+    ): FacePatch? =
+        when (shared.name) {
+            piece.crease.face1.name -> piece.crease.face2
+            piece.crease.face2.name -> piece.crease.face1
+            else -> null
+        }
+
+    /**
+     * The walk from [i]'s end round to [j]'s along the upright band [u]'s own end-section curve, or the
+     * reason it cannot be walked (session 81).
+     *
+     * *The sentence, once.* The upright's blend curve, read in the shared face's plane, is the path the
+     * pair's section travels: at each point of it the section stands with its origin **on** the curve and
+     * its in-face axis along the curve's own normal, so an **arc** of that curve revolves the section about
+     * the arc's centre (a ring torus for a round pair, a cone-and-ring for a bevelled one), a **segment**
+     * slides it, and a corner of the curve turns it in place. The set-back is not a separate rule: the
+     * curve's first point *is* where the upright's tangency on the pair's other face meets its edge.
+     */
+    private fun uprightLegs(
+        pieces: List<Piece>,
+        i: Int,
+        aAtStart: Boolean,
+        j: Int,
+        u: Int,
+        shared: FacePatch,
+        at: Vec3,
+        ea: Vec3,
+        eb: Vec3,
+        total: Double,
+        n: Vec3,
+    ): Pair<List<Leg>?, String?> {
+        val a = pieces[i]
+        val up = pieces[u]
+        val what =
+            "the inside corner where ${a.crease.edge.name.label} meets ${pieces[j].crease.edge.name.label} " +
+                "on ${shared.name.label}"
+        val seg =
+            up.seg ?: return null to
+                "${up.crease.edge.name.label} is not one straight run, so $what cannot be turned about it — " +
+                "the pair's section would have to follow a curve that moves along that edge, which is a " +
+                "future extension. Leave that edge sharp, or round it on a body whose upright is straight"
+        // **the upright has to stand square to the shared face**, or the curve the pair's section follows is
+        // not a curve *in* that face at all and there is no pivot to state (OP-3: a refusal, not a guess)
+        val along = (seg.end - seg.start).normalized()
+        if (abs(abs(along.dot(n)) - 1.0) > 1e-6) {
+            return null to
+                "${up.crease.edge.name.label} is not square to ${shared.name.label}, so $what cannot be turned " +
+                "about it — the roundings there are a future extension. Leave that upright sharp, or round " +
+                "it on a body whose upright stands square to that face"
+        }
+        val aOther = otherFace(a, shared) ?: return null to null
+        val forward = up.crease.face1.name == aOther.name
+        val curve = if (forward) up.wedge.pieces else up.wedge.pieces.reversed().map { GeomMath.reverse(it) }
+        if (curve.isEmpty()) return null to null
+        val e1 = up.crease.e1
+        val e2 = up.crease.ref.e2
+
+        fun plan(q: Vec2): Vec3 = at + e1 * q.x + e2 * q.y
+
+        fun world(d: Vec2): Vec3 = e1 * d.x + e2 * d.y
+        val start = plan(GeomMath.startOf(curve.first()))
+        // …and that first point must stand **on** the pair's own edge, running out of the corner: that is
+        // what makes it the set-back rather than a point beside the edge
+        val dirA = outOf(a, aAtStart)
+        val off = start - at
+        if ((off - dirA * off.dot(dirA)).length() > RING_TOL || off.dot(dirA) < -RING_TOL) {
+            return null to
+                "$what: ${up.crease.edge.name.label}'s rounding does not meet ${a.crease.edge.name.label} " +
+                "along that edge, so there is no set-back for the corner to start from — a future extension"
+        }
+        val legs = ArrayList<Leg>()
+        var place = Placement(start, a.crease.e1, a.crease.ref.e2)
+        var dir = ea
+        var acc = 0.0
+        for (p in curve) {
+            val here = plan(GeomMath.startOf(p))
+            if ((place.origin - here).length() > RING_TOL) {
+                return null to "$what: ${up.crease.edge.name.label}'s own profile is not one run, so the corner cannot follow it"
+            }
+            val t0 = tangentOf(p, true) ?: return null to profileTurnRefusal(what, up)
+            val d0 = squareTo(world(t0), n, dir, total) ?: return null to profileTurnRefusal(what, up)
+            val joint = signedTurn(dir, d0, n)
+            if (abs(joint) > TANGENT_TOL) {
+                val leg = turnLeg(a, place, here, n, dir, joint)
+                legs.add(leg)
+                place = leg.rings.last()
+                dir = d0
+                acc += joint
+            }
+            val to = plan(GeomMath.endOf(p))
+            when (p) {
+                is ProfileElement.Seg -> {
+                    legs.add(Leg(listOf(place, Placement(to, place.cx, place.cy)), null, 0.0, dir))
+                    place = legs.last().rings.last()
+                }
+                is ProfileElement.ArcE -> {
+                    val centre = plan(p.arc.center)
+                    val hand = if (n.dot(e1.cross(e2)) >= 0.0) 1.0 else -1.0
+                    val sweep = GeomMath.sweep(p.arc) * hand
+                    val leg = turnLeg(a, place, centre, n, dir, sweep, chordPath(a, p, p.arc.radius, ::plan))
+                    legs.add(leg)
+                    place = leg.rings.last()
+                    // the in-face direction turns with the radial, by exactly the arc's own sweep
+                    dir = (dir * cos(sweep) + n.cross(dir) * sin(sweep)).normalized()
+                    acc += sweep
+                }
+                else -> return null to profileTurnRefusal(what, up)
+            }
+            if ((place.origin - to).length() > RING_TOL) return null to profileTurnRefusal(what, up)
+        }
+        val last = signedTurn(dir, eb, n)
+        if (abs(last) > TANGENT_TOL) {
+            val leg = turnLeg(a, place, place.origin, n, dir, last)
+            legs.add(leg)
+            acc += last
+        }
+        // the whole walk has to turn the corner and nothing more: a profile that doubles back would sweep
+        // the section through itself, and inventing what that means is the one thing this drawing does not do
+        if (abs(acc - total) > 1e-6) return null to profileTurnRefusal(what, up)
+        return legs to null
+    }
+
+    /** Why a drawn upright's own profile cannot carry the corner, in the corner's own words. */
+    private fun profileTurnRefusal(
+        what: String,
+        up: Piece,
+    ): String =
+        "$what turns about ${up.crease.edge.name.label}, whose own ${up.sec.kind.word} doubles back or leaves " +
+            "its face square to it — the pair's section would sweep through itself there, so that corner is a " +
+            "future extension. Give that upright a fillet, a chamfer, or a profile that runs one way across " +
+            "the corner"
+
+    /** Why the two roundings' end sections do not meet on one ring once the upright is rounded. */
+    private fun mismatchedTurn(
+        pieces: List<Piece>,
+        i: Int,
+        j: Int,
+        u: Int,
+        shared: FacePatch,
+    ): String =
+        "the inside corner where ${pieces[i].crease.edge.name.label} meets ${pieces[j].crease.edge.name.label} " +
+            "on ${shared.name.label} is turned about ${pieces[u].crease.edge.name.label}, and the two roundings " +
+            "do not end on one ring there — a corner is built only where the two are congruent in the face they " +
+            "share. Give both edges the same rounding"
+
+    /**
+     * One leg that **turns**: [from] carried about [pivot] through [turn], stepped by the one sag rule.
+     *
+     * [path] is where the section's own origin stands at each step, and it is null exactly where that is the
+     * ideal circle — a pivot about a *sharp* upright, or about a joint of a drawn one. Where the pivot is a
+     * **band's own arc** it is that band's own chord polygon instead, and that is not a nicety: the tool has
+     * to fit the mesh it cuts. The upright's band reaches the boolean as an inscribed polygon dipping a
+     * chord's sag inside its own cylinder, so a tool face stepped a micron inside the *cylinder* still
+     * stands a sag **outside** the polygon and leaves a sliver of the upright's own rounding behind. Running
+     * the rings on the upright's own chords puts the tool's face a micron inside that polygon everywhere,
+     * by construction rather than by luck, and it costs the corner patch nothing it did not already have —
+     * its own surface is stated exactly ([Turn.axisFrame]) and only its triangles carry the chords, which is
+     * OP-15's approximated class and what every band in this drawing already is.
+     */
+    private fun turnLeg(
+        piece: Piece,
+        from: Placement,
+        pivot: Vec3,
+        n: Vec3,
+        dir: Vec3,
+        turn: Double,
+        path: List<Vec3>? = null,
+    ): Leg {
+        val rho = (from.origin - pivot).dot(dir)
+        if (path != null) {
+            val steps = path.size - 1
+            val rings = path.indices.map { l -> turnedPlacement(from, pivot, n, dir, rho, turn * l / steps).let { Placement(path[l], it.cx, it.cy) } }
+            return Leg(rings, pivot, turn, dir)
+        }
+        val reach = piece.grown.maxOf { it.length() } + abs(rho)
+        val steps = max(1, GeomMath.chordSteps(max(reach, Geom3.WELD_TOL), abs(turn), GeomMath.TESS_TOL_MM))
+        val rings = (0..steps).map { l -> turnedPlacement(from, pivot, n, dir, rho, turn * l / steps) }
+        return Leg(rings, pivot, turn, dir)
+    }
+
+    /**
+     * Where the section's origin stands at each step of a turn about an upright band's own **arc**: that
+     * arc's own chord polygon, sub-divided until the pivot's own sag rule is met too.
+     *
+     * The polygon's own points are kept as steps — every one of them — because they are the very points the
+     * upright's band puts on the body ([GeomMath.tessellatePiece], the same call [sectionPolygons] makes).
+     */
+    private fun chordPath(
+        piece: Piece,
+        arc: ProfileElement.ArcE,
+        rho: Double,
+        into: (Vec2) -> Vec3,
+    ): List<Vec3> {
+        val poly = GeomMath.tessellatePiece(arc, GeomMath.TESS_TOL_MM)
+        if (poly.size < 2) return poly.map(into)
+        val m = poly.size - 1
+        val reach = piece.grown.maxOf { it.length() } + abs(rho)
+        val mine = max(1, GeomMath.chordSteps(max(reach, Geom3.WELD_TOL), abs(GeomMath.sweep(arc.arc)), GeomMath.TESS_TOL_MM))
+        val k = max(1, (mine + m - 1) / m)
+        val out = ArrayList<Vec3>(m * k + 1)
+        for (i in 0 until m) {
+            for (l in 0 until k) out.add(into(poly[i] + (poly[i + 1] - poly[i]) * (l.toDouble() / k)))
+        }
+        out.add(into(poly[m]))
+        return out
+    }
+
+    /**
+     * [p] turned about the axis through [pivot] along [n] by [phi] — the placement's origin runs on the
+     * circle of radius [rho] about that axis and its two axes turn with it.
+     *
+     * With `rho = 0` this is session 80's own arithmetic character for character, which is what keeps every
+     * body that has a sharp-upright pivot in it bit-identical.
+     */
+    private fun turnedPlacement(
+        p: Placement,
+        pivot: Vec3,
+        n: Vec3,
+        e0: Vec3,
+        rho: Double,
+        phi: Double,
+    ): Placement {
+        val perp = n.cross(e0)
+        val dir = e0 * cos(phi) + perp * sin(phi)
+        return Placement(pivot + dir * rho, turnAxis(dir, n, e0, p.cx), turnAxis(dir, n, e0, p.cy))
+    }
+
+    /** The unit tangent of a section piece at one of its ends, in the section's own 2D frame. */
+    private fun tangentOf(
+        e: ProfileElement,
+        atStart: Boolean,
+    ): Vec2? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val d = e.segment.b - e.segment.a
+                if (d.length() <= Vec2.EPS) null else d.normalized()
+            }
+            is ProfileElement.ArcE -> {
+                val q = if (atStart) GeomMath.startOf(e) else GeomMath.endOf(e)
+                val radial = q - e.arc.center
+                if (radial.length() <= Vec2.EPS) null else (radial.normalized().perp() * (if (e.arc.ccw) 1.0 else -1.0))
+            }
+            else -> null
+        }
+
+    /**
+     * The in-face direction square to [tangent] the walk carries on with: of the two, the one nearer the
+     * direction it came from, and where those two tie (a piece leaving its face at a right angle) the one
+     * that turns the way the corner does.
+     */
+    private fun squareTo(
+        tangent: Vec3,
+        n: Vec3,
+        from: Vec3,
+        total: Double,
+    ): Vec3? {
+        val c = n.cross(tangent)
+        if (c.length() <= Geom3.WELD_TOL) return null
+        val plus = c.normalized()
+        val minus = plus * -1.0
+        val a1 = signedTurn(from, plus, n)
+        val a2 = signedTurn(from, minus, n)
+        val pick =
+            when {
+                abs(a1) < abs(a2) - 1e-12 -> plus
+                abs(a2) < abs(a1) - 1e-12 -> minus
+                a1 * total >= 0.0 -> plus
+                else -> minus
+            }
+        val turn = signedTurn(from, pick, n)
+        if (abs(turn) > PI / 2.0 + 1e-9) return null
+        if (turn * total < -1e-12) return null
+        return pick
+    }
+
+    /** How far [from] turns to reach [to] about [n], signed and in `(−π, π]`. */
+    private fun signedTurn(
+        from: Vec3,
+        to: Vec3,
+        n: Vec3,
+    ): Double = atan2(n.dot(from.cross(to)), from.dot(to).coerceIn(-1.0, 1.0))
 
     /**
      * One axis of a section frame turned to [dir] — the in-face direction goes to [dir], the face's own
@@ -2328,6 +2803,15 @@ object Blend3 {
         targets: List<Int>,
         sec: BlendSection,
         choices: List<BlendChoice>,
+        /**
+         * The **undressed root** of the chain [base] stands on — the body every rounding in it was cut out
+         * of — and null where there is none (a first blend, or one whose tip an ordinary boolean made).
+         *
+         * A fact about the *graph*, handed over by the node that built this blend rather than discovered
+         * here (OP-21): it is needed only when this gesture rounds an upright an earlier corner pivots
+         * about, and then it is needed absolutely — see the note at the rebuild below.
+         */
+        root: Solid3? = null,
     ): Pair<Solid3?, String?> {
         val kind = sec.kind
         if (kind != BlendKind.PROFILE && sec.size <= Geom3.WELD_TOL) {
@@ -2365,7 +2849,9 @@ object Blend3 {
         // …and the bands already under this one, so a blend of a blend on an adjacent edge builds the same
         // corner a one-gesture chain would (GitHub #27, [chainPieces]).
         pieces.addAll(chainPieces(feature))
-        val corners = cornersOf(pieces)
+        val found = cornersOf(pieces)
+        found.refusal?.let { return null to it }
+        val corners = found.list
         crowdedCorner(pieces, corners)?.let { c ->
             val fits = largestCornerFitting(pieces, sec)
             return null to
@@ -2376,14 +2862,15 @@ object Blend3 {
         mixedCorner(pieces, corners)?.let { return null to it }
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
         for (c in corners) for (end in c.ends) rings[end] = c.ringAt(end)
-        var result = applyTo
-        for (group in groupsOf(pieces.size, corners)) {
-            // a group of nothing but bands already off the body has nothing left to cut
-            if (group.all { pieces[it].existing }) continue
-            val fresh = group.filter { !pieces[it].existing }
-            val lead = pieces[fresh.first()]
+        val groups = groupsOf(pieces.size, corners)
+
+        fun apply(
+            body: Solid3,
+            group: List<Int>,
+        ): Pair<Solid3?, String?> {
+            val lead = pieces[group.firstOrNull { !pieces[it].existing } ?: group.first()]
             val (tool, whyTool) =
-                if (fresh.size == 1 && group.size == 1) {
+                if (group.size == 1) {
                     Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.wedge.region), plan = null)
                 } else {
                     val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings), corners)
@@ -2399,13 +2886,82 @@ object Blend3 {
                 return null to "${lead.crease.edge.name.label}: ${whyTool ?: "the blend cannot be swept along it"}"
             }
             val op = if (lead.choice.convex) BoolOp.SUBTRACT else BoolOp.UNION
-            val (next, whyBool) = Geom3.combine(op, result, tool)
+            val (next, whyBool) = Geom3.combine(op, body, tool)
             if (next == null) {
                 return null to "${lead.crease.edge.name.label}: ${whyBool ?: "the blend cannot be applied to this body"}"
             }
-            result = next
+            return next to null
+        }
+
+        // **A corner that turns about an upright is rebuilt from the root, and the tip cannot be re-cut**
+        // (session 81). Such a corner sets its two bands *back* along their own edges and turns the pivot on
+        // a wider circle, so whichever of the three arrived last, some band on the body already ran past
+        // where the corner now ends it — and a further boolean of the same sign can never take that back (a
+        // second subtraction only removes more; a second union only adds more). So the whole chain is rebuilt
+        // from its own undressed root, every group applied in dependency order, and for the two sectors that
+        // is `(root ∪ upright) − chain'` and `(root − upright) ∪ fills'`. Where no corner turns about an
+        // upright the old path stands untouched, so no existing drawing's mesh moves by one bit.
+        val stale = corners.any { it.extra.isNotEmpty() }
+        if (!stale) {
+            var result = applyTo
+            for (group in groups) {
+                // a group of nothing but bands already off the body has nothing left to cut
+                if (group.all { pieces[it].existing }) continue
+                val (next, why) = apply(result, group)
+                result = next ?: return null to why
+            }
+            return result to null
+        }
+        // …and where this is the chain's **first** rounding the body addressed *is* the undressed root, so
+        // there is nothing to look up: the operand is only ever needed one rounding further along
+        val start =
+            (root ?: applyTo.takeIf { base === applyTo && it.feature !is Feature3.Blend }) ?: return null to
+                "${(pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label}: rounding it re-turns a corner an " +
+                "earlier rounding made, and this body has an ordinary boolean under it rather than a chain " +
+                "of roundings — so there is no undressed body to rebuild the chain from. Round that upright " +
+                "before the fusion, or before the faces whose corner it turns"
+        val ordered =
+            orderedGroups(pieces, groups, corners) ?: return null to
+                "${(pieces.firstOrNull { !it.existing } ?: pieces.first()).crease.edge.name.label}: two of this body's roundings each " +
+                "turn the other's corner, so there is no order to apply them in — round one of the two edges " +
+                "in a separate body, or leave one of them sharp"
+        var result = start
+        for (group in ordered) {
+            val (next, why) = apply(result, group)
+            result = next ?: return null to why
         }
         return result to null
+    }
+
+    /**
+     * The groups in **dependency order**: an upright's own group before the group whose corner pivots about
+     * it, ties in the order [groupsOf] found them. Null where two groups each turn the other's corner.
+     *
+     * The order is the whole of the rebuild's correctness: the pair's tool is stitched to a ring that stands
+     * on the upright's own band, so the upright has to be *on the body* before the pair is cut out of it.
+     */
+    private fun orderedGroups(
+        pieces: List<Piece>,
+        groups: List<List<Int>>,
+        corners: List<Corner>,
+    ): List<List<Int>>? {
+        val of = IntArray(pieces.size)
+        for ((g, group) in groups.withIndex()) for (at in group) of[at] = g
+        val before = Array(groups.size) { HashSet<Int>() }
+        for (c in corners) {
+            for (u in c.extra) {
+                val gu = of[u]
+                for (end in c.ends) if (of[end.first] != gu) before[of[end.first]].add(gu)
+            }
+        }
+        val out = ArrayList<List<Int>>(groups.size)
+        val done = BooleanArray(groups.size)
+        repeat(groups.size) {
+            val next = groups.indices.firstOrNull { !done[it] && before[it].all { p -> done[p] } } ?: return null
+            done[next] = true
+            out.add(groups[next])
+        }
+        return out
     }
 
     /**
@@ -2486,7 +3042,8 @@ object Blend3 {
                 }
                 trial.add(q)
             }
-            if (ok && crowdedCorner(trial, cornersOf(trial)) == null) lo = mid else hi = mid
+            val found = cornersOf(trial)
+            if (ok && found.refusal == null && crowdedCorner(trial, found.list) == null) lo = mid else hi = mid
         }
         return lo
     }
@@ -2604,7 +3161,16 @@ object Blend3 {
             }
         }
         val out = ArrayList<FacePatch>(baseFaces.size + dressings.size)
+        // …and the corners this level **re-turned** about an upright it rounded: they keep their index and
+        // gain a reason, exactly as a consumed edge does ([cornerSuperseded], session 81)
+        val superseded = supersedings(f)
         for (patch in baseFaces) {
+            val n = patch.name
+            if (n is FaceName.BlendCorner) {
+                val why = superseded[n.edges]
+                out.add(if (why == null) patch else patch.copy(plane = null, outline = emptyList(), reason = why, surface = null))
+                continue
+            }
             val cut = trims[patch.name]
             if (cut == null) {
                 out.add(patch)
@@ -2662,22 +3228,129 @@ object Blend3 {
         name: FaceName.BlendCorner,
         cut: Plane3,
     ): Revolve3.BandCut? {
-        val pieces = piecesOf(f) ?: return null
-        for (c in cornersOf(pieces)) {
-            if (c.ends.map { pieces[it.first].index }.distinct().sorted() != name.edges) continue
-            if (c is Turn) {
-                return c.frameOf(pieces)?.let { (frame, sections) ->
-                    val sr = sections.getOrNull(name.piece) ?: return null
-                    Revolve3.cutBandOf(frame, sr, cut)
-                }
-            }
-            if (c is Vertex) {
-                val (centre, radius) = c.ball ?: return null
-                return ballCut(centre, radius, c.members.map { outOf(pieces[it.first], it.second) }, c.at, cut)
-            }
-            return null
+        val (pieces, c) = cornerNamed(f, name) ?: return null
+        if (c is Turn) {
+            val (leg, sr) = c.facePlan(pieces).getOrNull(name.piece) ?: return null
+            if (sr == null || leg.pivot == null) return null
+            val (frame, map) = c.axisFrame(pieces[c.a], leg) ?: return null
+            return Revolve3.cutBandOf(frame, mappedSection(sr, map) ?: return null, cut)
+        }
+        if (c is Vertex) {
+            val (centre, radius) = c.ball ?: return null
+            return ballCut(centre, radius, c.members.map { outOf(pieces[it.first], it.second) }, c.at, cut)
         }
         return null
+    }
+
+    /** The corner [name] addresses, with the pieces it was read among, or null when this level has none. */
+    private fun cornerNamed(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+    ): Pair<List<Piece>, Corner>? {
+        val pieces = piecesOf(f) ?: return null
+        for (c in cornersOf(pieces).list) if (cornerEdges(pieces, c) == name.edges) return pieces to c
+        return null
+    }
+
+    /** The base edges a corner is named by — the ends it closes, and the upright it turns about. */
+    private fun cornerEdges(
+        pieces: List<Piece>,
+        c: Corner,
+    ): List<Int> = (c.ends.map { pieces[it.first].index } + c.extra.map { pieces[it].index }).distinct().sorted()
+
+    /**
+     * Why a corner the **base** states is no longer a surface of this body, or null where it still is.
+     *
+     * A pivot about a *sharp* upright is superseded the moment that upright is itself rounded: the ball then
+     * turns about the upright's own band, on a wider circle and between set-back ends, and the horn torus it
+     * used to sweep is nowhere on the part. The face keeps its index and gains this sentence — exactly what a
+     * consumed **edge** keeps in [dressedEdges] — so nothing renumbers and nothing claims a surface that is
+     * not there (OP-17/OP-21, session 81).
+     */
+    fun cornerSuperseded(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+    ): String? = supersedings(f)[name.edges]
+
+    private fun supersedings(f: Feature3.Blend): Map<List<Int>, String> {
+        val pieces = piecesOf(f) ?: return emptyMap()
+        val out = HashMap<List<Int>, String>()
+        for (c in cornersOf(pieces).list) {
+            if (c.extra.isEmpty()) continue
+            val ends = c.ends.map { pieces[it.first].index }.distinct().sorted()
+            val whole = cornerEdges(pieces, c)
+            if (whole == ends) continue
+            val upright = pieces[c.extra.first()]
+            out[ends] =
+                "${FaceName.BlendCorner(ends, 0).label} was re-turned about ${upright.crease.edge.name.label} " +
+                "when that edge was rounded — the ball no longer pivots about a sharp upright there, and " +
+                "${FaceName.BlendCorner(whole, 0).label} stands in its place"
+        }
+        return out
+    }
+
+    /**
+     * The **straight leg** of a corner as its family of rulings — the pair's section carried along the
+     * upright bevel's own run, which is the very sweep a band along a straight edge is, so it is cut by the
+     * very same machinery ([Section3.cutRuledStrip]) rather than by a second copy of it.
+     */
+    internal fun cornerStrip(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+    ): Section3.RuledStrip? {
+        val (leg, sr) = straightLeg(f, name) ?: return null
+        val from = leg.rings.first()
+        val to = leg.rings.last()
+        val steps =
+            when (sr) {
+                is ProfileElement.ArcE ->
+                    max(BAND_SECTION_STEPS, GeomMath.chordSteps(sr.arc.radius, GeomMath.sweep(sr.arc), GeomMath.TESS_TOL_MM))
+                else -> BAND_SECTION_STEPS
+            }
+        return Section3.RuledStrip(false, { t ->
+            val q = sectionPointAt(sr, t) ?: Vec2(0.0, 0.0)
+            from.at(q) to to.at(q)
+        }, steps)
+    }
+
+    /**
+     * The **straight leg** of a corner cut by a plane its run is **parallel** to — the one cut no ruling
+     * crosses, stated exactly, exactly as [parallelBandCut] states it for a band.
+     */
+    internal fun cornerParallelCut(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+        cut: Plane3,
+    ): List<ProfileElement>? {
+        val (leg, sr) = straightLeg(f, name) ?: return null
+        val from = leg.rings.first()
+        val to = leg.rings.last()
+        val v = to.origin - from.origin
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return null
+        val n = cut.normal.normalized()
+        if (abs(v.dot(n) / len) > DIR_EPS) return null
+        val depth = (from.origin - cut.origin).dot(n)
+        val hits = sectionOnPlane(sr, Vec2(from.cx.dot(n), from.cy.dot(n)), -depth)
+        val out = ArrayList<ProfileElement>(hits.size)
+        for (q in hits) {
+            val a = cut.toLocal(from.at(q))
+            val b = cut.toLocal(to.at(q))
+            if ((b - a).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(a, b)))
+        }
+        return out.ifEmpty { null }
+    }
+
+    /** The leg and section piece [name] addresses, where that leg **slides** rather than turns. */
+    private fun straightLeg(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+    ): Pair<Leg, ProfileElement>? {
+        val (pieces, c) = cornerNamed(f, name) ?: return null
+        if (c !is Turn) return null
+        val (leg, sr) = c.facePlan(pieces).getOrNull(name.piece) ?: return null
+        if (leg.pivot != null || sr == null) return null
+        return leg to sr
     }
 
     /**
@@ -2737,13 +3410,20 @@ object Blend3 {
         return out
     }
 
-    /** One face per corner **this** blend's bands take part in that has a surface of its own. */
+    /**
+     * One face per corner **this** blend's bands take part in that has a surface of its own.
+     *
+     * A corner is listed at the level where any of its ends **or its upright** is fresh (session 81): the
+     * ring torus a pair pivots on appears when the *upright* is rounded, though both bands were cut two
+     * gestures ago, and the horn torus it replaces keeps its index in the base's list with a reason
+     * ([cornerSuperseded]). Nothing renumbers either way.
+     */
     private fun cornerFacesOf(f: Feature3.Blend): List<FacePatch> {
         val pieces = piecesOf(f) ?: return emptyList()
         val out = ArrayList<FacePatch>()
-        for (c in cornersOf(pieces)) {
-            if (c.ends.none { it.first < f.targets.size }) continue
-            val edges = c.ends.map { pieces[it.first].index }.distinct().sorted()
+        for (c in cornersOf(pieces).list) {
+            if (c.ends.none { it.first < f.targets.size } && c.extra.none { it < f.targets.size }) continue
+            val edges = cornerEdges(pieces, c)
             out.addAll(c.faces(pieces) { k -> FaceName.BlendCorner(edges, k) })
         }
         return out
@@ -3123,7 +3803,12 @@ object Blend3 {
         val piece = pieces[at]
         val len = piece.length
         val ends = HashMap<Boolean, Placement>()
-        for (c in corners) for (e in c.ends) if (e.first == at) ends[e.second] = c.ringAt(e)
+        for (c in corners) {
+            for (e in c.ends) if (e.first == at) ends[e.second] = c.ringAt(e)
+            // …and the **upright** a corner turns about is ended by it too, though it is no end of the tool:
+            // above that plane the corner's own surface stands where the upright's band used to (session 81)
+            if (c is Turn) c.uprightEnd(pieces)?.let { (e, p) -> if (e.first == at) ends[e.second] = p }
+        }
         val lo = ends[true]
         val hi = ends[false]
         return { p ->
@@ -3155,7 +3840,7 @@ object Blend3 {
         val len = v.length()
         if (len <= Geom3.WELD_TOL) return null
         val u = v * (1.0 / len)
-        val span = spanOf(pieces, at, cornersOf(pieces))
+        val span = spanOf(pieces, at, cornersOf(pieces).list)
         val steps =
             when (section) {
                 is ProfileElement.ArcE ->
@@ -3204,7 +3889,7 @@ object Blend3 {
         val depth = (here - cut.origin).dot(n)
         val hits = sectionOnPlane(section, Vec2(e1.dot(n), e2.dot(n)), -depth)
         if (hits.isEmpty()) return null
-        val span = spanOf(pieces, at, cornersOf(pieces))
+        val span = spanOf(pieces, at, cornersOf(pieces).list)
         val out = ArrayList<ProfileElement>(hits.size)
         for (p in hits) {
             val (s0, s1) = span(p)

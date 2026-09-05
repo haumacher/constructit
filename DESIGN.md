@@ -14164,6 +14164,26 @@ the composition table is driven generically as well as by its own test.
   mesh half stays parked and stated; slice 3 and appearance Tier 3 consume one function, `Section3.faceAt`.
   **2263 → 2273 green**, no golden moved.
 
+- **Turn 71 — the ball pivots about *whatever stands at the upright*** (the user's report on top of GitHub
+  #31 and #32; session 81). Their words: *"Issue #31 now looks fine, but when then also adding a fillet to the
+  extrusion edge of that corner things look really weird: The fillet rounding stands out of the edge. Also
+  filleting the extrusion edge of an outer corner produces invalid geometry."* The diagnosis is one sentence of
+  session 80's own note read carefully: *"its centre on a circle of radius `r`"* assumed the upright is a
+  **sharp edge**, and rounding it buries that edge inside the fill. So the whole catalogue's inside corner
+  generalizes — the pair's section follows the upright band's **own end-section curve**, turning about the
+  vertical through each joint by the angle that curve's tangent turns there, which makes a fillet upright a
+  ring torus of pivot radius `r + r_U`, a chamfer upright a turn-slide-turn, and the sharp edge the degenerate
+  curve of one point. Two things fell out that the report did not name and that decide more than the surface
+  does. First, **an all-existing group can be stale**: the new corner sets its two bands *back* and turns the
+  pivot on a *wider* circle, so a band already on the body ran past where the corner now ends it, and a further
+  boolean of the same sign can never take that back — hence the chain is rebuilt from its own **undressed
+  root**, the upright's tool before the pair's, which is the second reporter's *"produces invalid geometry"* as
+  well as the first's *"stands out of the edge"*. Second, **the tool has to fit the mesh it cuts, not the
+  surface**: the upright's band arrives as an inscribed polygon, so the corner's rings step on that band's own
+  chords rather than on its ideal arc — a micron of growth clears a plane but not a chord. What the package
+  deliberately did **not** do is guess the three-concave vertex, which is now recorded as the catalogue's
+  fourth corner rather than as an oddity.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -17507,6 +17527,117 @@ One parser, one AST, one differentiator, one dimension check — two consumers. 
 halves are one entry, and the order of work inside it is the scalar half first (it is the smaller and the
 curve half consumes it).
 
+#### Implementation status (as built — **the pivot about a *band***, session 81; the user's report on top of #31 and #32)
+
+> *"Issue #31 now looks fine, but when then also adding a fillet to the extrusion edge of that corner things
+> look really weird: The fillet rounding stands out of the edge. Also filleting the extrusion edge of an outer
+> corner produces invalid geometry."*
+
+**One sentence of session 80's was the whole defect, and it is quoted here because the fix is that sentence
+generalized.** The inside corner was written as *"Having reached the end of its own edge the ball turns about
+the upright, **its centre on a circle of radius `r`**"* — true, and true only while the upright is a **sharp
+edge**. Round that upright and the sharp edge is gone: it is buried inside the fill's own material, and the
+ball has nothing to pivot about there any more. What it pivots about is the **band** that stands in its place.
+
+- For a **fillet** upright of radius `r_U` the ball's centre runs on a circle of radius `r + r_U` about that
+  fillet's own axis, so the corner's surface is a **ring** torus (tube `r`, centre circle `r + r_U`) where
+  session 80's was a **horn** torus. `r_U = 0` gives session 80 back, character for character.
+- The two bands' ends move off the corner to the **set-back**: the point where the upright's tangency on each
+  band's *other* face meets that band's own edge, which is `r_U` along it.
+- Said once for **every** kind of upright: *the pair's section follows the upright band's own end-section
+  curve, piece by piece, turning about the vertical through each joint by the angle that curve's tangent
+  turns there*. A sharp upright is the degenerate curve of one point and one turn; a **chamfer** upright is
+  a turn about the first rail, a slide along the bevel and a turn about the second (two cones for a bevelled
+  pair, two horn tori for a rounded one, one plane or cylinder between); a **drawn** upright is its own
+  chain read the same way. Each of those is one `Blend3.Leg`, and one leg is one surface family — which is
+  why the corner still states exactly one face per (leg × section piece) and cuts each of them exactly:
+  `Revolve3`'s whole table for a leg that turns, and `Section3.sweptFace`/`cutRuledStrip` — the very route a
+  band along a straight edge takes — for the one that slides.
+
+**This is also what the other construction order builds, and that agreement is the test.** Round the upright
+first and then the face, and the top chain follows the fill's own top arc; round the face first and then the
+upright, and the chain is rebuilt to the same rings. The two orders agree to boolean noise, and both dressed
+lists name the same ring torus.
+
+**Evaluation order is the load-bearing half, and the tip cannot be re-cut.** A corner about a rounded upright
+sets its two bands **back** along their own edges and turns the pivot on a **wider** circle. Whichever of the
+three roundings arrived last, some band already on the body ran past where the corner now ends it — and a
+further boolean *of the same sign* can never take that back: a second subtraction only removes more, a second
+union only adds more. (That is exactly what the report saw. `e15`'s fill was valid and manifold and stood in
+the wall planes above `z = 15` where the walls no longer are, because the top chain had been cut when the
+upright was still sharp; and `e16` then met *"the general boolean's result is not a closed shell"* on the fill's
+own back edge.) So when any corner turns about an upright, the whole chain is **rebuilt from its own undressed
+root** — every group applied in dependency order, each upright's group before the group whose corner pivots
+about it, ties in the order the groups were found, a cycle refused by name. For the two sectors that is
+`(root ∪ upright) − chain'` and `(root − upright) ∪ fills'`, and both are the rolling ball's own answer. Where
+no corner turns about an upright the old path stands untouched — fresh groups applied to the tip — so no
+existing drawing's mesh moves by one bit, and every golden stands.
+
+**The root is a fact about the graph, not a discovery** (OP-21). `Construction.blend` records, per blend node,
+the root of the chain it makes (`blendChainRoot`, keyed by node identity), so the next blend along reads it off
+the graph and passes it as **one more operand**, present exactly when the base is itself a blend — structural
+arity, like `chained` already is. Where the chain's first rounding is the one being made, the body addressed
+*is* the undressed root and no operand is needed. Nothing stored changed: no step, no `signs=`, no version, and
+the reporter's file saves back byte-equal.
+
+**The face list: a corner keeps its index and gains a reason** (OP-17/OP-21). A corner is listed at the level
+where any of its ends **or its upright** is fresh, so the ring torus appears when the *upright* is rounded
+though both bands were cut two gestures earlier. The horn torus that level supersedes is not renumbered and not
+dropped: it keeps its index in the base's list and carries the sentence *"… was re-turned about … when that
+edge was rounded — the ball no longer pivots about a sharp upright there, and … stands in its place"*, claims
+no surface, and its section says the same — exactly what a consumed **edge** keeps in `dressedEdges`. The
+upright's own band is ended by the corner too, though it is no end of the *tool*: above the plane at the pair's
+own tangency depth the corner's surface stands where the cove used to, so `spanOf` stops the band there and a
+level section through the pivot closes into an area instead of drawing a band that is not on the body.
+
+**The tool has to fit the mesh it cuts, and that is the one place a chord rule had to be chosen rather than
+inherited.** The upright's band reaches the boolean as an **inscribed polygon**, dipping a chord's sag inside
+its own cylinder; a tool face stepped the usual micron inside that *cylinder* therefore stands a whole sag
+**outside** the polygon and leaves a sliver of the upright's rounding standing at the top. So a leg that turns
+about a band's arc steps its rings on **that band's own chords** (`Blend3.chordPath`, the same
+`GeomMath.tessellatePiece` call `sectionPolygons` makes), sub-divided until the pivot's own sag rule is met
+too. The corner's *surface* is still stated exactly — a ring torus with its two radii — and only its triangles
+carry the chords, which is OP-15's approximated class and what every band here already is.
+
+**The arithmetic, closed form and checked.** With `w` the section's wedge area and `∫δ²` its own second
+moment, a corner between two bands at `θ` takes `cot(θ/2)·∫δ²` off their sum, and a pivot of `φ` about a curve
+whose section centroid stands `ρ` from the axis **adds** Pappus' `w·φ·(ρ + s̄)` — session 80's `φ·∫δ²/2` being
+the case `ρ = 0`. On the reporter's L (2030.57 mm², 20 deep, `r = 5`): `e14 = 39197.29`, `e15 = 39316.11`
+(the fill's `107.30`, the two bands set back by 5, the ring torus's `51.55` where the horn torus's `9.41` was),
+`e16 = 39217.75`. Everything planar is asserted **exactly** — bevel cap on bevel upright, `37661.17`, to the
+general engine's own float32 noise — and everything with an arc in it is bracketed by the chords.
+
+**Cuts, each whole, each named and none silent.** (1) **The three-concave vertex** — three fills meeting in a
+room's own corner — is still not built; it is session 80's cut, unchanged, and it is now the *fourth* corner of
+the catalogue rather than an oddity (see the queue). (2) **An upright that is not square to the face its pair's
+corner stands on** is refused by name rather than turned: the curve the pair's section would follow is then not
+a curve *in* that face at all. (3) **An upright that is not one straight run** — a revolve's ring at an inside
+corner of its cap — is refused by the same sentence, because its own section frame moves along it and the walk
+would have to move with it. Both of those are **guards this build's analytic vocabulary cannot yet reach**, and
+that is worth saying plainly: every body that names its edges puts a straight upright square to the face it
+turns about at any inside corner whose two roundings are congruent enough to have a corner at all. The two
+routes that would reach them each stop earlier, on a limit that predates this package — a **loft's** inside
+corner makes no pivot even with a sharp upright (its two roundings are not congruent in the shared face), and a
+**revolve's** cap corner puts a cylinder's band on one side and an annulus's on the other, which is the same
+non-congruence one feature over. Both are recorded in the queue. (4) **A drawn upright whose profile doubles
+back**, or leaves its face square to it, is refused by name: the pair's section would sweep through itself, and
+inventing what that means is the one thing this drawing does not do. (5) A rounding that re-turns a corner on a
+body an **ordinary boolean** made is refused with its cure — there is no undressed chain to rebuild from, and
+rebuilding the analytic one would throw the fusion away, so the message says to round that upright before the
+fusion.
+
+Tests: `BlendMixedVertexTest` (10) — the reporter's three gestures with all three volumes and the fill no
+longer standing proud; the two orders as one body, both naming the ring torus of radius `r + r_U`; the
+all-bevelled corner exactly; both mixed kinds bracketed; the other sector (an L-shaped box hollowed out, whose
+cavity's reflex corner is two concave fills round a **convex** upright) in both orders; the file as a fixed
+point with every face and edge index of the level below preserved and the superseded horn torus carrying its
+reason; one gesture undone leaving the one before it exactly as it was; the level section through the ring
+torus as an exact arc of radius `2r − √(r² − h²)` about the fill's own axis, and *Section* handing the whole
+level back as an area whose outline runs through it; and the refusal where there is no chain to rebuild from. The orchestrator's probe (`BlendMixedVertexProbeTest`, 4) adds what the delivery never saw: the two
+roundings of **different** sizes (`r_U = 3` and `8` against `r = 5`) in both orders, one upright carrying **two**
+pivots with both caps rounded and then the far convex upright carrying two balls, a slot with two inside corners,
+and the same body driven through the editor's own 3D picks with the file a fixed point and the last gesture undone.
+
 #### Implementation status (as built — the **scalar half**, session 71)
 
 `constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
@@ -18809,6 +18940,40 @@ constructed. Two rows, a drawn section read in the corner's own **oblique** fram
 the two setbacks, so a skewed corner is cut to the length a rasp reaches), one band face per piece of it, the
 corners keyed on congruence with a refusal by name where a drawn profile cannot share one, five signs per edge
 and **no version bump**. What stands open is the issue tracker.
+
+**Retired in session 81, from the user directly: the corner where a concave band meets two convex ones.** Their
+report — *"when then also adding a fillet to the extrusion edge of that corner things look really weird: The
+fillet rounding stands out of the edge"* — is session 80's inside corner with one assumption removed: the ball
+pivots about **whatever stands at the upright**, and where that is a band rather than a sharp edge its centre
+runs on a circle of radius `r + r_U` about the band's own axis. Delivered with the evaluation-order rule the
+report's second half turned out to be (an all-existing group can be **stale**, so the chain is rebuilt from its
+undressed root, the upright's tool first) and the face-list supersession rule that goes with it. See *the pivot
+about a band* under the edge-blend entries. It leaves three things parked, each stated below.
+
+**Queued in session 81 — the fourth corner of the catalogue: the three-concave vertex.** Three fills meeting at
+a **room's own corner**: the ball sits against the three faces from *outside* the material, touching all three
+at once, and the patch is its spherical triangle **added** rather than taken. Session 80 left it because *"the
+sign of the fill is the one thing the construction guesses rather than derives"*, and session 81 checked
+whether `vertexOf` could take it in one line: it cannot. The stations solve identically (three tangency-line
+crossings on the three shared faces, the three answers agreeing being the statement that a ball of this size
+sits there), but `vertexPatch` orients its triangles outward from the vertex and its three flat quads lie a
+micron *outside* the three faces — both of which are the convex reading, and both reverse for a fill. It is one
+patch, one sign convention and one growth direction, argued rather than flipped by trial; the geometry is
+otherwise the ball's own and the figure is the same `(2 − 7π/12) r³` read the other way. A shelled box's inner
+corner is the acceptance.
+
+**Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide them.**
+`Blend3` now refuses by name where the upright a pair pivots about is **not square** to the face they share, or
+is **not one straight run** (a revolve's ring at an inside corner of its cap). Both are guards this build's
+analytic vocabulary cannot yet reach, and each is hidden behind a *different* pre-existing limit that is the
+real queue item: (a) a **loft's** inside corner makes no pivot at all, even with a sharp upright, because its
+two roundings are not congruent in the face they share — the session-79 cut *"two wedges that are not
+congruent"*, met here for the first time on a body where the corner plainly exists; and (b) a **revolve's** cap
+corner puts a *cylinder's* band on one side and an *annulus's* on the other, which is the same non-congruence
+one feature over. Retiring (a) or (b) is what makes either refusal reachable — and, if the geometry then
+supports it, what makes the slanted and the ring upright buildable rather than refused. Neither is a non-goal:
+the ring case in particular is an ordinary surface of revolution whose section frame simply moves along the
+edge, which is the same generalization the pivot already made one dimension down.
 
 #### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)
 

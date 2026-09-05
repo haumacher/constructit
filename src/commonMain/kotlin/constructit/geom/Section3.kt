@@ -1777,11 +1777,24 @@ object Section3 {
             // one recursion, no special case, and a section through a plate whose rim was rounded two
             // gestures ago draws that rim's band rather than its refusal.
             if (n is FaceName.BlendCorner) {
+                // a corner the base states about a **sharp** upright is no longer a surface of this body once
+                // that upright is itself rounded: it keeps its index and says so (session 81)
+                Blend3.cornerSuperseded(feature, n)?.let { return SectionEdge(label, null, null, it) to emptyList() }
                 if (n.edges.none { it in feature.targets }) return cutFace(feature.base, patch, cut)
                 // a **corner** patch is the one place the rolling ball stands still (session 80): a pivot is
                 // a surface of revolution and gets [Revolve3]'s table, and a ball is cut in a circle by every
-                // plane — that circle clipped to its own spherical triangle
+                // plane — that circle clipped to its own spherical triangle. A pivot about a *bevelled*
+                // upright slides its section along one straight run in the middle, and that leg is cut by the
+                // very machinery a band along a straight edge is (session 81)
                 Blend3.cornerCut(feature, n, cut)?.let { return bandCutToEdge(label, it) }
+                Blend3.cornerParallelCut(feature, n, cut)?.let { pieces ->
+                    return if (pieces.size == 1) {
+                        SectionEdge(label, pieces[0], null, null) to emptyList()
+                    } else {
+                        SectionEdge(label, null, null, CUT_TWICE) to pieces.map { DrawnPiece(it, false) }
+                    }
+                }
+                Blend3.cornerStrip(feature, n)?.let { return cutRuledStrip(label, it, cut) }
                 return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
             }
             if (n !is FaceName.BlendBand) return cutFace(feature.base, patch, cut)
