@@ -696,14 +696,15 @@ tool filletfaceedges els=e17 clicks=32.34073371634995,53.47538087164619 scalar="
     ) {
         ed.activeScalar = ed.doc.scalars.first { it.name == "r" }
         ed.setTool(tool)
-        val before = ed.doc.elements.count { it.kind == ElementKind.SOLID }
+        // one gesture, one **rounding**: since OP-30 that is one entry under one dressed body
+        val before = ed.doc.elements.count { it.kind == ElementKind.DRESSING }
         val vp = Viewport3(camera = cam, widthPx = 800.0, heightPx = 600.0)
         vp.editor = ed
         vp.shown = true
         val screen = assertNotNull(cam.project(at, vp.widthPx, vp.heightPx), "$at has an image on screen")
         vp.pointerDown(screen)
         vp.pointerUp(screen)
-        assertEquals(before + 1, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "$tool at $at: ${ed.statusHint}")
+        assertEquals(before + 1, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "$tool at $at: ${ed.statusHint}")
         if (says != null) assertTrue(says in assertNotNull(ed.statusHint, "it says what it did"), "$says: ${ed.statusHint}")
     }
 

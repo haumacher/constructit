@@ -1740,11 +1740,22 @@ private fun renderPanel(
             val flag =
                 (if (bad == null) "" else "<span class=\"flag\" title=\"${attr(bad.reason)}\">⚠</span>") +
                     (if (why == null) "" else "<span class=\"flag\" title=\"${attr(why)}\">○</span>")
+            // **A rounding is a line of the body it dresses** (OP-30), so its row is drawn under that body's
+            // and reads as what it is rather than as its enum name — the one kind whose word the panel
+            // translates, because it is the one kind the panel *names* rather than merely lists.
+            val entry = editor.doc.dressingWith(it)
+            val word = if (entry == null) it.kind.name.lowercase() else Messages.uiElementDressing()
+            val readout = editor.doc.dressEntryReadout(it)
             val title =
-                listOfNotNull(bad?.let { b -> Messages.uiTreeInvalid(b.reason) }, why).joinToString("; ")
-            "<div class=\"item$active${if (bad == null) "" else " invalid"}${if (gone) " gone" else ""}\" data-eid=\"${it.id}\"" +
+                listOfNotNull(
+                    bad?.let { b -> Messages.uiTreeInvalid(b.reason) },
+                    why,
+                    readout?.let { r -> Messages.uiTreeRounding(editor.doc.nameOf(entry!!.body), r) },
+                ).joinToString("; ")
+            "<div class=\"item$active${if (bad == null) "" else " invalid"}${if (gone) " gone" else ""}" +
+                "${if (entry == null) "" else " child"}\" data-eid=\"${it.id}\"" +
                 (if (title.isEmpty()) "" else " title=\"${attr(title)}\"") +
-                ">$flag${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
+                ">$flag$word$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
         }
 }
 

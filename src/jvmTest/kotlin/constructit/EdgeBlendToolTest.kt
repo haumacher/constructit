@@ -342,7 +342,10 @@ class EdgeBlendToolTest {
         ed.activeScalar = r
         ed.setTool(Tools.BLEND_EDGE)
         ed.click(Vec2(20.0, 30.0))
-        assertEquals(3, ed.solids().size, "two blends chained on the plate: ${ed.statusHint}")
+        // **One dressed body, two entries** (OP-30): the second rounding is not a second solid, and since
+        // both round by the very same parameter node they are one pass — one set of corners, one tool
+        assertEquals(2, ed.solids().size, "one dressed body, not a chain of two: ${ed.statusHint}")
+        assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "…with a row per rounding")
         val two = volumeOf(ed.solids().last())
         val exact = 2.0 * (1.0 - PI / 4.0) * 9.0 * 40.0
         assertClose(plain - two, exact, exact * 0.04, "two quarter-rounds of radius 3 along 40 mm each")

@@ -3417,6 +3417,15 @@
     "description": "Text of the create dialog of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph, which turns a selection into a named group or a reusable tool.",
     "x-translated": "2a979110"
   },
+  "ui.element.dressing": "rounding",
+  "@ui.element.dressing": {
+    "description": "Panel text in ConstructIt, a parametric 2D/3D CAD program. The element list shows one row per object of the drawing. A \"rounding\" is one fillet or chamfer entry of a dressed body: the body is one row and its roundings are rows under it, each removable on its own."
+  },
+  "ui.tree.rounding": "One rounding of {body}: {what}. Select it and press Delete to take it off the body.",
+  "@ui.tree.rounding": {
+    "description": "Panel text in ConstructIt, a parametric 2D/3D CAD program. The element list shows one row per object of the drawing. A \"rounding\" is one fillet or chamfer entry of a dressed body: the body is one row and its roundings are rows under it, each removable on its own.",
+    "placeholders": { "body": { "type": "String" }, "what": { "type": "String" } }
+  },
   "ui.tree.hidden": "{cause, select, construction{hidden by the construction (Show leaves it hidden)} other{hidden — select it and press Show to bring it back}}",
   "@ui.tree.hidden": {
     "description": "Text about a row of the Elements list in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph — the census of everything the drawing contains.",

@@ -2721,6 +2721,120 @@ class BrowserE2ETest {
     }
 
     /**
+     * **One dressed body, its roundings listed under it** (OP-30, GitHub #35), in a real browser.
+     *
+     * The half of the user's sentence only the shell can answer: *"all fillet operation should better be
+     * explicit in the element list"*. Two roundings of one plate, made one after the other on the body the
+     * user sees — and what the panel shows is **one** solid row with a row per rounding indented under it,
+     * each carrying the readout that says which edge and what size. In German too, because since OP-29 the
+     * panel's own nouns are the bundle's and this is a new one.
+     */
+    @Test
+    fun roundingsAreListedUnderTheirBodyInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        // over HTTP rather than as a `file:` URL, because a rounding is a boolean and the general engine
+        // (Manifold, OP-9) is a dynamically imported module a file page may not fetch
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            val name = exchange.requestURI.path.removePrefix("/").ifEmpty { "index.html" }
+            val file = File(dist, name)
+            val bytes = if (file.isFile && file.canonicalPath.startsWith(dist.canonicalPath)) file.readBytes() else ByteArray(0)
+            val type =
+                when (file.extension) {
+                    "html" -> "text/html"
+                    "js" -> "text/javascript"
+                    "wasm" -> "application/wasm"
+                    else -> "application/octet-stream"
+                }
+            exchange.responseHeaders.add("Content-Type", type)
+            exchange.sendResponseHeaders(if (bytes.isEmpty()) 404 else 200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            Playwright.create().use { pw ->
+                val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+                val page = browser.newContext(Browser.NewContextOptions().setLocale("en-US")).newPage()
+                val errors = ArrayList<String>()
+                page.onPageError { errors.add(it) }
+                page.setViewportSize(1000, 700)
+                page.navigate("http://127.0.0.1:${server.address.port}/index.html")
+                page.waitForSelector("#canvas")
+
+                fun rows(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+                fun children(): List<String> = page.querySelectorAll("#tree .item.child").map { it.textContent() }
+
+                // a flagged row carries its warning glyph before the word, so the word is looked for rather
+                // than the prefix — an invalid solid is still a solid row
+                fun solids(): Int = rows().count { "solid" in it }
+
+                fun status(): String = page.querySelector("#status").textContent()
+
+                val box = page.querySelector("#canvas").boundingBox()
+                val cx = box.x + box.width * 0.5
+                val cy = box.y + box.height * 0.5
+
+                // a plate
+                page.click("#tool-rectpath")
+                page.mouse().click(cx - 120.0, cy - 60.0)
+                page.mouse().click(cx + 120.0, cy + 60.0)
+                page.fill("#p-name", "depth")
+                page.fill("#p-value", "20")
+                page.click("#p-add")
+                page.click("#tool-extrude")
+                page.mouse().click(cx, cy + 60.0)
+                assertEquals(1, solids(), "the plate is the one solid: ${rows()}")
+
+                // one radius, shared by both roundings — which is what makes them one pass (OP-30)
+                page.fill("#p-name", "r")
+                page.fill("#p-value", "6")
+                page.click("#p-add")
+
+                page.click("#tool-filletedge")
+                page.mouse().click(cx, cy + 60.0)
+                assertEquals(2, solids(), "the first rounding makes the body: ${rows()} — ${status()}")
+                assertEquals(1, children().size, "…and one row under it: ${rows()}")
+
+                page.click("#tool-filletedge")
+                page.mouse().click(cx, cy - 60.0)
+                assertEquals(2, solids(), "the second rounding makes **no** new body: ${rows()} — ${status()}")
+                assertEquals(2, children().size, "…it is one more row under the same one: ${rows()}")
+                assertTrue(children().all { it.startsWith("rounding") }, "the rows say what they are: ${children()}")
+                val readout = page.querySelectorAll("#tree .item.child").last().getAttribute("title") ?: ""
+                assertTrue("fillet of 6 mm" in readout, "…and each says which edge and what size: $readout")
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/53-dressed-body.png")))
+
+                // …in German, which for a new panel noun is the whole of OP-29's discipline
+                page.selectOption("#v-lang", "de")
+                assertTrue(
+                    children().all { it.startsWith(Messages.uiElementDressing("de")) },
+                    "the rounding rows speak German: ${children()}",
+                )
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/54-dressed-body-de.png")))
+
+                // …and one of them comes off on its own, which is what the report asked for
+                page.selectOption("#v-lang", "en")
+                page.click("#tool-select")
+                page.querySelectorAll("#tree .item.child").first().click()
+                page.click("#e-delete")
+                assertEquals(1, children().size, "the first rounding came off on its own: ${rows()} — ${status()}")
+                assertEquals(2, solids(), "…and the body is still the one body")
+
+                assertTrue(errors.isEmpty(), "the shell threw: $errors")
+                browser.close()
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /**
      * **The chrome speaks German** (OP-29), in a real browser and through the real formatter.
      *
      * Three things only a browser can answer. That switching the language **re-renders without a reload** —

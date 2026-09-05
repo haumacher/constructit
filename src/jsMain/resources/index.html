@@ -211,6 +211,9 @@
         #tree .item.invalid { color: #b03a2e; }
         #tree .item.invalid .flag { margin-right: 3px; }
         /* …and one the user has hidden is flagged the same way, in the ghost's own grey (OP-18) */
+        /* a rounding of a dressed body (OP-30): a line of how that body is made, so it is drawn *under* it */
+        #tree .item.child { padding-left: 16px; color: #4b5b6b; }
+        #tree .item.child::before { content: "\21B3"; color: #b8c4d0; margin-right: 4px; }
         #tree .item.gone { color: #8a95a1; }
         #tree .item.gone .flag { margin-right: 3px; }
         #inspector .warn { font-size: 11px; color: #b03a2e; padding: 2px 4px; }

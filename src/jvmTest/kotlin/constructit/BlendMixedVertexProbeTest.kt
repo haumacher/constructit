@@ -307,11 +307,11 @@ param "r" = 5mm
         cams: List<Camera3>,
     ) {
         ed.activeScalar = ed.doc.scalars.first { it.name == "r" }
-        val before = ed.solids().size
+        val before = ed.doc.elements.count { it.kind == ElementKind.DRESSING }
         for (cam in cams) {
             ed.setTool(tool)
             if (!view(ed, cam).clickWorld(at)) continue
-            if (ed.solids().size == before + 1) return
+            if (ed.doc.elements.count { it.kind == ElementKind.DRESSING } == before + 1) return
         }
         throw AssertionError("no camera made the $tool at $at: ${ed.statusHint}")
     }

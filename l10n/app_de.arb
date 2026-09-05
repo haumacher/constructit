@@ -664,6 +664,8 @@
   "ui.dialog.cancel": "Abbrechen",
   "ui.dialog.point": "Punkt",
   "ui.dialog.parameter": "Parameter",
+  "ui.element.dressing": "Verrundung",
+  "ui.tree.rounding": "Eine Verrundung von {body}: {what}. Wählen Sie sie aus und drücken Sie Entf, um sie vom Körper zu entfernen.",
   "ui.tree.hidden": "{cause, select, construction{durch die Konstruktion ausgeblendet (Anzeigen lässt es ausgeblendet)} other{ausgeblendet – auswählen und Anzeigen drücken, um es zurückzuholen}}",
   "ui.tree.invalid": "kann derzeit nicht gebaut werden: {reason}",
   "ui.pattern.ride": "{label} auf Muster {pattern}: je {count}, {total} Kopien",

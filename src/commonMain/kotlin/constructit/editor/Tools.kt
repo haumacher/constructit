@@ -387,7 +387,11 @@ class Picks(
      * curve, and the *feature* still speaks piece indices (`Document.skinSolid` is the one translation).
      */
     val matches: List<Element> = emptyList(),
-)
+) {
+    /** The same picks with [elements] replaced — see [Document.runTool]'s dressing-entry normalisation. */
+    fun withElements(els: List<Element>): Picks =
+        Picks(points, els, at, clicks, dofs, count, signs, landings, view, law, laws, matches)
+}
 
 /**
  * A data-driven tool: geometry [slots] to pick by clicking, [scalars] to take from the panel, a [help]
