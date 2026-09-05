@@ -83,6 +83,17 @@ stays frozen after a resume, the agent is dead — take the remainder over yours
 work is usually further along than the last message suggests (check `git status` and run its
 tests before redoing anything).
 
+**Crash recovery** (session 79 recovered a crashed session with an agent mid-flight; this is the drill).
+The crashed session's own transcript is `~/.claude/projects/<project-dir>/<session-id>.jsonl` and its
+sub-agents' transcripts are `<session-id>/subagents/agent-*.jsonl` beside it; `~/.claude/tasks/<session-id>/`
+holds the task list with the dispatched package's subject. Pull the last `Agent` tool_use out of the session
+transcript with a short python filter — that is the brief, verbatim — and the last tool calls out of the
+newest sub-agent transcript to see where it died. The agent's uncommitted work is in the tree: `git status`,
+`compileKotlinJvm`, then **re-dispatch the same brief with a resume preamble** stating exactly what exists,
+what compiles, and what is not started; never redo the work. The deploy server does **not** survive a crash
+(check `ss -ltnp | grep 8123`; restart with `setsid nohup python3 -m http.server 8123 &` from the bundle
+directory). Check `gh issue list` immediately — reports filed during the crash are untriaged.
+
 ## 3. Concurrency — the hard-won rules
 
 - **Never let two agents edit the same file.** The one time it happened produced duplicate
