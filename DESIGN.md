@@ -16450,6 +16450,65 @@ different sizes and different kinds and now assert one feature with a section pe
 the tombstone. **2705 → 2720 green**, `assertManifold` throughout.
 
 
+## The rounding algebra (OP-31 — design entry session 83; GitHub #36)
+
+**The ask (user, GitHub #36).** Three scripts, one verdict: *"3D filleting still not works in all combinations
+… You can combine operations and stack them on each other — fillet an edge created by a chamfer — this works
+fine in some cases but creates nonsense in others … You can fillet a chamfer edge, but not an edge created by
+the joining of two chamfers. This cannot be fixed one-by-one. A complete re-think of the 'rounding-algebra' is
+required!"* And the decision the re-think turned on, in their words: *"Since roundings are essential for all
+kinds of objects, an approximation is better than nothing at all."*
+
+**What the three scripts are, reproduced headlessly at 84d3e26.** (1) A top edge and the *concave* upright it
+ends at, both filleted: the body is watertight and its volume is exactly the naive figure — band over the
+whole edge, fill over the whole upright, **no corner** — because `Blend3.cornersOf` skips a pair whose members
+differ in sign, and a fill that never overlaps the band it should roll round stands as a ledge. Nothing
+refused. (2) Three chamfers making a pivot corner, then a fillet on one bevel's rail: the dressed edge list
+states the rail as its **first straight piece** (session 79's cut 5) although it turns at the pivot into the
+next rail, so the fillet ends free at the vertex and notches a face that is not there; the mitre crease
+between two bevels is not listed at all. (3) A fillet on a union/subtract result: refused by name, because a
+general boolean's result is `Feature3.MeshBoolean` and carries no faces — although OP-9 itself says *"Boolean
+results are analytic-preserving: exact face surfaces = operand surfaces (known); only trimmed boundaries are
+emergent"*, and every face of that body is a plane.
+
+**The diagnosis.** The 3D blend is a **catalogue of corner constructions over an analytic face list**, and a
+catalogue has three kinds of hole: a pair it does not know and does not refuse (1), an edge list that states
+less than the body has (2), and a body class that has no list at all (3). None is a one-off; each is a class.
+
+**The design, in three tiers.**
+
+*Tier A — general, and no doctrine moves.* (a) **The matrix is the specification**: a generated test over the
+L-block enumerates every vertex, every subset of its edges, both kinds, one and two sizes, every gesture order,
+and demands one of two states for every cell — watertight with the volume inside its closed-form bracket, or
+refused by name. The third state, built and wrong, fails the build; what it cannot yet build is a **named
+residue** the test itself keeps honest (a residue cell that starts passing fails the test, exactly as the
+translation review's seeded defects do). (b) **The mixed-sign pair**: a fill meeting a band's end is the pivot
+about a band with one end instead of two, the fill's section carried round the band's own axis on the circle
+`r + r_U` and capped by the third face. (c) **Edges are chains**: a dressed body's rail is *rail → corner curve
+→ rail*, listed as one edge so a rounding follows the whole run, and the **mitre crease** between two bands is
+a named edge — a straight line between two bevels, an ellipse arc between two rounds. (d) **Provenance
+through the boolean**: a general boolean's result keeps its faces as pieces of the operand faces with their
+carriers (Manifold reports the originating face per triangle), its creases exact wherever two carriers are
+analytic, so a fused planar part is dressed like an extrusion. This is what OP-9 promised and never built.
+
+*Tier B — the general rolling ball, and the decision that admits it.* Offset-surface intersection gives the
+spine, the section rolls along it, and a vertex of unlike radii closes with an n-sided patch. Its curves leave
+this drawing's vocabulary — two cylinders meet in a quartic, a torus meets a plane in one, and the patch has
+no closed form — which is why every kernel that builds them stores **tolerant** approximations. This drawing's
+rule was *exact or refused*; the user's decision adds a third named state between exact and mesh: **fitted, to
+a stated tolerance** — a cubic chain (OP-15's own curve) with its error recorded at the value, admitted to the
+face list and the edge list and *said* wherever it is read (a section through a fitted face is a fitted curve,
+a measurement on it is approximate, as OP-9 already says of a mesh-derived scalar). What stays refused under
+any answer: a rounding on a body with no analytic carrier at all — an imported mesh, a self-crossing skin — and
+a rounding larger than the faces it stands between.
+
+*Tier C — not built and not a goal*: a mesh-erosion "fillet", which is a different tool and non-parametric.
+
+**Order.** A first (it lists the residue before anyone codes against it), then b, then c, then d; then the
+fitted tier is designed against the matrix's remaining residue rather than against a guess. The reporter's
+three scripts are the matrix's first three fixtures verbatim.
+
+
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
 **Closed in four slices, and what each of them was.** (1) *The words leave the code* — `l10n/app_en.arb` as
@@ -21028,6 +21087,14 @@ drawn curves is a drawing curve* under the connect entries (OP-26, step 7). It p
 does not do is give the drawing an **open poly-curve kind** so that a curvature join could be one element
 rather than three, and that is a vocabulary change no report has asked for — recorded here so it is not looked
 for. The format's version rose to 5 as the marker that lets an older file be told once.
+
+
+**Queued in session 83 — OP-31, the rounding algebra (GitHub #36), in this order:** (1) the blend matrix
+test, with its named residue; (2) the mixed-sign pair as a one-ended pivot about a band; (3) edges as chains and
+the mitre crease named; (4) face provenance through the general boolean, so a fused part has faces and creases
+to round; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
+against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
+See the OP-31 entry.
 
 
 #### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)
