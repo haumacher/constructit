@@ -21598,7 +21598,7 @@ on the cap's own quartic; see the as-built note under OP-31*; ~~(3) edges as cha
 the mitre crease named~~ — *retired in session 83: a rail is stated over its crease's own run, the corner's own
 curves are edges beside it, one pick takes the whole ribbon, and the fitted carrier item (2) owed is a field on
 the value; the matrix's last two residue classes go with it; see the as-built note under OP-31*; ~~(4) face provenance through the general boolean, so a fused part has faces and creases
-to round~~ — *retired in session 83, see below*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
+to round~~ — *retired in session 83, see below*; (3b) **the band's face outline at a corner** — found by item 3's probe: a level section through a bevelled pivot refuses by name on the plain three-bevel corner of script 2, because the upright's band *patch* is still drawn over its whole edge where the walk ends it (session 79's cut (5), retired for a section's rulings in session 81 but not for the patch a corner *walk* stands on), so `bandPatchOf` and the walk's own faces must state their outlines to the corner as the rail now states its run; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
 against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
