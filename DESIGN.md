@@ -17106,6 +17106,64 @@ one-ended pivot, the ball at a convex vertex, a crossing, a rounded crease on a 
 band's own outline asserted structurally (the upright's bevel band is a rectangle 16 mm long, exact and not
 fitted). `BlendMatrixTest` gains the face class above.
 
+### The fitted tier — the general rolling ball (OP-31 item 5; design entry, session 83)
+
+**What is left when the catalogue is complete for straight creases between planes.** With items 1–4 and 3b
+delivered the matrix has no residue, and what it *refuses by name* is the inventory this tier is designed
+against — measured, not guessed: the **incongruent inside corner** (24 cells: two roundings of unlike size or
+kind meeting where the shared face turns an inside corner; session 79's congruence rule still leaves them apart,
+now with a sentence), a rounding **along a corner's own curved rails** (a walk's turning legs are arcs), a
+rounding along the **elliptical mitre** between two rounds (its section would change along the arc), a band
+whose **free end stands in a face another band has taken away** (36 face-class cuts: the notch is spliced above
+the trim and the strip taken below it), a general boolean over an operand with a **curved face** (item 4's cut
+1), the **bevelled vertex's apex** faces, the corner between a **curved and a straight edge** and the corner of
+**two wedges that are not congruent** (session 79's cuts 1 and 2, a loft's inside corner and a revolve's cap
+among them), and the two upright shapes the pivot cannot follow (parked in session 81). Not in the inventory,
+and not to be looked for: a rounding of a *round's* rail (36 cells) — a tangent hand-over has no crease, and the
+refusal is the answer.
+
+**The principle: exact tools, fitted names.** The user's decision — *"Since roundings are essential for all
+kinds of objects, an approximation is better than nothing at all"* — is taken as narrowly as it can be and
+still be general. The **geometry** of every rounding stays a construction: a section swept along a spine, a
+section revolved about an axis, a sphere standing still, applied to the body by the boolean exactly as the
+catalogue's corners are. What is *fitted* is only what the drawing is asked to **name**: where a crease or a
+face boundary leaves the vocabulary (a torus met by a cylinder, a swept sphere's envelope, a cone's offset) the
+value is stated as a cubic chain **with its tolerance recorded** (`FacePatch.fitted`, `SolidEdge.fitted`, item
+3's carrier), never omitted and never passed off as exact — a section through it is fitted, a measurement on it
+is approximate and says so (OP-9's rule for a mesh-derived scalar, one type up). Where even the *tool* would
+have to be fitted — a spine that is the intersection of two offset surfaces with no closed form — the spine is
+sampled and fitted to the same tolerance and the tool is the exact section carried along that chain, which is
+what every kernel that builds these does; the difference is that this drawing writes the tolerance down.
+
+**Two constructions cover most of the inventory exactly, and they are already in the catalogue.** (1) A ball
+rolling along a *circular* crease is a **revolution** — the walk's turning legs, a bevel-pair's cone rails, a
+band's end ring — so a rounding of a corner's own rails is `Revolve3`'s section revolved, exact. (2) Two
+roundings of unlike size at an inside corner are **two overlapping removals**: the smaller band's pivot about
+the upright (session 80's horn torus, unchanged) and the larger band run to its own end plane; the boolean
+trims one against the other exactly, and what is new is only the *name* of the crease between them — a torus
+met by a cylinder, fitted. The elliptical mitre's rounding is the one genuinely new sweep: a ball along the
+ellipse where two offset cylinders meet, a swept sphere whose envelope is fitted for the face list and exact
+as a tool.
+
+**Slices, in order of what the matrix says users hit first.**
+- **(5a) Incongruent corners** — inside corners of unlike size or kind built as two removals with the fitted
+  crease named; convex incongruent corners keep the boolean's trim and gain the crease's name; mixed kinds
+  included. The 24 refused cells become built cells with a bracket by containment.
+- **(5b) The ball along a curved crease** — a rounding of a walk's rails and of a bevel pair's cone rails as a
+  revolution; a rounding along an elliptical mitre as a swept sphere. Corner-curve cells enter the matrix.
+- **(5c) Curved faces through the boolean** — item 4 extended to cylinders, cones, spheres and tori from
+  extruded arcs, revolutions and bands: the result face keeps its carrier, a plane∩cylinder crease is the conic
+  it is, cylinder∩cylinder is fitted. Script 3 with a bored hole becomes a fixture.
+- **(5d) The drawing's two composition gaps** — a free end's notch under a neighbour's trim, and the bevelled
+  vertex's apex faces, both face-list only; the 36 face-class cuts become closed sections.
+- **(5e) Session 79's two cuts** — the corner between a curved and a straight edge (a medial surface, fitted
+  spine) and two wedges that are not congruent (a loft's inside corner, a revolve's cap), which also unparks
+  session 81's slanted and ring uprights.
+
+Each slice extends the matrix with the fixture that exercises it, and the matrix's rule is unchanged: built
+inside a derived bracket, or refused by name.
+
+
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
 **Closed in four slices, and what each of them was.** (1) *The words leave the code* — `l10n/app_en.arb` as
@@ -21698,7 +21756,7 @@ to round~~ — *retired in session 83, see below*; ~~(3b) **the band's face outl
 `spanOf` at every corner kind, the walk's own frame is read at the leg it stands on rather than at the frame its
 crease was drawn in, and a level section through a bevelled pivot closes at every height; see the as-built note
 under OP-31*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
-against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
+against the matrix's remaining residue — **designed in session 83** against the matrix's refusal inventory, in five slices (5a) incongruent corners, (5b) the ball along a curved crease, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
