@@ -395,15 +395,25 @@ class SectionInputTest {
         roundTrip(ed)
     }
 
-    // ---- 4. the mesh route: it draws, and it refuses inputs by name ----
+    // ---- 4. the general-boolean route: since OP-31's item 4 it names its faces too ----
 
     /**
-     * A **mesh-route** part (the general boolean's result, OP-9's sink rule) has no faces to name: its section
-     * draws, so the user can see where the plane cuts, and every input on it is refused by name with the
-     * alternative in the message.
+     * **What this test used to assert, and why it now asserts the opposite** (OP-31, item 4, session 83).
+     *
+     * It read: *"a mesh-route part (the general boolean's result, OP-9's sink rule) has no faces to name: its
+     * section draws, so the user can see where the plane cuts, and every input on it is refused by name"*.
+     * That half of the sink rule is retired. A boolean never **moves** a surface — every triangle of its
+     * result lies in a face of one of its operands and only the trim is emergent — so a boolean of two
+     * bodies whose faces are all planes keeps every one of those faces, and this body (a loft cut by a
+     * rectangular prism on a datum plane) is exactly such a pair. Its section is therefore **named and
+     * exact**, not chords, and an input on it anchors like any other.
+     *
+     * The refusal itself is not gone and is asserted where it still belongs: over an **imported** operand,
+     * which has no carrier at all ([BooleanProvenanceScriptTest]), and over a **curved** operand face, which
+     * this slice does not carry ([EdgeBlendTest], [Face3DPickTest]).
      */
     @Test
-    fun aMeshRoutePartsSectionDrawsButNamesNothing() {
+    fun aGeneralBooleanOfTwoPlanarBodiesSectionsExactlyAndNamesEveryFace() {
         requireEngine()
         val ed = pyramid()
         // a cut on a datum plane makes the part mesh-only
@@ -430,19 +440,13 @@ class SectionInputTest {
         ed.click(Vec2(30.0, 0.0))
         assertEquals(part.id, ed.activeSpace.anchor?.id, "this plane cuts the part as it stands")
         val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
-        assertTrue(section.drawn.isNotEmpty(), "it draws — chords of the mesh")
-        assertTrue(section.approximated, "and says so")
-        assertTrue(section.edges.isEmpty(), "but there is nothing to name")
-        assertTrue(ed.statusHint.contains("cannot be anchored on"), ed.statusHint)
-        assertTrue(ed.statusHint.contains("mesh-only"), ed.statusHint)
-
-        // …and a click on it while a tool collects says why rather than missing silently
-        ed.setTool(Tools.SEGMENT)
-        val on = constructit.geom.GeomMath.startOf(section.drawn.first())
-        ed.click(on)
-        ed.setTool(Tools.CIRCLE_LLL)
-        ed.click(on)
-        assertTrue(ed.statusHint.contains("mesh-only"), "the refusal names the reason: ${ed.statusHint}")
+        assertTrue(section.drawn.isNotEmpty(), "it draws")
+        assertTrue(!section.approximated, "…and exactly: the faces are the operands' own planes, not chords")
+        assertTrue(section.inputsRefusal == null, "so the section offers its inputs: ${section.inputsRefusal?.render()}")
+        val faces = assertNotNull(constructit.geom.Section3.faces(Evaluator().solid(part.ref as SolidRef).feature).first)
+        assertTrue(faces.size == section.edges.size, "one section edge per named face (${faces.size}) — present whether cut or not: ${section.edges.size}")
+        assertTrue(section.edges.any { it.curve != null }, "and the plane cuts some of them")
+        assertTrue(section.edges.all { it.sampled == null }, "…never as chords, since every face is a plane")
     }
 
     // ---- 5. provenance survives edits ----

@@ -1297,11 +1297,29 @@ class BrowserE2ETest {
             assertTrue(backPixels != facePixels, "the plan is the plan again")
             assertTrue(status().contains("Plan view"), "and it says so; got: ${status()}")
 
+            // ---- and the browser's own boolean keeps its faces (OP-31, item 4) ----
+            //
+            // GitHub #36's script 3 with the rounding its reporter could not make, opened through the file
+            // input. This is the **browser's** half of the provenance: which operand each result triangle
+            // came from is read out of Manifold's WASM `runOriginalID` here and out of the JavaCPP binding on
+            // the JVM, and the two have to name the same faces or the same file builds two different bodies.
+            // The proof is that it loads at all — a blend whose base names no edges makes no element, and
+            // the load then refuses the step outright — and that no row of the tree comes up invalid.
+            val fixture = File("build/e2e/issue36-script3-rounded.cit")
+            fixture.writeText(BooleanProvenanceScriptTest.SCRIPT3 + ROUNDING)
+            page.setInputFiles("#f-file", fixture.toPath())
+            page.waitForCondition { tree().any { row -> row.endsWith("e77") } }
+            assertTrue(page.querySelectorAll("#tree .item.invalid").isEmpty(), "the fused body rounds in the browser too: ${tree()}")
+            assertTrue(solids() >= 4, "…and the rounded body is in the tree: ${tree()}")
+
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }
         server.stop(0)
     }
+
+    /** The rounding GitHub #36's reporter armed `r` for: crease #2 of the fused body `e76`, at 5 mm. */
+    private val ROUNDING = "tool filletedge els=e76 clicks=-40,-16.625 scalar=\"r\" signs=2 -> e77,e78\n"
 
     /**
      * **Patterns as orbits, in the real browser** (OP-23): a circular pattern, then *one* segment gesture
