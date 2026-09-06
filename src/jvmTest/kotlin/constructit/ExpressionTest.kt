@@ -559,7 +559,7 @@ class ExpressionTest {
         assertEquals("no error at all", bad("sin(0.5)"), "…and a plain number is read as radians (session 71)")
         assertTrue(bad("asin(1deg)").contains("plain number"), "asin does not")
         assertTrue(bad("exp(1mm)").contains("plain number"), "exp does not either")
-        assertTrue(bad("round(1mm)").contains(ExprEval.ROUNDING_NOTE), "and rounding says which unit it would round in")
+        assertTrue(bad("round(1mm)").contains(ExprEval.ROUNDING_ADVICE), "and rounding says which unit it would round in")
         assertTrue(bad("2mm ^ 0.5").contains("whole-number"), "a fractional power of a length is refused")
         assertTrue(bad("2 ^ 1mm").contains("exponent"), "and a dimensioned exponent always is")
         assertTrue(bad("1 / 0").contains("zero"), "division by zero is an error, not an infinity")

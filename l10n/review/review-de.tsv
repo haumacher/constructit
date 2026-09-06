@@ -1,0 +1,132 @@
+# The German review of ConstructIt's message bundle, as data (OP-29 slice 4).
+#
+# Slices 1 and 2 each ended with a person reading the whole German bundle — 85 corrections, then 366, in
+# named classes. This file is what those classes became: `TranslationReviewTest` reads it and fails the
+# build on the same mistakes, on every run, so a re-translation cannot quietly undo a decision made here.
+#
+# Three record kinds, tab-separated, `#` to end of line is a comment:
+#
+#   register <word>                                  an informal address the chrome does not use
+#   concept  <english>  <approved|forms>  <rejected|forms>   one word per concept, both halves
+#   except   <key>      <english term>    <the argument for excusing it>
+#
+# An `approved` cell lists every surface form that counts as the term having arrived — German inflects and
+# compounds, so a stem is usually the honest entry (`extrudier` covers *extrudiert* and *Extrudiertiefe*).
+# A `rejected` cell lists renderings the review ruled out; it is empty where nothing competed. Matching is
+# case-insensitive substring, and the English side is matched as a whole word against the *prose* of the
+# source message, with ICU argument names and selector keywords cut away first.
+
+# ---- register: the chrome addresses the reader as `Sie`, settled in slice 1 ----
+# DeepL writes the imperative about half the time when the English is imperative ("Click a body…"), which
+# is 96 of slice 2's corrections. These are the du-forms that appeared; a quoted example does not count.
+register	du
+register	dich
+register	dir
+register	dein
+register	deine
+register	deinem
+register	deiner
+register	deinen
+register	klicke
+register	klickst
+register	zieh
+register	ziehe
+register	ziehst
+register	wähle
+register	wählst
+register	gib
+register	gibst
+register	tippe
+register	tippst
+register	drücke
+register	drückst
+register	zeichne
+register	zeichnest
+register	verschiebe
+register	wechsle
+register	ändere
+register	lege
+register	setze
+register	führe
+register	halte
+register	öffne
+register	füge
+register	nimm
+register	beachte
+register	erstelle
+register	markiere
+register	kannst
+register	musst
+register	willst
+register	hast
+register	möchtest
+register	brauchst
+register	siehst
+register	erhältst
+register	durchlaufe
+register	zoome
+register	lasse
+register	behalte
+
+# ---- one word per concept ----
+# Order follows l10n/glossary/en-de.tsv, which is what DeepL is given; every line there has a line here,
+# and `TranslationReviewTest.theGlossaryAndTheReviewTableSayTheSameThing` is what keeps that true.
+concept	fillet	Verrundung|verrund	Abrundung*|abrunden*|Ausrundung*|Rundung*
+concept	fillets	Verrundung|verrund	Abrundung*|abrunden*|Ausrundung*
+concept	chamfer	Fase|abgeschräg|Abschräg	Anfasung*|Kantenbruch*
+concept	chamfers	Fase|abgeschräg|Abschräg	Anfasung*|Kantenbruch*
+concept	extrude	Extrusion|extrudier|Extrudier	Auspress*|Strangpress*|Herausziehen*
+concept	extruded	Extrusion|extrudier|Extrudier	Auspress*|Strangpress*
+concept	revolve	rotier|Rotation	Umdrehungskörper*|Drehkörper*
+concept	sweep	Sweep|sweep	Streich*|Wisch*
+concept	loft	Erhebung|erheb	Loft*
+concept	outline	Umriss	Kontur*|Gliederung*|Umrandung*
+concept	outlines	Umriss	Kontur*|Gliederung*|Umrandung*
+concept	footprint	Grundriss	Fußabdruck*|Fußspur*
+concept	sketch space	Skizzenebene	Skizzenraum*
+concept	sketch plane	Skizzenebene	Skizzenfläche*
+concept	working plane	Arbeitsebene	Arbeitsfläche*
+concept	datum plane	Bezugsebene	Datumsebene*|Referenzebene*
+concept	wall	Wand|Wänd	Mauer*
+concept	walls	Wand|Wänd	Mauer*
+concept	profile	Profil	Querprofil*
+concept	jamb	Laibung	Pfoste*|Türpfoste*
+concept	tangent	Tangent	Berührungslinie*
+concept	arc	Bogen|Bög	Kreisbogenstück*
+concept	arcs	Bogen|Bög	Kreisbogenstück*
+concept	chain	Kette	Verkettung*|Strang*
+concept	leg	Schenkel	Bein*|Teilstrecke*
+concept	skin	Haut|Häut	Hülle*|Bespannung*|Oberhaut*
+concept	shell	Schale|höhl	Hülle*|Muschel*|Gehäuse*
+concept	cavity	Hohlraum	Kavität*|Aushöhlung*
+concept	rounding	Verrundung|verrund	Abrundung*|abrunden*|Ausrundung*
+concept	roundings	Verrundung|verrund	Abrundung*|abrunden*|Ausrundung*
+concept	band	Band|Bänd	Streifen*|Gurt*
+concept	bands	Band|Bänd	Streifen*|Gurt*
+concept	upright	Steg	Pfeiler*|Ständer*|Strebe*
+concept	carrier	Träger	Halterung*|Transporteur*
+concept	carriers	Träger	Halterung*|Transporteur*
+concept	locus	Ort	Lokus*|geometrische Stelle*
+concept	helix	Helix	Wendel*|Spirale*|Spule*|Schraubenlinie*
+concept	coil	Helix	Wendel*|Spirale*|Spule*|Schraubenlinie*
+concept	pitch	Steigung	Neigung*|Tonhöhe*|Abstand pro*
+concept	setback	Rücksprung	Rückschlag*|Rückversetzung*
+concept	mitre	Gehrung	Gehrungsschnittwinkel*
+concept	boss	Aufsatz	Chef*|Nabe*
+concept	apex	Spitze|Scheitel	Apex*|Gipfel*
+concept	slab	Scheibe	Platte*|Bramme*
+concept	prism	Prism	Strahlenteiler*
+concept	dressing	Verrundungssatz	Verband*|Anrichten*|Dressing*
+concept	cove	Hohlkehle	Bucht*|Kehle*
+concept	bead	Wulst	Perle*|Kügelchen*
+concept	rasp	Raspel	Feile*|Reibe*
+
+# ---- the arguments for the five keys a term of art is excused in ----
+# Each of these is an English word that is a term of art *as a noun* and an ordinary verb or adjective in
+# the sentence that names it. The glossary pins the noun, which is right; pinning the verb is what slice 1
+# found turns *Fillet edge* into *round off the fillet*, so these are excused one key at a time.
+except	refusal.path.itsPointsSweepNoArea	sweep	"its points sweep no area" is *enclose*, not the sweep operation — German says "umschließen"
+except	refusal.solid.thisSolidIsNotExtruded	upright	"upright" is the adjective here (side faces standing vertical), not the upright member the glossary pins
+except	refusal.family.sectionHasWhereFamilyCarries	skin	"skin them with Loft (ruled)" is the verb; German says "überziehen" and keeps *Haut* for the noun
+except	refusal.family.pieceSectionHasNoLength	skin	as above — the verb, not the surface
+except	refusal.sweep.foldTwoCorners	mitre	"corners mitre {need} mm off the run" is the verb; the German states the amount taken away instead

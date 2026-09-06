@@ -7,17 +7,22 @@ import constructit.editor.Editor
 import constructit.editor.ElementKind
 import constructit.editor.Format
 import constructit.editor.Tools
+import constructit.expr.ExprError
+import constructit.expr.ExprEval
+import constructit.expr.ExprParser
 import constructit.geom.Vec2
 import constructit.l10n.L10n
 import constructit.l10n.Messages
 import constructit.l10n.Msgs
 import constructit.l10n.contains
 import constructit.units.Dimension
+import constructit.units.DimensionError
 import constructit.units.Quantity
 import constructit.units.mm
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -277,6 +282,86 @@ show els=e2
         assertEquals(null, Format.read("5,5", "en"))
         assertEquals(null, Format.read("", "de"))
         assertEquals(-0.5, Format.read("-0,5", "de"))
+    }
+
+    /**
+     * **The armed tool's hint is a value too** (OP-29 slice 4) — the last sentence the editor assembled in
+     * Kotlin.
+     *
+     * It was `tool.help + " Using " + "name = " + Format.quantity(default) + " (default)"`, five English
+     * fragments joined at the moment the status line was *built*. It is one message with the name and the
+     * quantity as arguments now, so the reader's language decides at the moment the line is *painted* — the
+     * same property every other note has had since slice 2, asserted the same way: one value, read twice.
+     */
+    @Test
+    fun theArmedToolsHintIsGermanAndSwitchesBackWithoutTheGestureRepeating() {
+        val ed = Editor()
+        ed.setTool(Tools.MIDPOINT)
+        val hint = ed.currentHelp()
+
+        val english = hint.render("en")
+        assertTrue("Using factor = 0.5 (default)" in english, english)
+        assertTrue("type it and click" in english, english)
+
+        val german = hint.render("de")
+        assertTrue("factor = 0,5 (Standard)" in german, "the default is a quantity, spelled the reader's way: $german")
+        assertTrue("Verwendet" in german, "and the frame around it is German: $german")
+        assertFalse("(default)" in german, "no English fragment survives: $german")
+        // the slot's own name stays as it is: it becomes a parameter name in the file (OP-18)
+        assertTrue("factor" in german, german)
+        assertNotEquals(english, german)
+        assertEquals(english, hint.render("en"), "and the very same value reads English again")
+    }
+
+    /**
+     * **The formula parser's diagnostics speak German** (OP-29 slice 4) — parked by slice 2 and again by
+     * slice 3, and the last English the engine produced.
+     *
+     * They are a sublanguage with character positions in them, which is exactly why they are messages
+     * rather than strings: the position is an *argument*, the function and unit names are the formula
+     * language's own vocabulary and stay as they are (OP-18), and only the sentence around them moves.
+     */
+    @Test
+    fun theFormulaParsersDiagnosticsSpeakGerman() {
+        val blank = assertFailsWith<ExprError> { ExprParser.parse("  ") }
+        assertEquals("an expression is expected, and this is blank", blank.why.render("en"))
+        assertTrue("Ausdruck" in blank.why.render("de"), blank.why.render("de"))
+
+        val position = assertFailsWith<ExprError> { ExprParser.parse("1 +") }
+        assertTrue("a value is expected at position 4" in position.why.render("en"), position.why.render("en"))
+        val german = position.why.render("de")
+        assertTrue("Position 4" in german, "the position is an argument, not a word: $german")
+        assertFalse("expected" in german, german)
+
+        // the unit and the function names are the formula language's own and are never translated
+        val unit = assertFailsWith<ExprError> { ExprParser.parse("3furlong") }
+        assertTrue("''furlong''".replace("''", "'") in unit.why.render("de"), unit.why.render("de"))
+        assertTrue("mm, cm, m, deg" in unit.why.render("de"), unit.why.render("de"))
+
+        // …and a dimension violation, which reaches the reader through the same channel
+        val dim = assertFailsWith<DimensionError> { ExprEval.eval(ExprParser.parse("1mm + 1deg")) { null } }
+        assertEquals("cannot add L and A", dim.why.render("en"))
+        assertTrue("addiert" in dim.why.render("de"), dim.why.render("de"))
+        assertTrue("L" in dim.why.render("de") && "A" in dim.why.render("de"), "the dimension tokens stand: ${dim.why.render("de")}")
+    }
+
+    /**
+     * …and the whole of it through the editor: a formula that parses and then leaves its domain arrives as
+     * the ordinary named invalidity that heals (OP-3), with the parser's own sentence inside it — so the
+     * *reason* switches language with everything else rather than being the one English island left.
+     */
+    @Test
+    fun aBadFormulaRefusesInTheReadersLanguage() {
+        val ed = Editor()
+        val r = ed.doc.newParameter("r", 10.0.mm)
+        assertTrue(ed.doc.bindParameter(r, "sqrt(0 - 1)*1mm"), "the text parses; it is the value that has no root")
+        val invalid = assertNotNull(Evaluator().eval(r.ref.node) as? EvalResult.Invalid, "a root of a negative")
+        assertTrue("sqrt of a negative value" in invalid.why.render("en"), invalid.why.render("en"))
+        val german = invalid.why.render("de")
+        assertTrue("Quadratwurzel" in german, german)
+        assertFalse("negative value" in german, german)
+        // …and the formula itself is quoted verbatim in both, because it is the file's text (OP-18)
+        assertTrue("sqrt(0 - 1)*1mm" in german, german)
     }
 
     /** **GitHub #35's attached file, verbatim** — seven roundings on one body, all by the one parameter `r`. */

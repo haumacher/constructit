@@ -12,6 +12,7 @@ import constructit.geom.Justification
 import constructit.geom.SkinRow
 import constructit.geom.Vec2
 import constructit.l10n.Messages
+import constructit.l10n.Msg
 import constructit.units.Dimension
 import constructit.units.Quantity
 
@@ -663,6 +664,20 @@ class ToolDef(
     val help: String get() = helpText ?: Messages.patternOrNull("tool.$id.help").orEmpty()
 
     /**
+     * The same sentence as a **value** (OP-29 slice 4), which is what the armed-tool hint composes with.
+     *
+     * [help] renders the moment it is read, in whatever locale is active *then*; the status line is built
+     * once and read many times, so the hint that quotes it has to carry the key rather than the words —
+     * the same reason every refusal became a `Msg` in slice 2. A tool with no help key at all answers
+     * [Msg.EMPTY] rather than the key's own name, and whether the key exists is asked of **English**,
+     * since every language falls back to it.
+     */
+    val helpMsg: Msg
+        get() =
+            helpText?.let { Msg.text(it) }
+                ?: if (Messages.patternOrNull("tool.$id.help", "en") != null) Msg("tool.$id.help") else Msg.EMPTY
+
+    /**
      * What each slot **is for**, in slot order — "centre", "radius point", "axis" — from the message
      * bundle (`tool.<id>.slot.1`, `.2`, …), and empty where this tool leaves the slot kind to speak.
      *
@@ -738,7 +753,9 @@ object Tools {
      * Select is not a [ToolDef], so its words are not looked up by a tool id — but they are still the
      * bundle's (OP-29), under the same `tool.select.*` keys every other tool uses.
      */
-    val SELECT_HELP: String get() = Messages.text("tool.select.help")
+    const val SELECT_HELP_KEY = "tool.select.help"
+
+    val SELECT_HELP: String get() = Messages.text(SELECT_HELP_KEY)
 
     /** What the palette's first button says. */
     val SELECT_LABEL: String get() = Messages.text("tool.select.title")

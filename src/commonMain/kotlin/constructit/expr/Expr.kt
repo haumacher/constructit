@@ -1,5 +1,8 @@
 package constructit.expr
 
+import constructit.l10n.Msg
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -34,7 +37,9 @@ import kotlin.math.tan
  * Distinct from [DimensionError] only in *what* went wrong: both end the same way, as the named node
  * invalidity that heals (OP-3), never as an exception that escapes and never as a silent zero.
  */
-class ExprError(message: String) : RuntimeException(message)
+class ExprError(why: Msg) : MsgError(why) {
+    constructor(message: String) : this(Msg.text(message))
+}
 
 /**
  * The AST of the expression language (OP-7, the session-71 entry): **`boundTo` generalized to a pure
@@ -155,10 +160,10 @@ class ExprParser private constructor(private val src: String) {
     companion object {
         fun parse(text: String): Expr {
             val p = ExprParser(text)
-            if (text.isBlank()) throw ExprError("an expression is expected, and this is blank")
+            if (text.isBlank()) throw ExprError(Msgs.refusalExprBlank())
             val e = p.expr()
             p.skipWs()
-            if (p.i < text.length) throw ExprError("unexpected '${text[p.i]}' at position ${p.i + 1}")
+            if (p.i < text.length) throw ExprError(Msgs.refusalExprUnexpected(char = text[p.i].toString(), at = p.i + 1))
             return e
         }
     }
@@ -193,7 +198,7 @@ class ExprParser private constructor(private val src: String) {
     }
 
     private fun unary(): Expr {
-        val c = peek() ?: throw ExprError("a value is expected at position ${i + 1}, and the expression ends there")
+        val c = peek() ?: throw ExprError(Msgs.refusalExprValueExpected(at = i + 1))
         if (c == '-') {
             i++
             return Expr.Apply("neg", listOf(unary()))
@@ -215,24 +220,24 @@ class ExprParser private constructor(private val src: String) {
     }
 
     private fun atom(): Expr {
-        val c = peek() ?: throw ExprError("a value is expected at position ${i + 1}, and the expression ends there")
+        val c = peek() ?: throw ExprError(Msgs.refusalExprValueExpected(at = i + 1))
         if (c == '(') {
             i++
             val e = expr()
-            if (peek() != ')') throw ExprError("')' is expected at position ${i + 1}")
+            if (peek() != ')') throw ExprError(Msgs.refusalExprClosingParen(at = i + 1))
             i++
             return e
         }
         if (c.isDigit() || c == '.') return number()
         if (c.isLetter() || c == '_') return name()
-        throw ExprError("a number, a name or '(' is expected at position ${i + 1}, and '$c' is there")
+        throw ExprError(Msgs.refusalExprAtomExpected(at = i + 1, char = c.toString()))
     }
 
     private fun number(): Expr {
         val start = i
         while (i < src.length && (src[i].isDigit() || src[i] == '.')) i++
         val digits = src.substring(start, i)
-        val v = digits.toDoubleOrNull() ?: throw ExprError("'$digits' at position ${start + 1} is not a number")
+        val v = digits.toDoubleOrNull() ?: throw ExprError(Msgs.refusalExprNotANumberLiteral(digits = digits, at = start + 1))
         // a unit binds to the digits it touches, so `2 * pi` is a product and `2mm` is a length
         val us = i
         while (i < src.length && (src[i].isLetter() || src[i] == '°')) i++
@@ -240,7 +245,7 @@ class ExprParser private constructor(private val src: String) {
         val unit = src.substring(us, i)
         val make =
             UNITS[unit]
-                ?: throw ExprError("unknown unit '$unit' at position ${us + 1} — mm, cm, m, deg, ° and rad are the units")
+                ?: throw ExprError(Msgs.refusalExprUnknownUnit(unit = unit, at = us + 1))
         return Expr.Lit(make(v), hadUnit = true)
     }
 
@@ -276,7 +281,7 @@ class ExprParser private constructor(private val src: String) {
             } else {
                 while (true) {
                     args.add(expr())
-                    val c = peek() ?: throw ExprError("')' is expected at position ${i + 1}")
+                    val c = peek() ?: throw ExprError(Msgs.refusalExprClosingParen(at = i + 1))
                     if (c == ',') {
                         i++
                         continue
@@ -285,14 +290,14 @@ class ExprParser private constructor(private val src: String) {
                         i++
                         break
                     }
-                    throw ExprError("',' or ')' is expected at position ${i + 1}, and '$c' is there")
+                    throw ExprError(Msgs.refusalExprCommaOrParen(at = i + 1, char = c.toString()))
                 }
             }
             val arity =
                 ARITY[word]
-                    ?: throw ExprError("unknown function '$word' at position ${start + 1} — ${EXPR_FUNCTIONS.joinToString(", ")} are the functions")
+                    ?: throw ExprError(Msgs.refusalExprUnknownFunction(word = word, at = start + 1, list = EXPR_FUNCTIONS.joinToString(", ")))
             if (args.size != arity) {
-                throw ExprError("$word takes $arity argument${if (arity == 1) "" else "s"}, and ${args.size} ${if (args.size == 1) "is" else "are"} given")
+                throw ExprError(Msgs.refusalExprArity(word = word, arity = arity, given = args.size))
             }
             return Expr.Apply(word, args)
         }
@@ -328,8 +333,13 @@ object ExprEval {
      * display unit would hide the moment the panel showed anything else. The alternative considered was to
      * round in the base unit and say so; refusing by name was chosen because the honest form is already
      * writable — `round(x/1mm) * 1mm` states the unit it rounds in.
+     *
+     * The refusal *says* that, and since OP-29 slice 4 it says it out of the bundle
+     * (`refusal.expr.rounding`) rather than out of a constant here. What stays in Kotlin is the formula the
+     * sentence recommends, which is a piece of the **formula language** and therefore never translated —
+     * the same rule that keeps `sin`, `mm` and an element's name out of every bundle (OP-18).
      */
-    const val ROUNDING_NOTE = "rounds a plain number: divide by the unit you mean to round in (round(x/1mm)*1mm)"
+    const val ROUNDING_ADVICE = "round(x/1mm)*1mm"
 
     /**
      * The one operation the **parser never produces**: an angle read as its plain number of radians (a plain
@@ -352,7 +362,7 @@ object ExprEval {
             is Expr.Ref ->
                 env(e.name)
                     ?: CONSTANTS[e.name]?.let { Quantity.number(it) }
-                    ?: throw ExprError("there is no value named '${e.name}'")
+                    ?: throw ExprError(Msgs.refusalExprNoValueNamed(name = e.name))
             is Expr.Apply -> {
                 // the one rule that reads the *tree* rather than the values: a dimensioned base needs a
                 // literal integer exponent, since an exponent that moved would move the result's dimension
@@ -369,14 +379,12 @@ object ExprEval {
         exponentAst: Expr,
         exponent: Quantity,
     ): Quantity {
-        if (exponent.dim != Dimension.NONE) throw DimensionError("an exponent is a plain number, and this one is ${exponent.dim}")
+        if (exponent.dim != Dimension.NONE) throw DimensionError(Msgs.refusalExprExponentDimension(dim = exponent.dim.toString()))
         val n = exponent.base
         if (base.dim == Dimension.NONE) return Quantity.number(base.base.pow(n))
         val whole = exponentAst is Expr.Lit && n == round(n) && abs(n) <= 12
         if (!whole) {
-            throw DimensionError(
-                "a value of dimension ${base.dim} can only be raised to a whole-number power written out in the expression",
-            )
+            throw DimensionError(Msgs.refusalExprDimensionedPower(dim = base.dim.toString()))
         }
         val k = n.roundToInt()
         return Quantity(base.base.pow(n), Dimension(base.dim.length * k, base.dim.angle * k))
@@ -392,7 +400,7 @@ object ExprEval {
             "-" -> a[0] - a[1]
             "*" -> a[0] * a[1]
             "/" -> {
-                if (a[1].base == 0.0) throw ExprError("division by zero")
+                if (a[1].base == 0.0) throw ExprError(Msgs.refusalExprDivisionByZero())
                 a[0] / a[1]
             }
             "neg" -> -a[0]
@@ -401,7 +409,7 @@ object ExprEval {
             "max" -> Quantity(max(a[0].base, same(op, a).base), a[0].dim)
             "mod" -> {
                 same(op, a)
-                if (a[1].base == 0.0) throw ExprError("mod by zero")
+                if (a[1].base == 0.0) throw ExprError(Msgs.refusalExprModByZero())
                 Quantity(a[0].base.mod(a[1].base), a[0].dim)
             }
             "hypot" -> {
@@ -409,7 +417,7 @@ object ExprEval {
                 Quantity(hypot(a[0].base, a[1].base), a[0].dim)
             }
             "sqrt" -> {
-                if (a[0].base < 0.0) throw ExprError("sqrt of a negative value")
+                if (a[0].base < 0.0) throw ExprError(Msgs.refusalExprSqrtNegative())
                 Quantity(sqrt(a[0].base), root(op, a[0].dim, 2))
             }
             "cbrt" -> Quantity(cbrt(a[0].base), root(op, a[0].dim, 3))
@@ -427,12 +435,12 @@ object ExprEval {
             "exp" -> Quantity.number(exp(plain(op, a[0])))
             "log" -> {
                 val v = plain(op, a[0])
-                if (v <= 0.0) throw ExprError("log of a value that is not positive")
+                if (v <= 0.0) throw ExprError(Msgs.refusalExprNotPositive(op = "log"))
                 Quantity.number(ln(v))
             }
             "log10" -> {
                 val v = plain(op, a[0])
-                if (v <= 0.0) throw ExprError("log10 of a value that is not positive")
+                if (v <= 0.0) throw ExprError(Msgs.refusalExprNotPositive(op = "log10"))
                 Quantity.number(log10(v))
             }
             "floor" -> Quantity.number(floor(rounding(op, a[0])))
@@ -442,14 +450,14 @@ object ExprEval {
             // read as a bug in the drawing rather than as a convention
             "round" -> Quantity.number(floor(rounding(op, a[0]) + 0.5))
             "sign" -> Quantity.number(sign(rounding(op, a[0])))
-            else -> throw ExprError("unknown operation '$op'")
+            else -> throw ExprError(Msgs.refusalExprUnknownOperation(op = op))
         }
 
     private fun same(
         op: String,
         a: List<Quantity>,
     ): Quantity {
-        if (a[0].dim != a[1].dim) throw DimensionError("$op takes two values of the same dimension, and these are ${a[0].dim} and ${a[1].dim}")
+        if (a[0].dim != a[1].dim) throw DimensionError(Msgs.refusalExprSameDimension(op = op, dim = a[0].dim.toString(), dim2 = a[1].dim.toString()))
         return a[1]
     }
 
@@ -470,7 +478,7 @@ object ExprEval {
         q: Quantity,
     ): Double {
         if (q.dim != Dimension.ANGLE && q.dim != Dimension.NONE) {
-            throw DimensionError("$op takes an angle or a plain number of radians, and this is ${q.dim}")
+            throw DimensionError(Msgs.refusalExprAngleOrRadians(op = op, dim = q.dim.toString()))
         }
         return q.base
     }
@@ -479,7 +487,7 @@ object ExprEval {
         op: String,
         q: Quantity,
     ): Double {
-        if (q.dim != Dimension.NONE) throw DimensionError("$op takes a plain number, and this is ${q.dim}")
+        if (q.dim != Dimension.NONE) throw DimensionError(Msgs.refusalExprPlainNumber(op = op, dim = q.dim.toString()))
         return q.base
     }
 
@@ -487,7 +495,7 @@ object ExprEval {
         op: String,
         q: Quantity,
     ): Double {
-        if (q.dim != Dimension.NONE) throw DimensionError("$op $ROUNDING_NOTE — this is ${q.dim}")
+        if (q.dim != Dimension.NONE) throw DimensionError(Msgs.refusalExprRounding(op = op, dim = q.dim.toString()))
         return q.base
     }
 
@@ -497,7 +505,7 @@ object ExprEval {
         lo: Double,
         hi: Double,
     ): Double {
-        if (v < lo || v > hi) throw ExprError("$op is defined between $lo and $hi, and this is $v")
+        if (v < lo || v > hi) throw ExprError(Msgs.refusalExprOutsideDomain(op = op, lo = "$lo", hi = "$hi", value = "$v"))
         return v
     }
 
@@ -506,7 +514,7 @@ object ExprEval {
         dim: Dimension,
         n: Int,
     ): Dimension {
-        if (dim.length % n != 0 || dim.angle % n != 0) throw DimensionError("$op of $dim has no dimension — the exponents are not divisible by $n")
+        if (dim.length % n != 0 || dim.angle % n != 0) throw DimensionError(Msgs.refusalExprRootDimension(op = op, dim = dim.toString(), n = n))
         return Dimension(dim.length / n, dim.angle / n)
     }
 }

@@ -1,0 +1,104 @@
+# The French review of ConstructIt's message bundle, as data (OP-29 slice 4).
+#
+# French is the third language and the one the mechanism was proved on: the bundle is DeepL's, corrected by
+# what the checks below named plus a pass over the chrome — the ~135 tool titles and the panel labels — by a
+# **non-native** reviewer, which is stated here because it is the honest limit of this file. What a native
+# reviewer would add is more `concept` lines and more `register` words; the loop is what makes adding them
+# a one-line change rather than a re-read of 2,200 sentences.
+#
+# Record kinds and matching rules: see l10n/review/review-de.tsv, which carries the long note.
+
+# ---- register: the chrome addresses the reader as `vous`, exactly as the German uses `Sie` ----
+# Only forms that are unambiguously second-person-familiar are listed: French third-person présent and the
+# tu-imperative are the same word for -er verbs ("il clique" / "clique !"), so verbs like *déplace*, *trace*
+# and *ajoute* are deliberately absent — the words below are ones no third person can produce.
+register	tu
+register	toi
+register	tes
+register	cliques
+register	choisis
+register	saisis
+register	tapes
+register	glisses
+register	dessines
+register	sélectionnes
+register	déplaces
+register	appuies
+register	peux
+register	veux
+register	dois
+register	vois
+register	sais
+register	obtiens
+
+# ---- one word per concept ----
+# Order follows l10n/glossary/en-fr.tsv, which is what DeepL is given.
+concept	fillet	congé	arrondi
+concept	fillets	congé	arrondi
+concept	chamfer	chanfrein
+concept	chamfers	chanfrein
+concept	extrude	extrud|extrus
+concept	extruded	extrud|extrus
+concept	revolve	révolu|rotation	pivotement*
+concept	sweep	balay
+concept	loft	liss	Loft|lofts
+concept	outline	contour
+concept	outlines	contour
+concept	footprint	emprise
+concept	sketch space	esquisse
+concept	sketch plane	esquisse
+concept	working plane	plan de travail|plans de travail	surface de travail
+concept	datum plane	référence
+concept	wall	mur
+concept	walls	mur
+concept	profile	profil
+concept	jamb	jambage
+concept	tangent	tangent
+concept	arc	arc
+concept	arcs	arc
+concept	chain	chaîn
+concept	leg	branche
+concept	skin	peau	habillage*|revêtement*
+concept	shell	coque	enveloppe*|carapace*
+concept	cavity	cavité
+concept	rounding	congé	arrondi
+concept	roundings	congé	arrondi
+concept	band	bande	bandeau*|ruban*
+concept	bands	bande	bandeau*|ruban*
+concept	upright	montant	pilier*|poteau*
+concept	carrier	support
+concept	carriers	support
+concept	locus	lieu
+concept	helix	hélice	spirale*|bobine*|hélicoïde*
+concept	coil	hélice	spirale*|bobine*|hélicoïde*
+concept	pitch	pas
+concept	setback	retrait
+concept	mitre	onglet
+concept	boss	bossage
+concept	apex	sommet
+concept	slab	tranche
+concept	prism	prisme
+concept	dressing	congé	habillage*|garniture*
+concept	cove	gorge
+concept	bead	bourrelet
+concept	rasp	râpe
+
+# ---- the arguments for the keys a term of art is excused in ----
+# The same three the German review excused, for the same reason: the English word is a term of art as a
+# noun and an ordinary verb or adjective in these sentences, and pinning a verb is what turns
+# *Fillet edge* into *round off the fillet*.
+except	refusal.solid.thisSolidIsNotExtruded	upright	"upright" is the adjective (side faces standing vertical), not the upright member
+except	refusal.family.sectionHasWhereFamilyCarries	skin	"skin them with Loft (ruled)" is the verb; French says "recouvrir" and keeps *peau* for the noun
+except	refusal.family.pieceSectionHasNoLength	skin	as above — the verb, not the surface
+
+# *arrondi* is the everyday French adjective for *rounded* as well as the rendering of *fillet* the review
+# rejected, and no word-match can tell the two apart. Where a key says "a rounded rectangle", "a round
+# corner", "a round profile" or "as if you had rasped them round", the adjective is right and the noun is
+# not there at all — so each of those is excused by name rather than the rule being weakened for everyone.
+except	tool.lift.help	fillet	"the rim of a rounded rectangle" — the adjective; the key says *congé* where it means the operation
+except	tool.filletfaceedges.help	rounding	"a round corner, not three sharp edges" — the adjective
+except	tool.filletfaceedges.help	roundings	as above
+except	tool.blendedge.help	fillet	"a round profile gives a fillet" — the adjective, and the sentence does say *congé* for the fillet
+except	refusal.blend.insideCornerWhereMeetsIs	rounding	"is turned about" reads as *est arrondi autour de* — the participle
+except	refusal.blend.insideCornerWhereMeetsIs	roundings	as above
+except	note.patternsOrbits.roundedPolygonSidesRoundingsRetype	roundings	*Polygone arrondi* is the name of the Rounded polygon tool

@@ -1,4 +1,5 @@
 import constructit.gradle.GenerateMessagesTask
+import org.gradle.api.tasks.PathSensitivity
 
 plugins {
     kotlin("multiplatform") version "1.9.24"
@@ -135,10 +136,44 @@ val messagesJsChunks = files(generateMessages.flatMap { it.chunkDir }).builtBy(g
 translateArb {
     serverId = "deepl"
     sourceFile = l10nDir.file("app_en.arb").asFile
-    targetLangs = listOf("de")
+    targetLangs = listOf("de", "fr")
     // The terms of art DeepL cannot know (fillet → Verrundung, chamfer → Fase, …). One tab-separated file
     // per language pair; see l10n/glossary/en-de.tsv for why each line is there.
     glossaryDir = l10nDir.dir("glossary").asFile
+}
+
+/**
+ * **Strip the `x-translated` stamps off the source bundle** — the one extra step a *new language* costs
+ * (OP-29 slice 4), and a workaround for haumacher/auto-translate issue #7.
+ *
+ * The plugin's incremental bookkeeping checksums the **source resource**, not the pair (resource, target
+ * language). So once `app_en.arb` is stamped, a language added to `targetLangs` afterwards is considered
+ * already done: adding `fr` produced `{"@@locale": "fr"}` and billed nothing. Stripping the stamps makes
+ * every key look new again, which is exactly right for the new language and costs nothing for the old ones
+ * — the plugin keeps a target entry it already has, so `app_de.arb` (hand review and all) is reused
+ * verbatim.
+ *
+ * It is a task rather than a note in CLAUDE.md because the alternative is editing 2,200 stamps by hand, and
+ * because the next person to add a language should not have to rediscover *why*. Run it, then
+ * `translateArb`, then commit both files; the stamps come back on the next run.
+ */
+val stripTranslationStamps by tasks.registering {
+    group = "build"
+    description = "Remove the plugin's x-translated checksums from l10n/app_en.arb, so a new language is translated (OP-29)"
+    val source = l10nDir.file("app_en.arb").asFile
+    doLast {
+        val text = source.readText()
+        val stamp = """"x-translated"\s*:\s*"[^"]*""""
+        val stripped =
+            text
+                // the ordinary shape: the stamp is the last member of an `@key` object, after `description`
+                .replace(Regex(""",\s*$stamp"""), "")
+                // ...and the shape where it is the only one
+                .replace(Regex("""$stamp\s*,?\s*"""), "")
+        val removed = Regex(""""x-translated"""").findAll(text).count()
+        source.writeText(stripped)
+        logger.lifecycle("stripped $removed x-translated stamps from ${source.path}")
+    }
 }
 
 kotlin {
@@ -223,6 +258,11 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask<*>>().con
 
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
+    // The bundles and the review tables are **read by the tests themselves** (`TranslationReviewTest`,
+    // `MessageBundleTest`), not only compiled into them, so they are inputs of this task as much as the
+    // Kotlin is. Without this, correcting a translation or adding a `concept` line leaves the test task
+    // up-to-date against yesterday's answer — which is precisely the loop failing to be a loop (OP-29).
+    inputs.dir(l10nDir).withPathSensitivity(PathSensitivity.RELATIVE)
     // forward -De2e=1 to the test JVM so the (otherwise-skipped) browser E2E can opt in — and since the
     // E2E loads build/dist/js/productionExecutable by path, make that bundle a real input of the test task:
     // it is then built first and *current*, and a jsMain-only change re-runs the E2E instead of leaving the

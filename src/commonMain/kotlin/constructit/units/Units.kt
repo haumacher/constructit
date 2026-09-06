@@ -47,12 +47,12 @@ class DimensionError(why: Msg) : MsgError(why) {
  */
 data class Quantity(val base: Double, val dim: Dimension) {
     operator fun plus(o: Quantity): Quantity {
-        if (dim != o.dim) throw DimensionError("cannot add $dim and ${o.dim}")
+        if (dim != o.dim) throw DimensionError(Msgs.refusalUnitsCannotAdd(dim = dim.toString(), dim2 = o.dim.toString()))
         return Quantity(base + o.base, dim)
     }
 
     operator fun minus(o: Quantity): Quantity {
-        if (dim != o.dim) throw DimensionError("cannot subtract ${o.dim} from $dim")
+        if (dim != o.dim) throw DimensionError(Msgs.refusalUnitsCannotSubtract(dim = o.dim.toString(), dim2 = dim.toString()))
         return Quantity(base - o.base, dim)
     }
 

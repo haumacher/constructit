@@ -2988,42 +2988,62 @@ class Editor(
         statusMsg = message
     }
 
-    /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
+    /**
+     * Help line for the active tool — shown in the status bar whenever there's no transient hint.
+     *
+     * **One message, not five fragments** (OP-29 slice 4). This line used to be assembled in Kotlin — the
+     * tool's help, then the English word *Using*, then `name = value` per slot, then `(count n)` — which is
+     * exactly the shape the slice-2 note says does not translate, and it was the last of it left in the
+     * editor. Every piece is a message value now, the frame is one pattern a translator reads whole, and
+     * the whole thing is built once and rendered when the shell paints it: a language switch therefore
+     * re-reads the standing hint with no gesture repeated, which is what the rest of the status line has
+     * done since slice 2.
+     */
     fun currentHelp(): Msg {
         snapHint?.let { if (it.linked) return Msgs.statusFunctionFamilySectionSnapAltPlaceFreely(name = it.label) }
-        if (toolId == Tools.SELECT) return Msg.text(Tools.SELECT_HELP)
+        if (toolId == Tools.SELECT) return Msg(Tools.SELECT_HELP_KEY)
         val tool = doc.toolDef(toolId) ?: return Msg.EMPTY
         // the panel and the keyboard are as much an input as the canvas (OP-13), so a tool still waiting
         // for a scalar says which one it wants next rather than describing clicks it cannot use yet
         if (toolScalars(tool) == null) return scalarPrompt(tool)
         val n = toolCount(tool)
+        val help = if (n == 0) tool.helpMsg else Msgs.statusToolHelpWithCount(help = tool.helpMsg, count = n)
+        if (tool.scalars.isEmpty()) return help
         // Name the values it *will* consume. A tool takes the last picks in order, so with a parameter
         // already picked it is silently ready — which is convenient and invisible, and the invisible half
         // is what made people mis-size a feature and blame the tool.
-        val using =
-            if (tool.scalars.isEmpty()) {
-                ""
-            } else {
-                val entries = toolScalars(tool).orEmpty()
-                // **A structural default silences the slots behind it** ([ScalarSlot.structural]): an
-                // unstated one names a *different construction*, and that construction has no inputs for
-                // them — a *Revolve* with no angle is a complete revolution, which has no start, so it never
-                // receives the offset slot at all. Naming a value the build will never see would be a promise
-                // the tool cannot keep, which is the same reason a refusal has to name its own reason.
-                val silent = tool.scalars.indices.firstOrNull { tool.scalars[it].structural && entries.getOrNull(it) == null }
-                val named = if (silent == null) tool.scalars else tool.scalars.take(silent + 1)
+        val entries = toolScalars(tool).orEmpty()
+        // **A structural default silences the slots behind it** ([ScalarSlot.structural]): an unstated one
+        // names a *different construction*, and that construction has no inputs for them — a *Revolve* with
+        // no angle is a complete revolution, which has no start, so it never receives the offset slot at
+        // all. Naming a value the build will never see would be a promise the tool cannot keep, which is
+        // the same reason a refusal has to name its own reason.
+        val silent = tool.scalars.indices.firstOrNull { tool.scalars[it].structural && entries.getOrNull(it) == null }
+        val named = if (silent == null) tool.scalars else tool.scalars.take(silent + 1)
+        val list =
+            named.mapIndexed { i, s ->
+                val e = entries.getOrNull(i)
                 // a defaulted slot with nothing picked names the **default**, because that is what the tool
                 // will use — the same promise as naming a picked parameter (see [ScalarSlot.default])
-                " Using " +
-                    named.mapIndexed { i, s ->
-                        val e = entries.getOrNull(i)
-                        "${s.name} = " + (e?.name ?: s.default?.let { "${Format.quantity(it)} (default)" } ?: "?")
-                    }.joinToString(", ") +
-                    // …and the whole contract for stating another, because "type a number" left out the half
-                    // that finishes the gesture: a click uses what is typed (see [pointerDown])
-                    Msgs.statusFunctionFamilySectionUseAnotherTypeItClick()
+                val value =
+                    when {
+                        e != null -> Msg.text(e.name)
+                        s.default != null -> Msgs.phraseToolSlotDefault(quantity = Format.quantityMsg(s.default))
+                        // nothing picked and no default: a hole, and the punctuation for one is not a
+                        // word in any language (OP-18)
+                        else -> Msg.text("?")
+                    }
+                // the slot's own name is a *parameter name in the file* where it is picked (OP-18), so it
+                // stays locale-neutral for the same reason `ChromeBundleTest` exempts it
+                Msgs.phraseToolSlotValue(name = s.name, value = value)
             }
-        return Msg.text((if (n == 0) tool.help else "${tool.help} (count $n)") + using)
+        return Msgs.statusToolArmedUsing(
+            help = help,
+            list = Msg.joined(list, ", "),
+            // …and the whole contract for stating another, because "type a number" left out the half
+            // that finishes the gesture: a click uses what is typed (see [pointerDown])
+            clause = Msgs.statusFunctionFamilySectionUseAnotherTypeItClick(),
+        )
     }
 
     fun render(target: DrawTarget) {

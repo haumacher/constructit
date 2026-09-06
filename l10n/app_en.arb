@@ -1,5 +1,7 @@
 {
   "@@locale": "en",
+  "@@x-geom-session-81-corners": "geom: session 81 corners",
+  "@@x-section-slice3": "l10n: session 81 slice 3",
   "tool.point.title": "Point",
   "@tool.point.title": {
     "description": "UI text of the \"Point\" tool in ConstructIt, a parametric 2D/3D CAD program; toolbar section \"points\". These strings are the tool's button label, the help sentence shown while it is armed, and the names of the things it asks the user to click. What the tool does: Click empty space to place a free point.",
@@ -18296,26 +18298,25 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the sphere as a locus: distance carried in space (OP-28). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "x-translated": "2f88e37e"
   },
-  "@@x-geom-session-81-corners": "geom: session 81 corners",
   "refusal.blend.freeEndNotchReachesPast": "a {word} {sizePhrase} along {name} ends free in a face of its own, and the notch its cap takes out of that face reaches past what is left of that face's boundary — the largest that fits there is {fitPhrase}",
   "@refusal.blend.freeEndNotchReachesPast": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "word": {
+      "name": {
         "type": "message"
       },
       "sizePhrase": {
         "type": "message"
       },
-      "name": {
+      "word": {
         "type": "message"
       },
       "fitPhrase": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "8929f3a8"
   },
-  "@@x-section-slice3": "l10n: session 81 slice 3",
   "format.length": "{value} mm",
   "@format.length": {
     "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A length, in millimetres.",
@@ -18323,7 +18324,8 @@
       "value": {
         "type": "decimal"
       }
-    }
+    },
+    "x-translated": "76b87813"
   },
   "format.angle": "{value}°",
   "@format.angle": {
@@ -18332,7 +18334,8 @@
       "value": {
         "type": "decimal"
       }
-    }
+    },
+    "x-translated": "ff79cc0c"
   },
   "format.area": "{value} mm²",
   "@format.area": {
@@ -18341,7 +18344,8 @@
       "value": {
         "type": "decimal"
       }
-    }
+    },
+    "x-translated": "a24bbbb7"
   },
   "format.volume": "{value} mm³",
   "@format.volume": {
@@ -18350,7 +18354,8 @@
       "value": {
         "type": "decimal"
       }
-    }
+    },
+    "x-translated": "d54c8b21"
   },
   "format.plain": "{value}",
   "@format.plain": {
@@ -18359,34 +18364,405 @@
       "value": {
         "type": "decimal"
       }
-    }
+    },
+    "x-translated": "1fde9bed"
   },
   "format.other": "{value} [{dim}]",
   "@format.other": {
     "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A quantity in a unit the program has no name for; {dim} is the exponents of length and angle, which is format and not a word.",
     "placeholders": {
+      "dim": {
+        "type": "String"
+      },
       "value": {
         "type": "decimal"
+      }
+    },
+    "x-translated": "625898f"
+  },
+  "unit.mm": "mm",
+  "@unit.mm": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside a length field in the properties panel.",
+    "x-translated": "a2891af0"
+  },
+  "unit.deg": "°",
+  "@unit.deg": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside an angle field in the properties panel.",
+    "x-translated": "737414bf"
+  },
+  "unit.millimetres": "millimetres",
+  "@unit.millimetres": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of length, used when a value is refused for having the wrong dimension (“a value in millimetres is expected”).",
+    "x-translated": "791e5b33"
+  },
+  "unit.degrees": "degrees",
+  "@unit.degrees": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of angle, used when a value is refused for having the wrong dimension (“a value in degrees is expected”).",
+    "x-translated": "cf125c84"
+  },
+  "refusal.expr.blank": "an expression is expected, and this is blank",
+  "@refusal.expr.blank": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "x-translated": "b381b3d1"
+  },
+  "refusal.expr.unexpected": "unexpected ''{char}'' at position {at}",
+  "@refusal.expr.unexpected": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      },
+      "char": {
+        "type": "String"
+      }
+    },
+    "x-translated": "9e534f9a"
+  },
+  "refusal.expr.valueExpected": "a value is expected at position {at}, and the expression ends there",
+  "@refusal.expr.valueExpected": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      }
+    },
+    "x-translated": "f3e76ab6"
+  },
+  "refusal.expr.closingParen": "'')'' is expected at position {at}",
+  "@refusal.expr.closingParen": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      }
+    },
+    "x-translated": "92595789"
+  },
+  "refusal.expr.atomExpected": "a number, a name or ''('' is expected at position {at}, and ''{char}'' is there",
+  "@refusal.expr.atomExpected": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      },
+      "char": {
+        "type": "String"
+      }
+    },
+    "x-translated": "c2c7ce74"
+  },
+  "refusal.expr.notANumberLiteral": "''{digits}'' at position {at} is not a number",
+  "@refusal.expr.notANumberLiteral": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      },
+      "digits": {
+        "type": "String"
+      }
+    },
+    "x-translated": "4207c27a"
+  },
+  "refusal.expr.unknownUnit": "unknown unit ''{unit}'' at position {at} — mm, cm, m, deg, ° and rad are the units",
+  "@refusal.expr.unknownUnit": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "unit": {
+        "type": "String"
+      },
+      "at": {
+        "type": "int"
+      }
+    },
+    "x-translated": "1d752cd2"
+  },
+  "refusal.expr.commaOrParen": "'','' or '')'' is expected at position {at}, and ''{char}'' is there",
+  "@refusal.expr.commaOrParen": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      },
+      "char": {
+        "type": "String"
+      }
+    },
+    "x-translated": "642a77da"
+  },
+  "refusal.expr.unknownFunction": "unknown function ''{word}'' at position {at} — {list} are the functions",
+  "@refusal.expr.unknownFunction": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "at": {
+        "type": "int"
+      },
+      "list": {
+        "type": "String"
+      },
+      "word": {
+        "type": "String"
+      }
+    },
+    "x-translated": "11c26e0e"
+  },
+  "refusal.expr.arity": "{word} takes {arity, plural, one{{arity} argument} other{{arity} arguments}}, and {given, plural, one{{given} is} other{{given} are}} given",
+  "@refusal.expr.arity": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "arity": {
+        "type": "int"
+      },
+      "given": {
+        "type": "int"
+      },
+      "word": {
+        "type": "String"
+      }
+    },
+    "x-translated": "4ef8a5cf"
+  },
+  "refusal.expr.noValueNamed": "there is no value named ''{name}''",
+  "@refusal.expr.noValueNamed": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    },
+    "x-translated": "fc14bbc"
+  },
+  "refusal.expr.divisionByZero": "division by zero",
+  "@refusal.expr.divisionByZero": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "x-translated": "e0656cf7"
+  },
+  "refusal.expr.modByZero": "mod by zero",
+  "@refusal.expr.modByZero": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "x-translated": "538d879f"
+  },
+  "refusal.expr.sqrtNegative": "sqrt of a negative value",
+  "@refusal.expr.sqrtNegative": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "x-translated": "2de529e3"
+  },
+  "refusal.expr.notPositive": "{op} of a value that is not positive",
+  "@refusal.expr.notPositive": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      }
+    },
+    "x-translated": "897bcee1"
+  },
+  "refusal.expr.unknownOperation": "unknown operation ''{op}''",
+  "@refusal.expr.unknownOperation": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      }
+    },
+    "x-translated": "bb154b40"
+  },
+  "refusal.expr.outsideDomain": "{op} is defined between {lo} and {hi}, and this is {value}",
+  "@refusal.expr.outsideDomain": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "hi": {
+        "type": "String"
+      },
+      "lo": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    },
+    "x-translated": "e2b7392a"
+  },
+  "refusal.expr.exponentDimension": "an exponent is a plain number, and this one is {dim}",
+  "@refusal.expr.exponentDimension": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "c69c01b2"
+  },
+  "refusal.expr.dimensionedPower": "a value of dimension {dim} can only be raised to a whole-number power written out in the expression",
+  "@refusal.expr.dimensionedPower": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "e3b18d31"
+  },
+  "refusal.expr.sameDimension": "{op} takes two values of the same dimension, and these are {dim} and {dim2}",
+  "@refusal.expr.sameDimension": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "dim2": {
+        "type": "String"
       },
       "dim": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "847fb8d9"
   },
-  "unit.mm": "mm",
-  "@unit.mm": {
-    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside a length field in the properties panel."
+  "refusal.expr.angleOrRadians": "{op} takes an angle or a plain number of radians, and this is {dim}",
+  "@refusal.expr.angleOrRadians": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "282b1679"
   },
-  "unit.deg": "°",
-  "@unit.deg": {
-    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside an angle field in the properties panel."
+  "refusal.expr.plainNumber": "{op} takes a plain number, and this is {dim}",
+  "@refusal.expr.plainNumber": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "3b4b4cd6"
   },
-  "unit.millimetres": "millimetres",
-  "@unit.millimetres": {
-    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of length, used when a value is refused for having the wrong dimension (“a value in millimetres is expected”)."
+  "refusal.expr.rounding": "{op} rounds a plain number: divide by the unit you mean to round in (round(x/1mm)*1mm) — this is {dim}",
+  "@refusal.expr.rounding": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "2b6d29c6"
   },
-  "unit.degrees": "degrees",
-  "@unit.degrees": {
-    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of angle, used when a value is refused for having the wrong dimension (“a value in degrees is expected”)."
+  "refusal.expr.rootDimension": "{op} of {dim} has no dimension — the exponents are not divisible by {n}",
+  "@refusal.expr.rootDimension": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      },
+      "n": {
+        "type": "int"
+      }
+    },
+    "x-translated": "3b9d1055"
+  },
+  "refusal.units.cannotAdd": "cannot add {dim} and {dim2}",
+  "@refusal.units.cannotAdd": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It says that two measured values cannot be combined because they are quantities of different kinds — a length and an angle, say. It is shown in the status line and beside the element in the side panel. The {dim} placeholders are filled with a dimension token (1 for a plain number, L for a length, L^2 for an area, L^3 for a volume, A for an angle); these are notation and must not be translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "dim2": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "55800bcb"
+  },
+  "refusal.units.cannotSubtract": "cannot subtract {dim} from {dim2}",
+  "@refusal.units.cannotSubtract": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It says that two measured values cannot be combined because they are quantities of different kinds — a length and an angle, say. It is shown in the status line and beside the element in the side panel. The {dim} placeholders are filled with a dimension token (1 for a plain number, L for a length, L^2 for an area, L^3 for a volume, A for an angle); these are notation and must not be translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "dim2": {
+        "type": "String"
+      },
+      "dim": {
+        "type": "String"
+      }
+    },
+    "x-translated": "e29b4e0"
+  },
+  "status.tool.helpWithCount": "{help} (count {count})",
+  "@status.tool.helpWithCount": {
+    "description": "Status-line text of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). While a tool is armed, the status line shows the tool's own help sentence and then names the values the tool is about to build with, so that a size picked earlier is never used invisibly. {help} is that help sentence, {list} is the comma-separated list of \"name = value\" pairs, {name} is the name of a numeric input of the tool (\"radius\", \"depth\"), {value} is either the name of a parameter in the drawing or a measurement, and {count} is a structural count the tool will build with (the number of sides of a polygon, the number of copies of an array). Parameter names and element names are the drawing's own and are never translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands. Note the leading space in some of these: they are appended to the sentence before them.",
+    "placeholders": {
+      "help": {
+        "type": "message"
+      },
+      "count": {
+        "type": "int"
+      }
+    },
+    "x-translated": "2cc4e549"
+  },
+  "status.tool.armedUsing": "{help} Using {list}{clause}",
+  "@status.tool.armedUsing": {
+    "description": "Status-line text of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). While a tool is armed, the status line shows the tool's own help sentence and then names the values the tool is about to build with, so that a size picked earlier is never used invisibly. {help} is that help sentence, {list} is the comma-separated list of \"name = value\" pairs, {name} is the name of a numeric input of the tool (\"radius\", \"depth\"), {value} is either the name of a parameter in the drawing or a measurement, and {count} is a structural count the tool will build with (the number of sides of a polygon, the number of copies of an array). Parameter names and element names are the drawing's own and are never translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands. Note the leading space in some of these: they are appended to the sentence before them.",
+    "placeholders": {
+      "clause": {
+        "type": "message"
+      },
+      "help": {
+        "type": "message"
+      },
+      "list": {
+        "type": "message"
+      }
+    },
+    "x-translated": "7e622e23"
+  },
+  "phrase.tool.slotValue": "{name} = {value}",
+  "@phrase.tool.slotValue": {
+    "description": "Status-line text of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). While a tool is armed, the status line shows the tool's own help sentence and then names the values the tool is about to build with, so that a size picked earlier is never used invisibly. {help} is that help sentence, {list} is the comma-separated list of \"name = value\" pairs, {name} is the name of a numeric input of the tool (\"radius\", \"depth\"), {value} is either the name of a parameter in the drawing or a measurement, and {count} is a structural count the tool will build with (the number of sides of a polygon, the number of copies of an array). Parameter names and element names are the drawing's own and are never translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands. Note the leading space in some of these: they are appended to the sentence before them.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "value": {
+        "type": "message"
+      }
+    },
+    "x-translated": "f0e65c64"
+  },
+  "phrase.tool.slotDefault": "{quantity} (default)",
+  "@phrase.tool.slotDefault": {
+    "description": "Status-line text of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). While a tool is armed, the status line shows the tool's own help sentence and then names the values the tool is about to build with, so that a size picked earlier is never used invisibly. {help} is that help sentence, {list} is the comma-separated list of \"name = value\" pairs, {name} is the name of a numeric input of the tool (\"radius\", \"depth\"), {value} is either the name of a parameter in the drawing or a measurement, and {count} is a structural count the tool will build with (the number of sides of a polygon, the number of copies of an array). Parameter names and element names are the drawing's own and are never translated. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands. Note the leading space in some of these: they are appended to the sentence before them.",
+    "placeholders": {
+      "quantity": {
+        "type": "message"
+      }
+    },
+    "x-translated": "50810fee"
+  },
+  "refusal.expr.noDerivative": "''{op}'' has no derivative this drawing can state — it steps rather than slopes, so a tangent, a normal or anything built on one is refused here rather than guessed by differencing",
+  "@refusal.expr.noDerivative": {
+    "description": "Diagnostic message of the formula language of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The user types a formula into a parameter field (for example \"r * 2\" or \"sqrt(a^2 + b^2)\"); this sentence says why the text cannot be read as a formula, or why the value it computes has the wrong physical dimension. It is shown in the status line and beside the element in the side panel. Character positions are counted from 1. Function names (sin, cos, sqrt, round, log10, atan2, …), unit symbols (mm, cm, m, deg, °, rad) and the punctuation quoted inside the sentence belong to the formula language itself and must NOT be translated; neither must the dimension tokens (1, L, L^2, A) a {dim} placeholder is filled with. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands, and keep every doubled apostrophe doubled — in this format '' is how one apostrophe is written.",
+    "placeholders": {
+      "op": {
+        "type": "String"
+      }
+    },
+    "x-translated": "32f36bfc"
   }
 }

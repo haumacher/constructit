@@ -831,7 +831,9 @@ class Construction {
         } catch (e: DeriveError) {
             dx = null
             dy = null
-            why = Msg.text(e.message ?: "")
+            // OP-29 slice 4: the reason travels as a value, so the tangent's refusal reads in the reader's
+            // language wherever the construction that could not be built quotes it
+            why = e.why
         }
         val fdx = dx
         val fdy = dy

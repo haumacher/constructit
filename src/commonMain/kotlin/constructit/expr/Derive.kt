@@ -1,5 +1,8 @@
 package constructit.expr
 
+import constructit.l10n.Msg
+import constructit.l10n.MsgError
+import constructit.l10n.Msgs
 import constructit.units.Quantity
 import kotlin.math.abs
 import kotlin.math.ln
@@ -15,7 +18,7 @@ import kotlin.math.roundToInt
  * the tangent-dependent construction **by name** and keeps everything position-along still exact
  * (OP-24's honesty line, the session-71 entry's curve half).
  */
-class DeriveError(message: String) : RuntimeException(message)
+class DeriveError(why: Msg) : MsgError(why)
 
 /**
  * **Symbolic differentiation of the expression AST** (the session-71 entry, curve half): one
@@ -123,9 +126,7 @@ object Derive {
     }
 
     /** What a function with no statable derivative says, in the words the refusal is quoted in. */
-    fun refusal(op: String): String =
-        "'$op' has no derivative this drawing can state — it steps rather than slopes, so a tangent, a normal " +
-            "or anything built on one is refused here rather than guessed by differencing"
+    fun refusal(op: String): Msg = Msgs.refusalExprNoDerivative(op = op)
 
     /**
      * `d(a^b)`, in the three readings the dimension table leaves room for.

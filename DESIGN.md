@@ -14559,6 +14559,35 @@ the composition table is driven generically as well as by its own test.
   a value's sign is not derived from the geometry it describes, it is derived from an accident.**
 
 
+- **Turn 82 — languages, slice 4: the review becomes a machine, and the third language proves it** (OP-29;
+  session 81). The slice that closes OP-29 is the one that builds nothing a user can see, and the argument
+  for it is the arithmetic of the three before it: two hand reviews of the German bundle had made 85 and
+  then 366 corrections, in named classes, and the next run would need a third person to make them again.
+  So the classes became functions that name the offending key and run over every `app_*.arb` on every
+  build. The decision that makes them worth having is the second assertion in each test: the same bundle
+  with **one entry deliberately broken the way the review saw it broken**, and the requirement that the
+  check name *that key*. It earned itself immediately — the first version of the argument reader reported
+  *no plurals at all in either bundle* (a plural's own `{count}` inside its branches overwrote the plural),
+  the concept check condemned a dozen correct translations because `{upright}` is an argument name and
+  `DRESSING{…}` a branch name, and the rejected-word rule condemned *Verrundung* for containing *Rundung*.
+  A green build would have hidden all three, which is the whole point: *a check that cannot fail and a
+  check that always passes look identical from outside.* Then the loop was pointed at the bundle two people
+  had already read and found 33 more corrections — nineteen `du`-forms buried in long help texts, and
+  fourteen concepts rendered twice (*Spirale* beside *Helix*, *Abrundung* beside *Verrundung*, `Blended
+  Body` left in English). **French is the evidence the mechanism was ever general.** It cost one line in
+  `targetLangs`, 187,345 DeepL characters, and the English reader **3 bytes gzipped** — and the loop caught
+  what a person reading French would have needed a week to find: 33 keys whose *placeholder names* had been
+  translated, three with `pluriel` for `plural`, and **325 values in which an apostrophe broke ICU**,
+  because `l'` before a brace quotes the brace and French writes one in every other word. That last one is
+  the finding to carry forward: it is a property of the **language**, not of the translator, and any
+  language with elision will meet it. Two smaller lessons. A **non-native chrome pass** is worth doing and
+  worth labelling: it found *Fillet* titled **Chanfrein**, *free* as **gratuit** and *Dim construction* as
+  *dimension the construction* — three buttons whose French said the opposite of the English — and it is
+  recorded as non-native in the review file itself, because the honest limit of a delivery belongs in the
+  delivery. And the loop was not a loop until the test task declared `l10n/` an input: two runs of these
+  very checks reported a stale all-clear against yesterday's bundle, which is the same defect as a review
+  nobody repeats, one layer down.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -16388,7 +16417,34 @@ different sizes and different kinds and now assert one feature with a section pe
 the tombstone. **2705 → 2720 green**, `assertManifold` throughout.
 
 
-## Languages (OP-29 — OPEN; design entry, session 81)
+## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
+
+**Closed in four slices, and what each of them was.** (1) *The words leave the code* — `l10n/app_en.arb` as
+the source of truth, a `buildSrc` generator compiling every bundle into typed Kotlin, the two reference
+engines behind one `formatMessage`, and a language picker that re-renders without a reload. (2) *A message
+is a value* — the ~1200 composed status notes and refusal reasons became `Msg` values rendered at the edge,
+so the engine states what it will say and the reader's language decides how. (3) *A figure is a value too* —
+`Num`, one `formatNumber` seam, units as messages where they are words, and one chunk per language so the
+main bundle carries only English. (4) *The review becomes a machine* — the two hand reviews' classes of
+error as tests over every bundle, each proved against a seeded defect, with a third language (French) as the
+proof that a language is one line plus a review.
+
+**What the loop is, in one sentence.** Everything a person found by reading the German twice —
+placeholders, ICU keywords, plural categories, select branches, apostrophes, register, terminology, one word
+per concept — is a function that names the offending key, runs on every build over every `app_*.arb`, and is
+itself checked by breaking one entry on purpose; what it knows about a *language* lives in
+`l10n/review/review-<lang>.tsv` and `l10n/glossary/en-<lang>.tsv`, so the next language brings its own
+review or does not pass.
+
+**Future extensions, stated as extensions.** The **`exchange/` layer**'s import and export notes are the one
+area no slice owned and are on the queue by name. Beyond them: **RTL scripts**, which need a direction
+attribute on the shell and a canvas that does not mirror — the *text* mechanism is already indifferent to
+them. **Plural-rich languages** (Polish, Arabic, Russian) are proven by the loop and by nothing else yet:
+`pluralCategories` asks ICU4J and would demand `few` and `many` of a Polish bundle without a line of the
+checker changing, and the day one arrives is the day that claim is tested. A **per-user glossary**, so a
+shop's own words for its own parts override the project's. And a **translation memory** across releases, so
+a reworded English sentence keeps the reviewed target where the meaning did not move — today the plugin's
+checksum makes that an all-or-nothing decision per key.
 
 **The ask (user, session 81).** *"Currently the app is only English — but I'd like to offer it in multiple
 languages. We can start with English and German but the mechanism should work for a large number of languages.
@@ -16766,6 +16822,120 @@ note parked them here on the grounds that they are about the syntax of a number,
 they are a sublanguage with character positions in them, they belong with the parser rather than with the
 panel, and moving them was not the slice that also changes how the bundle loads. They go on the queue with
 slice 4. And **`exchange/`**'s import and export notes, which no slice has yet owned.
+
+### Implementation status (as built — **slice 4: the review becomes a machine, and the third language proves it**, session 81)
+
+Slices 1–3 built the mechanism and applied it to every word the chrome and the engine say. What was left
+was the half nobody can build once: the **review**. Two hand passes over the German bundle had made 85 and
+then 366 corrections, and every one of them was a person reading a sentence — which means the next
+translation run, the next language, the next fifty keys are all reviewed by whoever remembers to. Slice 4
+turns those two passes into a build fact, proves the whole loop on a language nobody designed for, and
+converts the two English fragments the earlier slices parked.
+
+**The classes of error are the tests.** `TranslationReview` is one function per class the reviews found,
+each answering the *offending keys by name*, and `TranslationReviewTest` runs all of them over every
+`app_*.arb` in `l10n/` on every build: a renamed placeholder; an ICU keyword translated (structural,
+through ICU4J — `{count, Plural, ein{…}}` is a `SIMPLE` argument and not a plural, and one that lost
+`other` does not parse at all, which is a finding rather than an exception); a `select` whose branches are
+not exactly the source's; a `plural` that lacks a category **the language itself distinguishes**; a brace
+that survives rendering (the apostrophe trap); the wrong register; a term of art that did not arrive; and a
+concept rendered two ways.
+
+**A check that has never failed is a check nobody knows the shape of.** Every one of those tests is two
+assertions: the shipped bundles are clean *and* a scratch copy with **one entry deliberately broken the way
+the review saw it broken** is caught, by key. That is the difference between a golden and a loop — a check
+that cannot fail and a check that always passes look identical from outside, and three of these were the
+first kind when they were written. `argsOf` reported **no plurals at all in either bundle** (a plural's own
+`{count}` inside its branches was overwriting the plural), the concept check condemned a dozen correct
+translations (`{upright}` is an argument name and `DRESSING{…}` a branch name, not the sentence saying the
+word), and the rejected-word check condemned *Verrundung* for containing *Rundung*. Each of the three was
+found by the seeded defect or by the first real run, and none of them would have been found by a green
+build.
+
+**What a language brings with it is data, not Kotlin.** `l10n/review/review-<lang>.tsv` carries three
+record kinds — `register` (the informal address the chrome does not use), `concept` (the English term, every
+surface form that counts as it having arrived, and the renderings the review rejected) and `except` (one
+key, one term, and *the argument for excusing it*). Three decisions in it are worth stating. The plural
+categories are **asked of ICU4J's `PluralRules`** rather than listed, and asked over the counts a drawing
+can actually state, so German demands `one, other` and Polish would demand `one, few, many, other` without
+a line of the checker changing. The approved and rejected halves are matched **asymmetrically** — an
+approved form is a plain substring, because German buries the term inside a compound, while a rejected one
+is a whole word unless the reviewer writes `*`, because the rejected rendering is usually a prefix of the
+approved one. And what is compared is the message's **prose**, extracted by ICU4J: nothing short of the
+real grammar tells `{upright}` and `FILLET{Verrundung}` apart, and two regex attempts each got one of them
+wrong.
+
+**The loop found real defects in the reviewed German**, which is the only evidence that matters. 33
+corrections in a bundle two people had already read: **19 register breaches** (`Zieh den Punkt`, `gib die
+Höhe`, `du sehen kannst`, `Behalte die andere Seite bei` — all of them buried in long help texts, which is
+exactly where a reader's attention runs out), and **14 one-word-per-concept breaches** the slice-2 sweep had
+not covered — *Spirale*/*Spule*/*Wendel* beside *Helix*, *Abrundung* beside *Verrundung*, *Loft* beside
+*Erhebung*, *Hülle* for both *Haut* and *Schale*, *Arbeitsfläche* beside *Arbeitsebene*, `Blended Body` and
+`Dressing` left in English inside German sentences. Five keys are excused by name, each because the English
+word is a term of art as a noun and an ordinary verb or adjective in that sentence (*its points sweep no
+area*, *skin them with Loft*, *the corners mitre 3 mm off*), which is slice 1's own finding — a pinned lemma
+crossing a verb and a noun is how *Fillet edge* became *round off the fillet*.
+
+**French, and what a third language actually costs.** One line in `targetLangs`, `l10n/glossary/en-fr.tsv`,
+and `stripTranslationStamps` — a task, because the plugin's issue #7 makes a newly added language look
+already-done and the alternative is editing 2,163 checksums by hand. The run: **187,345 billed characters
+for French** in 3 m 1 s over 2,330 fragments in 445 context groups, plus **2,027 for German's 31 new keys**;
+the other 2,174 German entries were reused **verbatim, hand review and all**, which is the property that
+makes a re-translation safe. Then the loop, and it named a great deal: 33 keys where DeepL translated the
+*placeholder name* (`{nom}`, `{raison}`, `{liste}`, `{nombre}` — the generator's own guard caught these and
+refused to compile), 3 with `pluriel`/`un{`/`autres{` for `plural`/`one{`/`other{`, and — the finding of the
+slice — **325 values where an apostrophe broke ICU**. French writes one in every other word, `l'` before a
+brace *quotes the brace*, and the result is a message that renders the literal text `{text}` and binds
+nothing. The cure is one rule applied to the whole bundle (every `'` is a literal `''`, because this project
+never wants ICU quoting), and it is a rule that belongs to the *language*, not to the translator: any
+language with elision will need it, and the brace check is what says whether it was applied.
+
+**The French review, stated as what it is.** After the structural classes came 38 terminology findings and
+a **non-native reviewer's pass** over the chrome — the ~135 tool titles and the panel labels — which is
+recorded here and in `review-fr.tsv` as the honest limit of this delivery. It found `Intersect`, `Ortho
+path` and `Extent (Z)` untranslated; *Fillet* titled **Chanfrein** (a fillet named as a chamfer); *Ray* and
+*Radius* both **Rayon**; four spellings of *sphere locus*; *free* as **gratuit** (free of charge) and *Dim
+construction* as **Construction des cotes** (dimension the construction) — two mistranslations that reverse
+the meaning of a button; and 24 keys where a placeholder was read as a quantity word (`{count} de points`,
+`one{Élément {count}}`), which is a plural that does not pluralise. What a native pass would add is more
+`concept` lines and more `register` words, and the loop is what makes adding them a one-line change instead
+of a re-read of 2,205 sentences.
+
+**The last two English fragments.** `Editor.currentHelp` assembled the armed-tool hint out of five pieces —
+the tool's help, the word *Using*, `name = `, the default quantity, `(default)` — joined at the moment the
+line was *built*, which froze its language and its number formatting. It is one message with the name and
+the quantity as arguments now (`status.tool.armedUsing`), the tool's help is a `Msg` rather than a rendered
+`String` (`ToolDef.helpMsg`), and the hint therefore re-reads itself on a language switch like every other
+note since slice 2. And the **formula parser's diagnostics** — parked by slice 2 and again by slice 3 — are
+26 messages: the character positions are arguments, the function names, unit symbols and dimension tokens
+stay as they are because they are the formula language's own vocabulary (OP-18), and `ExprError` and
+`DeriveError` carry a `Msg` exactly as `DimensionError` already did, so `ExprNode` hands the reason on as a
+value instead of re-wrapping a rendered string. The two dimension refusals under them (`Units.kt`) went the
+same way. **No English was reworded**: every one of the ~1500 substring assertions reads the sentence it
+always read, and the one thing that moved is `ExprEval.ROUNDING_NOTE`, which was the *sentence* and is now
+`ROUNDING_ADVICE`, the formula it recommends. `EngineBundleTest` grew `expr/` and `units/` and needed **no
+new whitelist entry**; its five entries all still state programming invariants, so the whitelist did not
+shrink either, and that is worth saying rather than claiming a saving that did not happen.
+
+**Measured.** `constructit.js` is **585,350 bytes gzipped with French and 585,347 without it**: a third
+language costs the English reader **3 bytes**, the tag in `Messages.locales`. `l10n/fr.js` is 85,727 bytes
+gzipped, `l10n/de.js` 88,938, and each is fetched only by the reader who asks for that language. Against
+slice 3's 581.5 kB the main bundle is +3.9 kB, all of it slice 4's own English: the 31 new keys of the
+expression sublanguage and the armed hint. `MessageBundleTest.everyLanguageButEnglishRidesInItsOwnChunk`
+now runs over **every** language rather than German alone, which is what keeps the 3 bytes true for the
+fourth.
+
+**One correctness fix outside the text.** `jvmTest` did not declare `l10n/` as an input, so correcting a
+translation or adding a `concept` line left the test task up to date against yesterday's answer — the loop
+failing to be a loop, and the reason two runs of these very checks reported a stale all-clear. It does now.
+
+**What is parked, named so it is not looked for.** The **`exchange/` layer**'s import and export notes —
+about twenty sentences in `Exports.kt`, `Imports.kt`, `JtImport.kt` and `ExportScene.kt`, plus the
+`"{n} wireframe run" + (if (n == 1) "" else "s")` idiom that renders *"2 Elements"* in German. No slice of
+OP-29 has owned them, they are outside the five areas slice 2 defined, and they are the one place a user
+can still be shown an English sentence. That is a **future extension** with a queue line of its own, not a
+non-goal: the mechanism is finished and applying it there is an afternoon's work with the loop already
+standing.
 
 
 ## Open work queue (crash-safe snapshot; ordered)
@@ -20751,7 +20921,24 @@ boundary piece for equal endpoints, and `tangenciesFit` asking the **dressed** f
 chain what one pass built (a bullnose). See the as-built note *the free end's notch* under the edge-blend
 entries.
 
-**Queued in session 81 — languages (OP-29); slices 1, 2 and 3 retired, slice 4 still open.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, ICU4J and `Intl.NumberFormat` as the two `formatNumber` actuals, the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge — and one chunk per language, fetched when it is chosen. See *Languages (OP-29)*. What is left is **(4)** the review loop, proven on a third language; and parked with it, the two areas no slice has owned: the **expression parser's own diagnostics** (`expr/Expr.kt`) and the **`exchange/` layer**'s import and export notes.
+**Retired in session 81 — languages (OP-29), all four slices.** The mechanism, the sentences, the numbers
+and the review loop: ARB files translated incrementally by the user's `auto-translate` plugin, the English
+ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `formatMessage` actuals
+and ICU4J and `Intl.NumberFormat` as the two `formatNumber` ones, every status note and refusal reason a
+*message value* rendered at the edge, one chunk per language fetched when it is chosen, and — slice 4 — the
+two hand reviews' classes of error turned into tests that run over every bundle and are each proved against
+a seeded defect. Proven on a **third** language: French cost 187,345 DeepL characters, one line in
+`targetLangs`, and the English bundle **3 bytes gzipped**. See *Languages (OP-29)*. The expression parser's
+own diagnostics, parked twice, went with it. It leaves **one** thing parked, stated where it belongs: the
+**`exchange/` layer**'s import and export notes, the one area no slice of OP-29 owned — a future extension
+with the mechanism already built and the loop already standing, not a non-goal.
+
+**Queued in session 81 — the `exchange/` layer's own words (OP-29's one parked area).** About twenty
+user-visible sentences in `Exports.kt`, `Imports.kt`, `JtImport.kt` and `ExportScene.kt` — what was exported
+and what was skipped, why a JT file could not be read, which bodies are open shells — plus one
+`+ (if (n == 1) "" else "s")` idiom that renders *"2 Elements"* in German. They are the last English a user
+can be shown. The work is: move them into `l10n/app_en.arb` with real descriptions, add `exchange/` to
+`EngineBundleTest`'s list, re-run `translateArb`, and let `TranslationReviewTest` name what came back wrong.
 
 **Slice 1 of the languages retired in session 81 — the mechanism, and the chrome.** The ARB, the generator,
 the two `format` actuals and the locale switch are built, and the whole chrome speaks them: 134 tool rows,

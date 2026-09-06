@@ -30,6 +30,7 @@ parameters so recompute/undo/reload are deterministic.
 ./gradlew jsBrowserDevelopmentRun --continuous       # live-reloading dev server
 ./gradlew jsBrowserDistribution                      # production bundle -> build/dist/js/productionExecutable/
 ./gradlew translateArb --no-configuration-cache      # NOT part of the build: re-translate l10n/ through DeepL
+./gradlew stripTranslationStamps                     # ...and this first, when adding a *new* language
 ```
 
 Kotlin Multiplatform (JVM + JS/IR browser), Gradle wrapper included, JDK 17+.
@@ -77,10 +78,11 @@ be a `Msg` and renders in the same locale, which is how a refusal names a face i
 - **`index.html` states keys, never words**: `data-i18n`, `data-i18n-title`, `data-i18n-placeholder`, which
   `Main.kt`'s `applyStaticText()` fills in and refills when the language changes.
 - **Two tests fail the build on an English sentence left in Kotlin**: `ChromeBundleTest` for `Tools.kt`,
-  `Main.kt` and `index.html`; `EngineBundleTest` for `geom/`, `dsl/`, `core/`, `Document.kt` and
-  `Editor.kt`. A scalar slot's name is exempt by rule: it becomes a *parameter name in the file*, so it is
-  format and stays locale-neutral (OP-18); so is a `require`/`throw` that states a programming invariant, and
-  each of those is listed by hand with its reason.
+  `Main.kt` and `index.html`; `EngineBundleTest` for `geom/`, `dsl/`, `core/`, `expr/`, `units/`,
+  `Document.kt` and `Editor.kt`. A scalar slot's name is exempt by rule: it becomes a *parameter name in the
+  file*, so it is format and stays locale-neutral (OP-18); so is a `require`/`throw` that states a
+  programming invariant, and each of those is listed by hand with its reason. `exchange/`'s import and
+  export notes are the one area no slice has owned — see the OP-29 closing note in DESIGN.md.
 - **Never build a sentence by concatenation.** A clause that is sometimes empty is a `{name}` placeholder of
   type `message` filled with `Msg.EMPTY`; a choice of words is an ICU `select` *inside* the pattern, with the
   article in each branch (German declines, English does not); a count is an ICU `plural`, never
@@ -91,12 +93,42 @@ be a `Msg` and renders in the same locale, which is how a refusal names a face i
   apostrophe that touches a brace, because `'{n}'` **quotes the brace** and renders the literal text `{n}`;
   and never leave a `select` branch empty (the translation pipeline refuses it, and it always wants to be a
   plural instead).
-- **`translateArb` is not part of the build**: it spends DeepL characters, so it is run by hand when the
-  English bundle has changed. It needs `deepl.apiKey` in `~/.gradle/gradle.properties`, and
-  `--no-configuration-cache` (the plugin reads `Task.project` at execution time). `l10n/app_de.arb` is
-  committed **like a golden**: machine-written, then reviewed by hand — and a hand fix survives later runs,
-  because the plugin reuses an existing target entry whose English source is unchanged. `l10n/glossary/`
-  pins the terms of art DeepL cannot know.
+- **The review loop is a build fact.** `TranslationReviewTest` runs the classes of error the two German
+  hand reviews found over **every** bundle in `l10n/`, naming the offending key: a renamed placeholder, a
+  translated ICU keyword, a `select` that lost a branch or a `plural` that lacks a category the language
+  itself distinguishes (asked of ICU4J's `PluralRules`, never tabulated), an apostrophe that quoted a brace
+  out of existence, the wrong register, a term of art that did not arrive, and a concept rendered two ways.
+  Each check is also **proved against a seeded defect** in the same test, so no check can pass by being
+  unable to fail. What it knows about a language is data, never Kotlin — see *Translating* below.
+
+### Translating
+
+**`translateArb` is not part of the build**: it spends DeepL characters, so it is run by hand when the
+English bundle has changed. It needs `deepl.apiKey` in `~/.gradle/gradle.properties`, and
+`--no-configuration-cache` — the plugin reads `Task.project` at execution time (haumacher/auto-translate
+issue #4). Every `l10n/app_<lang>.arb` is committed **like a golden**: machine-written, then reviewed — and
+a hand fix survives later runs, because the plugin reuses an existing target entry whose English source is
+unchanged (one run of 2,205 keys reused 2,174 German ones verbatim and billed 2,027 characters for the 31
+that were new).
+
+**Adding a language** is three files and one extra step:
+
+1. add the tag to `targetLangs` in `build.gradle.kts`, and write `l10n/glossary/en-<lang>.tsv` — the terms
+   of art DeepL cannot know, *terms of art only*: a pinned lemma that crosses a verb and a noun is how
+   *Fillet edge* became *round off the fillet*;
+2. **run `./gradlew stripTranslationStamps` first.** The plugin checksums the *source resource*, not the
+   pair (resource, target language), so once `app_en.arb` is stamped a newly added language is considered
+   already done and arrives as `{"@@locale": "fr"}` having billed nothing (issue #7). The task removes the
+   `x-translated` stamps so every key looks new; the languages that already have a target are unaffected,
+   and the stamps come back on the next run. Never edit the 2,000 stamps by hand;
+3. `./gradlew translateArb --no-configuration-cache`, then write `l10n/review/review-<lang>.tsv` — the
+   language's register words, its one-word-per-concept decisions and the argued per-key exceptions. It is
+   not optional: `TranslationReviewTest` fails a language that arrives without one, and the file it names
+   is the record of the review's arguments.
+
+Then run `./gradlew jvmTest --tests "constructit.TranslationReviewTest"` and correct what it names. The
+main bundle does not grow: every language but English rides in `l10n/<lang>.js`, and adding French cost the
+English bundle **3 bytes gzipped** (the tag in `Messages.locales`).
 
 ## Architecture
 

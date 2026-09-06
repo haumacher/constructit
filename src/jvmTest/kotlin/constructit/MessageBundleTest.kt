@@ -297,20 +297,28 @@ class MessageBundleTest {
         assertTrue(common.exists(), "expected the generator to have run: ${common.path}")
         val source = common.readText()
         val english = bundle("en")
-        val german = bundle("de")
-        val sample = german.keys.first { english[it] != null && german[it] != english[it] }
-        assertTrue(source.contains(quoted(english.getValue(sample))), "the English pattern belongs in the main bundle")
-        assertFalse(source.contains(quoted(german.getValue(sample))), "the German one does not: $sample")
+        // **every** language, not only German (slice 4): the promise the chunking made is that adding one
+        // costs the main bundle nothing, and the only way that stays true is if the check counts them all.
+        // Measured on the third language's arrival, the English bundle grew by 3 bytes gzipped — the tag
+        // `"fr"` in `Messages.locales` — and everything else went into `l10n/fr.js`.
+        val others = Messages.locales.filter { it != "en" }
+        assertTrue(others.size >= 2, "expected at least two translated languages, got $others")
+        for (locale in others) {
+            val target = bundle(locale)
+            val sample = target.keys.first { english[it] != null && target[it] != english[it] }
+            assertTrue(source.contains(quoted(english.getValue(sample))), "the English pattern belongs in the main bundle")
+            assertFalse(source.contains(quoted(target.getValue(sample))), "$locale's does not: $sample")
 
-        val chunk = File("build/generated/l10n/jsResources/l10n/de.js")
-        assertTrue(chunk.exists(), "expected one chunk per language: ${chunk.path}")
-        val text = chunk.readText()
-        assertTrue(text.contains(quoted(german.getValue(sample))), "…it belongs in German's chunk: $sample")
-        // a classic script assigning a flat array, which is what loads over `file:` as well as over http
-        assertTrue(text.contains("""(g.constructitL10n = g.constructitL10n || {})["de"] = ["""), text.take(200))
-        // and only what German carries: a key it does not translate falls back rather than being copied
-        val untranslated = english.keys.firstOrNull { it !in german }
-        if (untranslated != null) assertFalse(text.contains(quoted(untranslated)), "$untranslated is not German's to carry")
+            val chunk = File("build/generated/l10n/jsResources/l10n/$locale.js")
+            assertTrue(chunk.exists(), "expected one chunk per language: ${chunk.path}")
+            val text = chunk.readText()
+            assertTrue(text.contains(quoted(target.getValue(sample))), "…it belongs in $locale's chunk: $sample")
+            // a classic script assigning a flat array, which is what loads over `file:` as well as over http
+            assertTrue(text.contains("""(g.constructitL10n = g.constructitL10n || {})["$locale"] = ["""), text.take(200))
+            // and only what that language carries: a key it does not translate falls back rather than being copied
+            val untranslated = english.keys.firstOrNull { it !in target }
+            if (untranslated != null) assertFalse(text.contains(quoted(untranslated)), "$untranslated is not $locale's to carry")
+        }
     }
 
     /** A Kotlin/JavaScript string literal of [text], which is how both generated artifacts spell one. */

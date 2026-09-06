@@ -11,8 +11,15 @@ import kotlin.test.assertTrue
  * `ChromeBundleTest` is this test one layer up, and the argument is identical: the value of the refactor is
  * its *coverage*, and coverage is what a feature like this loses silently — the next refusal written in
  * `geom/`, the next status note added to `Document`, carries its words in Kotlin unless something says
- * otherwise. So this reads the five places slice 2 owns — `geom/`, `dsl/`, `core/`, `editor/Document.kt`
- * and `editor/Editor.kt` — lexes their string literals and fails on any that reads as an English sentence.
+ * otherwise. So this reads the places the engine speaks from — `geom/`, `dsl/`, `core/`, `expr/`, `units/`,
+ * `editor/Document.kt` and `editor/Editor.kt` — lexes their string literals and fails on any that reads as
+ * an English sentence.
+ *
+ * `expr/` and `units/` joined the list in **slice 4**: the formula language's own diagnostics (*"a value is
+ * expected at position 4"*, *"unknown unit 'in'"*) and the two dimension refusals beneath them were parked
+ * by slice 2 and again by slice 3, and they were the last English the engine produced. What is left outside
+ * this list, and why, is `exchange/` — the import and export notes, which are the one area no slice of
+ * OP-29 has owned; see the closing note in DESIGN.md.
  *
  * What is deliberately **not** a violation, each for a stated reason:
  *
@@ -30,6 +37,10 @@ class EngineBundleTest {
             "src/commonMain/kotlin/constructit/geom",
             "src/commonMain/kotlin/constructit/dsl",
             "src/commonMain/kotlin/constructit/core",
+            // OP-29 slice 4: the formula language's own diagnostics and the two dimension refusals under
+            // them, which slices 2 and 3 parked twice and which are messages now
+            "src/commonMain/kotlin/constructit/expr",
+            "src/commonMain/kotlin/constructit/units",
             "src/commonMain/kotlin/constructit/editor/Document.kt",
             "src/commonMain/kotlin/constructit/editor/Editor.kt",
         )

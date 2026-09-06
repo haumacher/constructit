@@ -49,9 +49,11 @@ class ExprNode(
         return try {
             EvalResult.Ok(ScalarValue(ExprEval.eval(ast) { env[it] }))
         } catch (e: DimensionError) {
-            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = Msg.text(e.message ?: "")))
+            // OP-29 slice 4: the reason is a value now, so the whole sentence — the formula's name and the
+            // parser's own diagnostic inside it — reads in the language of whoever is looking at it
+            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = e.why))
         } catch (e: ExprError) {
-            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = Msg.text(e.message ?: "")))
+            EvalResult.Invalid(Msgs.refusalQualified(name = Msg.text(text), reason = e.why))
         }
     }
 }

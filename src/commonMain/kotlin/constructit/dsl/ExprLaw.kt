@@ -43,7 +43,7 @@ class ExprLaw(
     ): Map<String, Quantity> {
         val out = HashMap<String, Quantity>(names.size)
         for ((k, n) in names.withIndex()) {
-            val q = (args.getOrNull(from + k) as? ScalarValue)?.q ?: throw ExprError(Msgs.refusalLawNotANumber(name = n).render())
+            val q = (args.getOrNull(from + k) as? ScalarValue)?.q ?: throw ExprError(Msgs.refusalLawNotANumber(name = n))
             out[n] = q
         }
         return out

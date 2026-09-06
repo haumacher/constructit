@@ -2986,6 +2986,23 @@ class BrowserE2ETest {
                 page.selectOption("#v-lang", "de")
                 assertTrue(status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "de")), status())
 
+                // **A third language, and nothing in the code knew about it** (OP-29 slice 4). French was
+                // one line in `targetLangs` plus a review; here it is from outside — the picker grew an
+                // option because `Messages.locales` did, the chunk is fetched the moment it is chosen, and
+                // the note the *hide* produced re-reads itself in it without the gesture being repeated.
+                assertTrue(File(dist, "l10n/fr.js").exists(), "the French chunk must be deployed beside the page")
+                page.selectOption("#v-lang", "fr")
+                until(page, "the French chunk to land") { heading() == Messages.uiPanelDrawing("fr") }
+                assertTrue(toolTip("filletedge").startsWith(Messages.toolFilletedgeTitle("fr")), "got: ${toolTip("filletedge")}")
+                assertTrue(
+                    status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "fr")),
+                    "the standing note reads French; got '${status()}'",
+                )
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/53-chrome-fr.png")))
+                page.selectOption("#v-lang", "de")
+                until(page, "German again") { heading() == Messages.uiPanelDrawing("de") }
+                assertTrue(status().startsWith(Messages.statusWhatSelectionIsElement("other", 1, "de")), status())
+
                 page.click("#v-hidden")
                 val hidden = page.querySelectorAll("#tree .item").map { it.getAttribute("title") ?: "" }
                 assertTrue(
