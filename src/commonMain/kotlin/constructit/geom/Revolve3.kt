@@ -1008,20 +1008,31 @@ object Revolve3 {
             return (psi + sign * acos(c)).takeIf { f.turnContains(it) }
         }
 
-        /** Where between two stations the cut begins or ends, by halving — so a run's ends are its own. */
+        /**
+         * Where between two stations the cut begins or ends, by halving — so a run's ends are its own.
+         *
+         * **Handed back on the side the cut is on** (OP-31, slice 5d). The two stations bracket one change
+         * of state, and which of them is the live one depends on which way the run is going: a run that
+         * *begins* here has its live station second and one that *ends* here has it first. Converging on
+         * whichever side [lo] is on answers both, and it is the answer the caller can use — the parameter on
+         * the dead side states no turn angle at all, so the point was simply dropped and the run ended at
+         * its last whole station. On a bevelled one-ended pivot's turning leg that lost the very station
+         * where the leg hands over to the slide beside it, and the level section through the corner could
+         * not close.
+         */
         fun edgeAt(
             lo: Double,
             hi: Double,
             sign: Double,
-            wantHi: Boolean,
         ): Double {
+            val live = turnAt(at(lo), sign) != null
             var l = lo
             var h = hi
             repeat(40) {
                 val m = (l + h) / 2.0
-                if ((turnAt(at(m), sign) != null) == wantHi) h = m else l = m
+                if ((turnAt(at(m), sign) != null) == live) l = m else h = m
             }
-            return h
+            return if (live) l else h
         }
         val segs = ArrayList<Pair<Vec2, Vec2>>()
         for (sign in listOf(1.0, -1.0)) {
@@ -1032,7 +1043,7 @@ object Revolve3 {
                 if (i > 0 && (th != null) != live) {
                     grazePoint(f, cut, poly, i, rMin, psi, c0)?.let { run.add(it) }
                         ?: run {
-                            val t = edgeAt(i - 1.0, i.toDouble(), sign, th != null)
+                            val t = edgeAt(i - 1.0, i.toDouble(), sign)
                             turnAt(at(t), sign)?.let { run.add(cut.toLocal(f.world(at(t).x, at(t).y, it))) }
                         }
                 }

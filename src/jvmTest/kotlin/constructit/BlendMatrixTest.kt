@@ -681,14 +681,16 @@ class BlendMatrixTest {
         }
         assertEquals(36 * 2, stated + refused, "thirty-six pairs, two kinds")
         assertEquals(72, stated, "every pair states its faces, with no fault standing where a reason should")
-        // **The residue this item leaves, asserted as its own inverse.** Of the 144 cuts, 108 close and 36
-        // do not — every one of them at a corner where a band's **free end** stands in a face another band
-        // has taken away, which is the free end's own notch (session 81) and not the band's extent. It is
-        // pinned exactly so that closing one of them fails this test and the number is looked at, exactly as
-        // a named residue class is (and every one of the 36 still refuses **by name**, which is asserted
-        // above rather than assumed).
+        // **And there is no residue left here** (OP-31, slice 5d). Item 3b left 36 of the 144 cuts open and
+        // pinned the number so that closing one would be looked at; this is that look. The three causes were
+        // one composition each and none of them was the one item 3b named: a sampled run of a band's cut
+        // ended at the last **sample** the plane crossed rather than at the station where the band's own
+        // ruling ends, a turning leg's run dropped the very station where it hands over to the leg beside it,
+        // and a free end's cap standing **past** the corner of the face it belongs to was refused by the
+        // demand that a splice meet its neighbours on their own spans. All 144 close, and the number is
+        // pinned the other way round now: one that stops closing fails this test.
         assertEquals(144, cuts, "two heights per built cell")
-        assertEquals(108, closed, "the cuts that close; the 36 that do not are the free end's own notch: $open")
+        assertEquals(144, closed, "every cut through a built corner closes: $open")
         println("== faces at a corner: ${stated + refused} cells — $stated state their faces, $closed of $cuts cuts close, ${open.size} refuse by name")
     }
 

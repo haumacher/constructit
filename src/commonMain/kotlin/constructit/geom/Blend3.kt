@@ -2750,6 +2750,12 @@ object Blend3 {
         override fun ringAt(end: Pair<Int, Boolean>): Placement =
             members.first { it.first == end.first && it.second == end.second }.third
 
+        /**
+         * The point three **bevels** come to here, or null where the fill is a ball (OP-31, slice 5d) —
+         * what each of the three bands runs on to, in place of ending square across ([bandToItsCorners]).
+         */
+        fun apex(pieces: List<Piece>): Vec3? = if (ball != null) null else apexOf(pieces, members)
+
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
@@ -3130,6 +3136,24 @@ object Blend3 {
         members: List<Triple<Int, Boolean, Placement>>,
         loop: List<Vec3>,
     ): List<Triple<Vec3, Vec3, Vec3>>? {
+        val apex = apexOf(pieces, members) ?: return null
+        return loop.indices.map { Triple(apex, loop[it], loop[(it + 1) % loop.size]) }
+    }
+
+    /**
+     * **Where three bevels meeting at a vertex come to a point** — the meeting of their own three planes,
+     * and the one number the whole apex is (OP-31, item 3; read for the face list in slice 5d).
+     *
+     * Each bevel's plane is stated from the section it carries at the vertex station and the direction its
+     * run leaves in, so it *is* the band's own face and not a plane derived beside it. That is why the apex
+     * needs no face of its own: the three triangles [apexPatch] fans from it lie one in each of those three
+     * planes, edge to edge with the band whose plane it is, so the apex is the three **bands** running on to
+     * a point ([bandToItsCorners]) rather than a fourth surface.
+     */
+    private fun apexOf(
+        pieces: List<Piece>,
+        members: List<Triple<Int, Boolean, Placement>>,
+    ): Vec3? {
         val planes = ArrayList<Pair<Vec3, Double>>(members.size)
         for (m in members) {
             val piece = pieces[m.first]
@@ -3142,8 +3166,7 @@ object Blend3 {
             val unit = n.normalized()
             planes.add(unit to unit.dot(from))
         }
-        val apex = meetOfPlanes(planes) ?: return null
-        return loop.indices.map { Triple(apex, loop[it], loop[(it + 1) % loop.size]) }
+        return meetOfPlanes(planes)
     }
 
     /** Whether two rings are the **same** ring — the same points, however each side happens to order them. */
@@ -4901,7 +4924,8 @@ object Blend3 {
         val len = v.length()
         if (len <= Geom3.WELD_TOL) return patch
         val u = v * (1.0 / len)
-        val span = spanOf(pieces, at, cornersOf(pieces).list)
+        val corners = cornersOf(pieces).list
+        val span = spanOf(pieces, at, corners)
 
         fun corner(
             t: Double,
@@ -4931,21 +4955,55 @@ object Blend3 {
         val straight =
             m0 != null && m1 != null &&
                 (m0 - (a0 + a1) * 0.5).length() <= SAME_CURVE_TOL && (m1 - (b0 + b1) * 0.5).length() <= SAME_CURVE_TOL
+        // **and a band that ends at a bevelled vertex runs on to that vertex' own apex** (OP-31, slice 5d).
+        // Three bevels meeting at a convex vertex close on three planar triangles, each of them lying *in*
+        // one of the three bevel planes ([apexOf]) — so the apex is no new surface and needs no face, no
+        // slot and no address: it is this very band, ending in a point instead of square across. Stating it
+        // as three appended corner faces was the alternative and is worse twice over — it would say one
+        // plane twice, and it would move every appended slot after it (OP-30, slice 5g).
+        val apexNear = apexEnd(pieces, corners, at, true)?.let { plane.toLocal(it) }
+        val apexFar = apexEnd(pieces, corners, at, false)?.let { plane.toLocal(it) }
+
+        fun endRun(
+            from: Vec2,
+            to: Vec2,
+            apex: Vec2?,
+        ): List<ProfileElement>? =
+            apex?.let { listOf(ProfileElement.Seg(Segment(from, it)), ProfileElement.Seg(Segment(it, to))) }
         if (straight) {
             val ring =
-                listOf(
-                    ProfileElement.Seg(Segment(a0, a1)),
-                    ProfileElement.Seg(Segment(a1, b1)),
-                    ProfileElement.Seg(Segment(b1, b0)),
-                    ProfileElement.Seg(Segment(b0, a0)),
-                )
+                (endRun(a0, a1, apexNear) ?: listOf(ProfileElement.Seg(Segment(a0, a1)))) +
+                    listOf(ProfileElement.Seg(Segment(a1, b1))) +
+                    (endRun(b1, b0, apexFar) ?: listOf(ProfileElement.Seg(Segment(b1, b0)))) +
+                    listOf(ProfileElement.Seg(Segment(b0, a0)))
             return patch.copy(outline = ring)
         }
         val (near, nearTol) = fittedChain(Combine3.FIT_TOL_MM) { t -> corner(t, false) } ?: return patch
         val (far, farTol) = fittedChain(Combine3.FIT_TOL_MM) { t -> corner(1.0 - t, true) } ?: return patch
-        val ring = near + listOf(ProfileElement.Seg(Segment(a1, b1))) + far + listOf(ProfileElement.Seg(Segment(b0, a0)))
+        val ring =
+            (endRun(a0, a1, apexNear) ?: near) + listOf(ProfileElement.Seg(Segment(a1, b1))) +
+                (endRun(b1, b0, apexFar) ?: far) + listOf(ProfileElement.Seg(Segment(b0, a0)))
         return patch.copy(outline = ring, fitted = max(nearTol, farTol))
     }
+
+    /**
+     * The **apex** the vertex corner at one end of band [at] comes to, or null where that end is free, is
+     * closed by any other kind of corner, or is a *round* vertex (OP-31, slice 5d).
+     *
+     * A round vertex needs nothing here and gets nothing: its ball is tangent to all three bands all round,
+     * so each band ends on the ball's own circle and states a corner patch of its own ([Vertex.ballFace]).
+     * It is only a **bevelled** one that has no surface to name, because it has none: three planes meeting
+     * are the three bands themselves.
+     */
+    private fun apexEnd(
+        pieces: List<Piece>,
+        corners: List<Corner>,
+        at: Int,
+        atStart: Boolean,
+    ): Vec3? =
+        corners.filterIsInstance<Vertex>()
+            .firstOrNull { (at to atStart) in it.ends }
+            ?.apex(pieces)
 
     /**
      * The trimmed list and the notches the tip owes, derived at most **once per feature instance** behind
@@ -7454,7 +7512,51 @@ object Blend3 {
             after[0],
             v,
             if (forwards) chain else chain.reversed().map { GeomMath.reverse(it) },
+            bulge = !capStandsIn(face, v, map, piece),
         )
+    }
+
+    /**
+     * Whether a free end's cap stands **in** the face its plane belongs to, or **past** its corner
+     * (OP-31, slice 5d) — which is the one thing that decides whether the splice bites or extends.
+     *
+     * *The two shapes, and they are the same construction.* A band that ends free closes on a flat cap
+     * standing in the plane square to its crease, and the body has a face in that plane at that point —
+     * but not necessarily *under* the cap. Where the face's own material lies between the crease's two
+     * legs the cap is a **bite**: the corner of the ring is replaced by the wedge, which is session 81's
+     * notch and every case it was written for. Where the face lies on the *other* side of one of those
+     * legs — the block's own **reflex** plan corner, where the band carves into the leg beside it and the
+     * wall it leaves was interior material a moment ago — the cap **extends** the face instead: the same
+     * chain, spliced at the same corner, standing past the two ring pieces rather than inside them. The
+     * boundary's own arithmetic does not care which ([spliceInto] has said so since item 2); what cared was
+     * [meetOnSpan], which demands the junction on the ring piece's **own span** because a fillet's arc is
+     * tangent to that piece and its two crossings stand equally far from the corner. A cap that stands past
+     * the corner has no such ambiguity — its ends lie on the neighbours' carriers by construction — so the
+     * span is the wrong question there and [Notch.bulge] is the flag that says so.
+     *
+     * *Asked of the wedge and not of the corner.* The face's corner is a right angle in both shapes, so the
+     * corner's own angle says nothing; what says it is where the removed material stands. The wedge is
+     * **star-shaped from its own corner** (each row of it is one interval between the crease and the blend
+     * curve), so a point half a setback out along the bisector of the two legs is inside it at any dihedral
+     * and for a drawn profile alike — and whether *that* point is on the face is the whole question, asked
+     * of the ring rather than of any bookkeeping.
+     */
+    private fun capStandsIn(
+        face: FacePatch,
+        v: Vec2,
+        map: Affine,
+        piece: Piece,
+    ): Boolean {
+        val a1 = map.linear(Vec2(1.0, 0.0))
+        val a2 = map.linear(Vec2(0.0, 1.0))
+        if (a1.length() <= Vec2.EPS || a2.length() <= Vec2.EPS) return true
+        val bisector = a1.normalized() + a2.normalized()
+        if (bisector.length() <= Vec2.EPS) return true
+        val reach = 0.5 * min(piece.wedge.t1.length(), piece.wedge.t2.length())
+        if (reach <= Geom3.WELD_TOL) return true
+        val rings = Project3.ringsOf(face.outline)
+        if (rings.isEmpty()) return true
+        return onFace(rings, v + bisector.normalized() * reach)
     }
 
     /**
@@ -7603,8 +7705,11 @@ object Blend3 {
         val a = GeomMath.offsetCarrier(ring, 0.0) ?: return null
         if (offCarrier(ring, known) <= SAME_CURVE_TOL) return if (bulge || onSpanOf(ring, known)) known else null
         val b = GeomMath.offsetCarrier(end, 0.0) ?: return null
+        // …and a splice that stands **past** the corner meets its neighbour on that neighbour's own
+        // carrier beyond its end, which is the whole of what standing past it means (OP-31, slice 5d):
+        // demanding the ring's own span there would refuse the very extension the cap is
         return GeomMath.carrierCrossings(a, b)
-            .filter { onSpanOf(end, it) && onSpanOf(ring, it) }
+            .filter { onSpanOf(end, it) && (bulge || onSpanOf(ring, it)) }
             .minByOrNull { (it - known).length() }
     }
 

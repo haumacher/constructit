@@ -17064,17 +17064,26 @@ reached. All **72 state their faces**, every face named and not one carrying a f
 Two cuts per cell at the corner's own setbacks: **108 of 144 close** and **36 refuse by name**, pinned exactly
 so that closing one fails the test and the number is looked at.
 
-**Cuts, each whole, each named and none silent.** (1) **The 36 open cuts** are a class and not a scatter: each
-is a corner where a band's **free end** stands in a face another band has taken away, which is the free end's
-own notch (session 81) and not the band's extent — the notch is spliced above the trim while the strip is taken
-below it, and the two do not compose there yet. Every one of them refuses **by name**; none draws a stale
-curve. (2) **A rounding whose target is a *corner curve*** — item 3's own chain — takes a strip off the
+**Cuts, each whole, each named and none silent.** ~~(1) **The 36 open cuts** are a class and not a scatter:
+each is a corner where a band's **free end** stands in a face another band has taken away, which is the free
+end's own notch (session 81) and not the band's extent — the notch is spliced above the trim while the strip
+is taken below it, and the two do not compose there yet.~~ — *retired in session 83 by slice (5d), and the
+diagnosis was wrong as well as the count: the notch was already spliced into the trimmed outline, the 36 were
+**three** unrelated causes (a splice standing past the corner it is spliced at, a sampled run ending at a
+sample rather than at the band's own station, and a turning leg's run losing the station it hands over at),
+and all 144 cuts close. See the as-built note for slice 5d.* Every one of the 36 refused **by name**; none
+drew a stale curve. (2) **A rounding whose target is a *corner curve*** — item 3's own chain — takes a strip off the
 corner's own faces, and a strip on a **cone** is a surface offset this vocabulary has no word for
 (`correctedOutline`'s standing honesty line), so above the ribbon the corner keeps its whole turn and the
-section refuses by name; below it, it closes. (3) A **bevelled three-edge vertex** states no face for its apex
-(item 3's own cut, read here for the faces), so a level section through it refuses by name. (4) The
-**bevelled** one-ended pivot's cap chain is spliced above the trim, so its section refuses through the corner
-where the rounded one closes.
+section refuses by name; below it, it closes. ~~(3) A **bevelled three-edge vertex** states no face for its
+apex (item 3's own cut, read here for the faces), so a level section through it refuses by name.~~ —
+*retired in session 83 by slice (5d): there is no face to state, because the apex' three triangles lie **in**
+the three bevel planes, which are the three bands' own faces; each band runs on to the apex instead of ending
+square across, and nothing is appended.* ~~(4) The **bevelled** one-ended pivot's cap chain is spliced above
+the trim, so its section refuses through the corner where the rounded one closes.~~ — *retired in session 83
+by slice (5d), and it was not the cap chain: the chain was spliced and is. What refused was the **turning
+leg's** own sampled cut, which handed its end back on the side of the bracket where the leg no longer
+stands.*
 
 **And the demand the first delivery left standing: a face space on a dressing's own face.** A dressed body was
 addressable *"exactly where its base was"* (session 71, slice 3) and no further, so a bevel's **band** and the
@@ -17122,9 +17131,10 @@ against — measured, not guessed: the **incongruent inside corner** (24 cells: 
 kind meeting where the shared face turns an inside corner; session 79's congruence rule still leaves them apart,
 now with a sentence), a rounding **along a corner's own curved rails** (a walk's turning legs are arcs), a
 rounding along the **elliptical mitre** between two rounds (its section would change along the arc), a band
-whose **free end stands in a face another band has taken away** (36 face-class cuts: the notch is spliced above
-the trim and the strip taken below it), a general boolean over an operand with a **curved face** (item 4's cut
-1), the **bevelled vertex's apex** faces, the corner between a **curved and a straight edge** and the corner of
+whose ~~**free end stands in a face another band has taken away** (36 face-class cuts: the notch is spliced above
+the trim and the strip taken below it)~~ *(slice 5d, session 83: all 144 cuts close, and the causes were three
+others)*, a general boolean over an operand with a **curved face** (item 4's cut
+1), ~~the **bevelled vertex's apex** faces~~ *(slice 5d: the apex is the three bands themselves)*, the corner between a **curved and a straight edge** and the corner of
 **two wedges that are not congruent** (session 79's cuts 1 and 2, a loft's inside corner and a revolve's cap
 among them), and the two upright shapes the pivot cannot follow (parked in session 81). Not in the inventory,
 and not to be looked for: a rounding of a *round's* rail (36 cells) — a tangent hand-over has no crease, and the
@@ -17171,8 +17181,16 @@ as a tool.
   points exact on both. A bored block is a fixture, its rim rounds to an exact torus, and the matrix gains a
   bored-block class of 28 cells. The one whole cut is a crease through a **tangency** — two equal crossing
   cylinders — which refuses by name. See the as-built note below.
-- **(5d) The drawing's two composition gaps** — a free end's notch under a neighbour's trim, and the bevelled
-  vertex's apex faces, both face-list only; the 36 face-class cuts become closed sections.
+- ~~**(5d) The drawing's two composition gaps**~~ — **delivered in session 83, and there were three of them
+  rather than two, none of them where item 3b said**: the composition rule — every strip first, composing
+  down the chain, then every splice against the trimmed outline — was already what the drawing said, and
+  what stood in the way was a splice that stands **past** the corner it is spliced at (the L's reflex plan
+  corner, where a free end's cap *grows* the face instead of biting it), a sampled run of a band's cut that
+  ended at the last **sample** the plane crossed rather than at the station where the band's own ruling ends,
+  and a turning leg's run that handed its end back on the dead side of its own bracket. The bevelled vertex'
+  apex needs no face at all: its three triangles lie in the three bevel planes, so each band runs on to the
+  apex. All 144 face-class cuts close, no volume moves, nothing appends, and a face space on a dressed base
+  face at last draws the outline the body has. See the as-built note below.
 - **(5e) Session 79's two cuts** — the corner between a curved and a straight edge (a medial surface, fitted
   spine) and two wedges that are not congruent (a loft's inside corner, a revolve's cap), which also unparks
   session 81's slanted and ring uprights.
@@ -17710,6 +17728,113 @@ graph, and the mesh boolean's own summation order can differ by a part in 10¹²
 asserted equal to a part in 10⁹ rather than bit for bit; that is the mesh's noise and not the record's, and it
 predates this slice.
 
+
+#### Implementation status (as built — the drawing's composition gaps, slice 5d, session 83)
+
+**One composition, stated once — and none of the three gaps was where item 3b said it was.** Item 3b left
+**36 of the 144** cuts through a built corner open and pinned the number *"so that closing one of them fails
+this test and the number is looked at"*. This is that look, and the first thing it found is that the cause
+item 3b named was not the cause. Its cut (1) read: *"each is a corner where a band's **free end** stands in a
+face another band has taken away, which is the free end's own notch (session 81) and not the band's extent —
+the notch is spliced above the trim while the strip is taken below it, and the two do not compose there
+yet."* The two **do** compose, and did already: `deriveDressedFaces` has always spliced into the *trimmed*
+patch, the notch's `before`/`after` indices are parallel to it piece for piece, and `meetOnSpan` re-solves
+each junction on the boundary as it now stands. Measured cell by cell rather than reasoned about, the 36 were
+three unrelated causes, and the rule the slice is named for — **every strip first, composing down the chain,
+then every splice against the trimmed outline** — is what the drawing already said. What was wrong was three
+places where it could not be carried out.
+
+***Cause one: a splice that stands past the corner it is spliced at*** (16 cells). A band that ends free
+closes on a cap standing in the plane square to its crease, and the body has a face in that plane — but not
+always *under* the cap. At the L's own **reflex** plan corner the band carves into the leg beside it, and the
+wall the removal leaves was interior material a moment ago: the face **grows** by the wedge instead of losing
+its corner to it. Session 81's notch could only bite. The two shapes are one splice and the arithmetic never
+cared which — [Blend3.spliceInto] has said so since item 2, and `Notch.bulge` is the flag it says it with —
+but `meetOnSpan` demands the junction stand on the ring piece's **own span**, which is right for a bite (a
+fillet's arc is tangent to that piece, so its two crossings stand equally far from the corner they replace and
+nearness cannot choose between them) and refuses the very extension a cap past the corner is. So the notch
+now carries the flag, and which of the two it is is decided by **where the removed material stands**
+(`Blend3.capStandsIn`): the wedge is star-shaped from its own corner, so a point half a setback out along the
+bisector of the crease's two legs is inside it at any dihedral and for a drawn profile alike, and whether
+*that* point is on the face is the whole question — asked of the ring, not of any bookkeeping. The face's own
+corner is a right angle in both shapes, which is why the corner's angle says nothing and the material does.
+
+***Cause two: a sampled run that ends at a sample*** (20 cells, and the four of cause three). A band's cut is
+exact at every ruling and chords between ([Section3.cutRuledStrip]), and where a neighbouring rounding has
+taken part of the band away the ruling through a section point simply **stops** short of the cutting plane
+([Blend3.spanOf]) and the run ends. Ending the drawn curve at the last *sample* that still reached ended it
+wherever the sampling happened to fall — up to a whole step, `0.0818 mm` on the L-block's own 4 mm pair — and
+the neighbour's cut, which is **exact** there (a plane parallel to that band's rulings, `parallelBandCut`),
+then stood a tenth of a millimetre away and the loop did not close. The true end is a **station of the
+strip** and not a sample of it: at it the ruling's own endpoint lies *on* the cutting plane, which is the very
+condition being bracketed, so [Section3.runEnd] halves between the last ruling the plane crosses and the first
+it does not and hands back that endpoint — exact to the last bits of a double, and the two bands then meet
+where they actually meet. The same defect one sampler along closed the last four: `Revolve3`'s
+`parallelAxisRuns` already halved for its own ends, but handed the answer back on the side it converged
+*from*, which for a run that **ends** there is the dead side — `turnAt` states no angle at all, the point was
+dropped, and the run ended at its last whole station. On a bevelled one-ended pivot's turning leg that lost
+the very station where the leg hands over to the slide beside it, and item 3b's cut (4) — *"the bevelled
+one-ended pivot's cap chain is spliced above the trim, so its section refuses through the corner where the
+rounded one closes"* — was that, and not the cap chain at all: the cap chain was spliced, and is.
+
+***Cause three: the bevelled vertex' apex*** — item 3b's cut (3), *"a **bevelled three-edge vertex** states
+no face for its apex, so a level section through it refuses by name"*. Read as written it asks for a fourth
+surface, and there is none to state: `Blend3.apexPatch` fans three planar triangles from the meeting of the
+three bevel planes, and each of those planes **is** one of the three bands' own faces, stated from the section
+that band carries at the vertex station and the direction its run leaves in. So the apex is the three bands
+themselves, each **running on to a point** instead of ending square across, and that is where it is stated:
+`bandToItsCorners` ends such a band on the apex's two edges rather than on the straight one between the two
+stations, and the band's outline is five pieces instead of four. Naming three appended corner faces was the
+alternative and is worse twice over — it would state one plane twice, and it would move every appended slot
+after it (OP-30, slice 5g's whole subject). Nothing appends, no slot count changes, no stored address moves,
+and `facesAreWholeBoundary` is true there because the boundary is whole. A **round** vertex is untouched and
+needs nothing: its ball is tangent to all three bands all round and states a corner patch of its own.
+
+**And the face space finally shows the face.** `facePatchOfFootprintPiece` promised *"what the face space
+draws is the trimmed outline, taken from the dressed list where the two frames are the same plane, so the
+picture shows the rounded corner the body actually has"* — and never did it, because it demanded the two
+frames be the **same object**, and they are not: a base face keeps its **sketching** frame under a dressing
+(OP-17's intrinsic rule, so a stored `sketchspace el= piece=` goes on meaning what it meant) while the face
+list states the same face in whichever frame its emitter found convenient (item 3b). They are two frames of
+one plane, so the boundary carries between them through the rigid map `Project3.mapOnto` gives — and a mirror
+turns the ring over, so its pieces are walked the other way. Every face space on a dressed base face drew the
+plain rectangle before this and said nothing about the rounding; a shell's inner faces were the same sentence
+one feature along and are fixed with it.
+
+**What changed in the face list.** Nothing appended, nothing moved and no address means anything new. A base
+face whose free-end cap stands past its corner gains the wedge (its outline grows by one splice); a band that
+ends at a bevelled vertex ends on the apex (four pieces become five); and a face space on a base face now
+carries the outline the body has rather than the one it started with. **No volume moves**: every fixture in
+`BandOutlineCompositionTest` states its own volume against the number the build gave *before* the slice, and
+the whole suite's derived brackets — the matrix's 1400-odd cells included — are green and unmoved.
+
+**The face class's new split.** `BlendMatrixTest`'s *faces at a corner* class runs the same 72 cells and
+**all 144 cuts close** — 108 before, then 124 with the strip's own end, 128 with the turning leg's, 144 with
+the cap that stands past its corner. **None refuses**, so the class is pinned the other way round now: a cut
+that stops closing fails the test. Every other class is unmoved, and so is `BlendChainCostTest` — the
+composition is read where it always was and derives nothing new.
+
+**Cuts, each whole and each named.** (1) A **fitted** end and a bevelled vertex at the two ends of one band
+would want the apex spliced into a fitted chain; the apex is stated on the affine end and the fitted end keeps
+its chain, which is right for every body the catalogue builds (a vertex end is always a placement) and is
+written down rather than assumed. (2) The **strip on a corner curve above the ribbon** stays item 3b's cut
+(2): a strip on a **cone** is a surface offset this vocabulary has no word for, so above the ribbon the corner
+keeps its whole turn and the section refuses by name. It is not one of the 144. (3) A splice whose corner is
+claimed by **two** free ends at once is still refused rather than half-drawn (`spliceAll`'s own guard,
+unchanged), and no body in the catalogue makes one. (4) `capStandsIn` asks the question of the wedge's own
+bisector at half the smaller setback, which is inside the wedge for every section this drawing states and for
+every drawn profile that is star-shaped from its corner; a profile that is not would be answered wrongly
+rather than refused, and that is the one place here where the honest answer is a **bound** rather than a
+proof — a drawn section is refused by the corner catalogue long before it reaches this.
+
+Tests: `BandOutlineCompositionTest` (9) — the free end past a corner and the wedge it adds, the strip composed
+under a splice taken against it, a splice wholly inside a strip taking nothing, one straddling the strip's
+edge and trimmed to what is left (both stations exact, `√(4²−2²)` along the stepped piece), the bevelled
+vertex' apex read from all three bands at once with its triangle's area exact, item 2's **bevelled** one-ended
+pivot sectioning through its own corner, a face space carrying the composed outline, every one of the six
+bodies a byte-equal fixed point that reaches the same body through the file as through the DSL, and the volume
+of every one of them pinned to what the build gave before the slice. `BlendMatrixTest`'s face class re-pinned
+to 144 of 144.
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -22307,7 +22432,7 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, ~~(5d) the drawing's two composition gaps~~ — *delivered in session 83, and there were **three** of them rather than two, none of them where item 3b's cut list said: the composition rule — every strip first, composing down the chain, then every splice against the trimmed outline — was already what the drawing said, and what stood in the way was a splice standing **past** the corner it is spliced at (a free end's cap at the L's reflex plan corner *grows* the face rather than biting it), a sampled run of a band's cut ending at the last **sample** the plane crossed rather than at the station where the band's own ruling ends, and a turning leg's run handing its end back on the dead side of its own bracket. The bevelled vertex' apex needs no face at all — its three triangles lie in the three bevel planes, so each band simply runs on to the apex — and a face space on a dressed base face at last draws the outline the body has. All 144 face-class cuts close, no volume moves and nothing appends; see the as-built note under OP-31* —, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41

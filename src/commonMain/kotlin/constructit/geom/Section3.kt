@@ -1472,6 +1472,33 @@ object Section3 {
         Msgs.refusalSectionFaceAddressINIs()
 
     /**
+     * **What a face space actually draws: the face's own boundary, restated in the frame it is sketched in**
+     * (OP-31, slice 5d).
+     *
+     * A base face keeps its **sketching** frame under a dressing — same plane, same origin, same `u`, because
+     * a stored `sketchspace el= piece=` must go on meaning what it meant (OP-18) — while the face *list*
+     * states the same face in whichever frame its emitter found convenient (item 3b). The two are frames of
+     * one plane, so the boundary carries between them through the rigid map [Project3.mapOnto] gives, and a
+     * space then shows the trimmed corner, the strip and the spliced cap the body actually has. Demanding the
+     * two frames be the *same object* (which is what this did) meant they almost never were, so every face
+     * space on a dressed part drew the base's plain rectangle and said nothing about the rounding at all.
+     *
+     * A **mirroring** map turns the ring over, so its pieces are walked the other way; that keeps the
+     * boundary's own sense in the frame it lands in, which is OP-14's rule read one map along.
+     */
+    private fun outlineIn(
+        base: FacePatch,
+        stated: FacePatch?,
+    ): List<ProfileElement>? {
+        if (stated == null || stated.reason != null || stated.outline.isEmpty()) return null
+        val from = stated.plane ?: return null
+        val onto = base.plane ?: return null
+        val map = Project3.mapOnto(from, onto) ?: return null
+        val pieces = stated.outline.map { GeomMath.transform(it, map) }
+        return if (map.det < 0.0) pieces.reversed().map { GeomMath.reverse(it) } else pieces
+    }
+
+    /**
      * The face of [feature] over **footprint boundary piece** [piece] — the pick a plan view can make (a side
      * face projects to exactly one footprint edge), generalized from the prism to every feature whose faces
      * are named, and past the footprint to the flat ends (see [FACE_ADDRESS_CONVENTION]).
@@ -1481,6 +1508,7 @@ object Section3 {
      * touching a single recorded file: a pyramid's lateral face is a face space, and a ruled one refuses by
      * name.
      */
+
     fun facePatchOfFootprintPiece(
         feature: Feature3,
         piece: Int,
@@ -1502,9 +1530,8 @@ object Section3 {
             if (piece >= faceAddressCount(feature.base)) return dressedFacePatch(feature, piece)
             val (base, why) = facePatchOfFootprintPiece(feature.base, piece)
             if (base == null) return null to why
-            val trimmed =
-                faces(feature).first?.firstOrNull { it.name == base.name && it.plane != null && it.plane == base.plane }
-            return (if (trimmed == null) base else base.copy(outline = trimmed.outline)) to null
+            val trimmed = faces(feature).first?.firstOrNull { it.name == base.name }
+            return (outlineIn(base, trimmed)?.let { base.copy(outline = it) } ?: base) to null
         }
         // **A shelled part is sketched on exactly where its base was**, and its *inner* faces are reached past
         // the base's own ends by the very address space that already reaches a cap (session 75, and
@@ -1516,9 +1543,8 @@ object Section3 {
             if (piece >= Geom3.boundaryPieces(feature).size) return endFacePatch(feature, piece)
             val (base, why) = facePatchOfFootprintPiece(feature.base, piece)
             if (base == null) return null to why
-            val shelled =
-                faces(feature).first?.firstOrNull { it.name == base.name && it.plane != null && it.plane == base.plane }
-            return (if (shelled == null) base else base.copy(outline = shelled.outline)) to null
+            val shelled = faces(feature).first?.firstOrNull { it.name == base.name }
+            return (outlineIn(base, shelled)?.let { base.copy(outline = it) } ?: base) to null
         }
         // A revolution's face is the band its profile piece sweeps, and indices past the profile's own
         // pieces are the two caps of a partial turn ([Revolve3.facePatchOf]) — one address space, so a
@@ -2127,6 +2153,9 @@ object Section3 {
     /** How far apart two of a section's own pieces may be (mm) and still be one boundary. */
     private const val CHAIN_TOL = 1e-6
 
+    /** How many halvings settle where a sampled run of a strip's cut ends ([runEnd]) — a double's worth. */
+    private const val RUN_END_STEPS = 52
+
     /** Why a face the plane crosses more than once names no single input — the section still draws both. */
     private val CUT_TWICE =
         Msgs.refusalSectionPlaneCutsThatFaceSeparate()
@@ -2717,13 +2746,16 @@ object Section3 {
             val t = i.toDouble() / n
             val hit = crossRuling(strip.at(t), cut)
             if (hit == null) {
+                // **and the run ends where the strip does, not where the sampling does** (OP-31, slice 5d)
+                cur?.let { r -> runEnd(strip, cut, (i - 1).toDouble() / n, t)?.let { q -> add(r, q) } }
                 cur = null
             } else {
                 if (cur == null) {
                     cur = ArrayList()
                     runs.add(cur)
+                    if (i > 0) runEnd(strip, cut, t, (i - 1).toDouble() / n)?.let { q -> add(cur, q) }
                 }
-                if (cur.isEmpty() || (cur.last() - hit).length() > Geom3.WELD_TOL) cur.add(hit)
+                add(cur, hit)
             }
         }
         if (runs.isEmpty()) return SectionEdge(label, null, null, Msgs.refusalSectionPlaneDoesNotCut(label = label)) to emptyList()
@@ -2732,6 +2764,53 @@ object Section3 {
             if ((r.first() - r.last()).length() > Geom3.WELD_TOL) r.add(r.first())
         }
         return runsToEdge(label, runs)
+    }
+
+    /** One sampled station appended to a run, skipping the one that repeats where the last already stands. */
+    private fun add(
+        run: ArrayList<Vec2>,
+        at: Vec2,
+    ) {
+        if (run.isEmpty() || (run.last() - at).length() > Geom3.WELD_TOL) run.add(at)
+    }
+
+    /**
+     * **Where a sampled run of a strip's cut really ends** (OP-31, slice 5d) — the station between the last
+     * ruling the plane crosses and the first it does not, found by halving.
+     *
+     * *Why the sampling alone is not enough, and why this is not a fudge.* A strip's rulings are its face's
+     * own extent ([Blend3.spanOf]): where a neighbouring rounding has taken part of the band away, the
+     * ruling through a section point simply **stops** short of the cutting plane, and the run ends. Taking
+     * the last *sample* that still reaches ends the drawn curve wherever the sampling happened to fall — up
+     * to a whole step short — and the neighbour's own cut, which is exact, then stands a tenth of a
+     * millimetre away and the section does not close. The true end is a **station of the strip**, not a
+     * sample of it: at it the ruling's own endpoint lies *on* the cutting plane, which is the very condition
+     * being bracketed, so halving converges on it and the point handed back is that endpoint. Exact to the
+     * halving's own limit, which is the last bits of a double.
+     *
+     * [hit] is a parameter whose ruling the plane crosses and [miss] one whose ruling it does not; the two
+     * bracket exactly one change of state per span of the sampling, which is what makes the bisection sound.
+     */
+    private fun runEnd(
+        strip: RuledStrip,
+        cut: Plane3,
+        hit: Double,
+        miss: Double,
+    ): Vec2? {
+        var a = hit
+        var b = miss
+        var best: Vec2? = null
+        repeat(RUN_END_STEPS) {
+            val m = (a + b) / 2.0
+            val q = crossRuling(strip.at(m), cut)
+            if (q == null) {
+                b = m
+            } else {
+                a = m
+                best = q
+            }
+        }
+        return best
     }
 
     /**
