@@ -5262,6 +5262,45 @@
     },
     "x-translated": "6974a846"
   },
+  "refusal.blend.runOutCornerWhere": "the corner where {name} runs out into {name2} on {name3}",
+  "@refusal.blend.runOutCornerWhere": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.runOutHasNoPlane": "{name} is not a plane, so {what} has nothing to turn in or to be capped by — the pair there is a future extension. Leave one of the two edges sharp, or round a pair that stands between planes",
+  "@refusal.blend.runOutHasNoPlane": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "what": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.runOutDoesNotTurn": "{what} does not arrive square to {name}, so this drawing cannot say where the fill stops — the pair there is a future extension. Leave one of the two edges sharp, or round a pair whose three faces stand square to one another",
+  "@refusal.blend.runOutDoesNotTurn": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "what": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
   "refusal.blend.turnsPieceProfileThisDrawing": "{name} turns a piece of the profile this drawing has no revolved surface for",
   "@refusal.blend.turnsPieceProfileThisDrawing": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
@@ -5397,6 +5436,21 @@
       }
     },
     "x-translated": "74c47d9a"
+  },
+  "refusal.blend.insideCornerNotCongruent": "the inside corner where {name} meets {name2} on {name3} is one the two roundings cannot share — they are not congruent in the face they meet on, so they land on no common ring and, an inside corner being where two bands do not overlap at all, the sharp corner between them would simply stand there. Give both edges the same rounding, or leave one of them sharp",
+  "@refusal.blend.insideCornerNotCongruent": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
   },
   "refusal.blend.isNotOneStraightRun2": "{name} is not one straight run, so it carries no corner",
   "@refusal.blend.isNotOneStraightRun2": {
@@ -8838,6 +8892,21 @@
       }
     },
     "x-translated": "b4057cb"
+  },
+  "name.blend.runOutCorner": "the corner where {first} runs out into {second}, capped by {face}",
+  "@name.blend.runOutCorner": {
+    "description": "The name ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — gives one face or one edge of a solid. It is not an identifier but a description the user reads: it appears in the side panel, in the status line and inside refusal sentences, so it has to read as a noun phrase that can stand inside a sentence. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "first": {
+        "type": "message"
+      },
+      "second": {
+        "type": "message"
+      },
+      "face": {
+        "type": "message"
+      }
+    }
   },
   "refusal.sweep.foldOneCorner": "the corner {at} mm along the path mitres {need} mm off the {len} mm of run {side, select, before{before it} other{after it}}, which is more than there is — so {subject} would fold back on itself; {cure}",
   "@refusal.sweep.foldOneCorner": {

@@ -607,6 +607,7 @@ object Revolve3 {
         }
         if (perpToAxis) return BandCut(axisNormalCut(f, e, cut, k), null)
         if (throughAxis) return BandCut(throughAxisCut(f, e, cut, n), null)
+        if (parallelToAxis) return BandCut(null, parallelAxisRuns(f, e, cut))
         return BandCut(null, sampledRuns(f, e, cut))
     }
 
@@ -903,6 +904,161 @@ object Revolve3 {
         }
 
     // ---- the honest answer where there is no name (OP-15's approximated class) ----
+
+    /**
+     * A plane **parallel to the axis** and off it: the cut, sampled at points that are every one of them
+     * **exactly on the surface** — no triangle anywhere in the arithmetic (OP-31, item (b)).
+     *
+     * *The statement.* A point of the surface stands at `(s, r)` in the meridian half-plane turned by `θ`,
+     * and its distance to a plane whose normal is square to the axis is `c₀ + r·(a cos θ + b sin θ)` with
+     * `a = P·n`, `b = N·n` — the axial term is gone, because the plane is parallel to the axis. So the
+     * profile point decides the turn rather than the other way round: `cos(θ − ψ) = −c₀ / (r·|(a, b)|)`,
+     * two answers where there are any, and each of them a turn at which *that very point of the profile*
+     * lies on the plane. Walk the profile and the cut comes out point by point, every one exact, chords
+     * between — which is OP-15's approximated class, flagged and refused as an input like every other
+     * member of it, and **not** the same thing as reading a mesh: a torus met by a plane parallel to its
+     * axis is a quartic (a spiric of Perseus) and this drawing has no name for it.
+     *
+     * *Why it matters that the points are exact.* A run's two ends are the profile's own ends, so they land
+     * on the very tangency lines the neighbouring faces state — and a level section through a corner
+     * therefore **closes**. Cutting the tessellated surface instead put each end a chord's sag off its
+     * neighbour (0.036 mm on the L-block's own corner), which no chaining tolerance can be widened to
+     * absorb without absorbing real gaps too.
+     */
+    private fun parallelAxisRuns(
+        f: Frame,
+        e: ProfileElement,
+        cut: Plane3,
+    ): List<List<Vec2>> {
+        val n = cut.normal.normalized()
+        val a = f.P.dot(n)
+        val b = f.N.dot(n)
+        val amp = hypot(a, b)
+        if (amp <= DIR_EPS) return emptyList()
+        val psi = atan2(b, a)
+        val c0 = cut.distanceTo(f.O)
+        // the radius at which the plane **grazes** the turn's own circle: below it the surface does not
+        // reach the plane at all, and at it the two branches meet in one point of the surface
+        val rMin = abs(c0) / amp
+        val poly = stations(f, e)
+        if (poly.size < 2) return emptyList()
+
+        fun at(t: Double): Vec2 {
+            val i = min(poly.size - 2, max(0, t.toInt()))
+            val u = (t - i).coerceIn(0.0, 1.0)
+            return poly[i] + (poly[i + 1] - poly[i]) * u
+        }
+
+        fun turnAt(
+            q: Vec2,
+            sign: Double,
+        ): Double? {
+            if (q.y <= Geom3.WELD_TOL) return null
+            val c = -c0 / (q.y * amp)
+            if (abs(c) > 1.0) return null
+            return (psi + sign * acos(c)).takeIf { f.turnContains(it) }
+        }
+
+        /** Where between two stations the cut begins or ends, by halving — so a run's ends are its own. */
+        fun edgeAt(
+            lo: Double,
+            hi: Double,
+            sign: Double,
+            wantHi: Boolean,
+        ): Double {
+            var l = lo
+            var h = hi
+            repeat(40) {
+                val m = (l + h) / 2.0
+                if ((turnAt(at(m), sign) != null) == wantHi) h = m else l = m
+            }
+            return h
+        }
+        val segs = ArrayList<Pair<Vec2, Vec2>>()
+        for (sign in listOf(1.0, -1.0)) {
+            val run = ArrayList<Vec2>()
+            var live = false
+            for (i in poly.indices) {
+                val th = turnAt(poly[i], sign)
+                if (i > 0 && (th != null) != live) {
+                    grazePoint(f, cut, poly, i, rMin, psi, c0)?.let { run.add(it) }
+                        ?: run {
+                            val t = edgeAt(i - 1.0, i.toDouble(), sign, th != null)
+                            turnAt(at(t), sign)?.let { run.add(cut.toLocal(f.world(at(t).x, at(t).y, it))) }
+                        }
+                }
+                if (th == null && live) {
+                    for (k in 0 until run.size - 1) segs.add(run[k] to run[k + 1])
+                    run.clear()
+                }
+                live = th != null
+                if (th != null) run.add(cut.toLocal(f.world(poly[i].x, poly[i].y, th)))
+            }
+            for (k in 0 until run.size - 1) segs.add(run[k] to run[k + 1])
+        }
+        // the two branches meet where the plane grazes the surface, so the chaining every sampled answer
+        // goes through hands back one run there rather than two halves of one
+        return chainSegments(segs)
+    }
+
+    /**
+     * Where a run **begins or ends because the plane grazes the surface**, stated exactly: the station
+     * between `poly[i-1]` and `poly[i]` at which the radius passes [rMin], and the one turn angle there.
+     *
+     * Exact and not bisected, and that matters: at the graze the two branches meet, and a point found by
+     * halving the *predicate* lands `r·√(1 − c²)` off the meeting point — a microscopic error in `c` that
+     * the square root turns into a visible gap between two runs that ought to be one (a cone's hyperbola
+     * came back as two halves 3 µm apart).
+     */
+    private fun grazePoint(
+        f: Frame,
+        cut: Plane3,
+        poly: List<Vec2>,
+        i: Int,
+        rMin: Double,
+        psi: Double,
+        c0: Double,
+    ): Vec2? {
+        val lo = poly[i - 1].y - rMin
+        val hi = poly[i].y - rMin
+        if (lo * hi > 0.0 || lo == hi) return null
+        val u = lo / (lo - hi)
+        val q = poly[i - 1] + (poly[i] - poly[i - 1]) * u
+        val th = if (c0 <= 0.0) psi else psi + PI
+        if (!f.turnContains(th)) return null
+        return cut.toLocal(f.world(q.x, rMin, th))
+    }
+
+    /**
+     * The profile piece as `(s, r)` stations dense enough for the **turn** as well as for its own curvature:
+     * its own tessellation first (whose points lie on the curve), then sub-divided where a straight piece
+     * has no more points to give and a linear step is exact anyway.
+     */
+    private fun stations(
+        f: Frame,
+        e: ProfileElement,
+    ): List<Vec2> {
+        var poly = GeomMath.tessellatePiece(e).map { f.sr(it) }
+        if (poly.size < 2) return poly
+        val want = max(3, GeomMath.chordSteps(poly.maxOf { abs(it.y) }, f.sweep, GeomMath.TESS_TOL_MM))
+        var tol = GeomMath.TESS_TOL_MM
+        var guard = 0
+        while (poly.size - 1 < want && guard < 8) {
+            tol /= 4.0
+            val next = GeomMath.tessellatePiece(e, tol).map { f.sr(it) }
+            guard++
+            if (next.size <= poly.size) break
+            poly = next
+        }
+        if (poly.size - 1 >= want) return poly
+        val k = max(1, (want + poly.size - 2) / (poly.size - 1))
+        val out = ArrayList<Vec2>((poly.size - 1) * k + 1)
+        for (i in 0 until poly.size - 1) {
+            for (j in 0 until k) out.add(poly[i] + (poly[i + 1] - poly[i]) * (j.toDouble() / k))
+        }
+        out.add(poly.last())
+        return out
+    }
 
     /**
      * The band's own cut, sampled: the surface is tessellated exactly as the emitter tessellates it —

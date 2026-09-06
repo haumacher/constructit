@@ -211,6 +211,9 @@ object Blend3 {
     /** How many halvings the *largest radius that fits* is reported to (a refusal that heals, OP-3). */
     private const val FIT_STEPS = 24
 
+    /** How many halvings a walk parameter is found by — tighter than [FIT_STEPS], since a chain has to meet. */
+    private const val BISECT_STEPS = 48
+
     /** How far off a face's own boundary (mm) still counts as on the face — see [onFace]. */
     private const val ON_BOUNDARY_TOL = 1e-6
 
@@ -1477,6 +1480,143 @@ object Blend3 {
     }
 
     /**
+     * A corner that is **one section carried along a walk** — the two the rolling ball makes when it leaves
+     * its own edge and follows what stands at the next one.
+     *
+     * There are exactly two, and they differ only in how the walk *ends*. A [Turn] walks from one band's end
+     * round to another band's end, so the walk is closed at both ends by a tube. A [Pivot] walks from one
+     * band's end until the third face at the vertex caps it, so it is closed at one end by a tube and at the
+     * other by a plane — *"the pivot about a band with one end instead of two"* (OP-31, item (b)).
+     *
+     * Everything else about them is the same object, which is why it is said once here: the rings are the
+     * legs' own placements in order, one face per (leg × section piece), and a leg that turns is a surface of
+     * revolution whose axis frame [Revolve3] then names and cuts.
+     */
+    private sealed interface Walk : Corner {
+        /** The piece whose section travels — the one whose end the walk continues. */
+        val travelling: Int
+
+        /** The walk itself, one leg per piece of what stands at the edge it turns about. */
+        val walkLegs: List<Leg>
+
+        /** The axis every turning leg is about, unit — the plane the walk runs in, read as its normal. */
+        val walkNormal: Vec3?
+
+        /** Every ring of the walk in order, a join between two legs counted once. */
+        val rings: List<Placement> get() = walkRings(walkLegs)
+
+        /** How the faces are laid out: **leg by leg, one per piece of the travelling section**. */
+        fun facePlan(pieces: List<Piece>): List<Pair<Leg, ProfileElement?>> = walkFacePlan(pieces[travelling], walkLegs)
+
+        /** One leg as an axis frame and the section in that frame's own `(s, r)`; null for a leg that slides. */
+        fun axisFrame(
+            piece: Piece,
+            leg: Leg,
+        ): Pair<Revolve3.Frame, Affine>? = walkNormal?.let { walkAxisFrame(piece, leg, it) }
+
+        /** Where this corner **ends the band it turns about**, or null where it turns about a sharp edge. */
+        fun uprightEnd(pieces: List<Piece>): Pair<Pair<Int, Boolean>, Placement>? = null
+
+        override fun faces(
+            pieces: List<Piece>,
+            nameAt: (Int) -> FaceName,
+        ): List<FacePatch> =
+            facePlan(pieces).mapIndexed { k, (leg, sr) ->
+                walkLegPatch(pieces[travelling], leg, sr, nameAt(k), walkNormal)
+            }
+    }
+
+    /** [legs]' placements in order, the join between two legs counted once; the first is the walk's start. */
+    private fun walkRings(legs: List<Leg>): List<Placement> =
+        ArrayList<Placement>().also { out ->
+            for (leg in legs) for ((k, p) in leg.rings.withIndex()) if (out.isEmpty() || k > 0) out.add(p)
+        }
+
+    /** One face per (leg × piece of [piece]'s own section), in that order. */
+    private fun walkFacePlan(
+        piece: Piece,
+        legs: List<Leg>,
+    ): List<Pair<Leg, ProfileElement?>> {
+        val sections = orientedSections(piece)
+        return legs.flatMap { leg -> sections.map { leg to it } }
+    }
+
+    /**
+     * The walk's own surface, as the **revolution or the sweep it is**: the section turned about the axis
+     * square to the walk's plane — which [Revolve3] then names, a torus where the section is an arc and a
+     * cone where it is a bevel — or carried straight along a bevel's own run, which is the very sweep a band
+     * along a straight edge is ([Section3.sweptFace]).
+     */
+    private fun walkLegPatch(
+        piece: Piece,
+        leg: Leg,
+        sr: ProfileElement?,
+        name: FaceName,
+        n: Vec3?,
+    ): FacePatch {
+        if (sr == null) {
+            return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
+        }
+        if (leg.pivot != null) {
+            val (frame, map) =
+                (n?.let { walkAxisFrame(piece, leg, it) })
+                    ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoAxisTurnAbout(name = name.label))
+            val mapped =
+                mappedSection(sr, map)
+                    ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
+            return inCornersWords(Revolve3.bandPatch(frame, mapped, name), name)
+        }
+        val from = leg.rings.first()
+        val to = leg.rings.last()
+        val v = to.origin - from.origin
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
+        // the sweep runs along the section frame's own normal, so the run is stated from whichever end
+        // it leaves — the same right-handed convention [bandCarrier] states a straight band with
+        val u = from.cx.cross(from.cy).normalized()
+        val base = if (v.dot(u) >= 0.0) from else to
+        return inCornersWords(Section3.sweptFace(Plane3(base.origin, base.cx, base.cy), u, len, sr, name), name)
+    }
+
+    /**
+     * One leg as an axis frame and the travelling section in that frame's own `(s, r)` — all [Revolve3] ever
+     * needs, and null for a leg that slides rather than turns.
+     *
+     * The **radial offset** is the whole of session 81 in one number: the section's own origin stands `rho`
+     * out from the pivot, so the surface is a *ring* torus where a sharp upright's was a horn one, and
+     * `rho = 0` reproduces session 80 verbatim.
+     */
+    private fun walkAxisFrame(
+        piece: Piece,
+        leg: Leg,
+        n: Vec3,
+    ): Pair<Revolve3.Frame, Affine>? {
+        val pivot = leg.pivot ?: return null
+        val axis = n * -1.0
+        val off = leg.rings.first().origin - pivot
+        val rho = off.length()
+        val p = if (rho <= Geom3.WELD_TOL) leg.dir else off * (1.0 / rho)
+        val frame =
+            Revolve3.Frame(
+                Vec2(1.0, 0.0),
+                Vec2(0.0, 1.0),
+                Vec2(0.0, 0.0),
+                pivot,
+                axis,
+                p,
+                axis.cross(p),
+                min(0.0, -leg.turn),
+                max(0.0, -leg.turn),
+                false,
+            )
+        val e1 = piece.crease.e1
+        val e2 = piece.crease.ref.e2
+        // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius,
+        // the whole section standing `rho` out from the axis it turns about
+        return frame to Affine(e1.dot(axis), e1.dot(p), e2.dot(axis), e2.dot(p), 0.0, rho)
+    }
+
+    /**
      * A **concave corner**: the ball pivots about the upright and the band's own section turns with it
      * (GitHub #31).
      *
@@ -1520,12 +1660,14 @@ object Blend3 {
         val legs: List<Leg>,
         val at: Vec3,
         override val extra: List<Int> = emptyList(),
-    ) : Corner {
-        /** Every ring of the walk in order, a join between two legs counted once; the first is [placeA]. */
-        val rings: List<Placement> =
-            ArrayList<Placement>().also { out ->
-                for (leg in legs) for ((k, p) in leg.rings.withIndex()) if (out.isEmpty() || k > 0) out.add(p)
-            }
+    ) : Walk {
+        override val travelling: Int get() = a
+
+        override val walkLegs: List<Leg> get() = legs
+
+        override val walkNormal: Vec3? get() = shared.plane?.normal?.normalized()
+
+        override val rings: List<Placement> = walkRings(legs)
 
         override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart, b to bAtStart)
 
@@ -1584,7 +1726,7 @@ object Blend3 {
          * surface stands. This is [spanOf]'s business and not [toolMesh]'s — the upright's *tool* still runs
          * the whole edge, and the corner's tool is what takes its top off (session 81).
          */
-        fun uprightEnd(pieces: List<Piece>): Pair<Pair<Int, Boolean>, Placement>? {
+        override fun uprightEnd(pieces: List<Piece>): Pair<Pair<Int, Boolean>, Placement>? {
             val u = extra.firstOrNull() ?: return null
             val up = pieces[u]
             val seg = up.seg ?: return null
@@ -1599,97 +1741,459 @@ object Blend3 {
             if (depth <= Geom3.WELD_TOL) return null
             return (u to atStart) to Placement(at + along * depth, up.crease.e1, up.crease.ref.e2)
         }
+    }
+
+    /**
+     * The **mixed-sign pair**: a fill that meets a band's end, and turns about it (OP-31, item (b)).
+     *
+     * *What was wrong before.* A pair of unlike sign was left to overlap and be trimmed by the boolean —
+     * session 79's default, and right for a pair that does overlap. This pair does not. The fill is tangent
+     * to the two faces of its own crease, and the band has **rounded one of them away** over the last `r_U`
+     * of the fill's run; above that the fill stands on nothing, a vertical ledge beside the band. Nothing
+     * refused, and the body came out at exactly the naive figure — band over the whole edge, fill over the
+     * whole upright, no corner at all (GitHub #36, script 1).
+     *
+     * *Which of the two travels, derived rather than chosen.* A **fill's** ball lives in the air, so where
+     * the face it was tangent to has become the band's own convex surface it rolls round the **outside** of
+     * it: external tangency, its centre on the circle of radius `r + r_U` about that band's axis, which
+     * exists for every pair of sizes. A **band's** ball lives in the material, and where its face has become
+     * a fill's concave surface it would have to be tangent to it from *inside* — and the inside of a fill's
+     * cylinder is the very air the fill was put there to keep. So the band's spine simply ends, and the
+     * fill's carries on: **the concave piece travels and the convex one is pivoted about**, always.
+     *
+     * *And the walk is [Turn]'s own, one end short.* The fill's section follows the band's own end-section
+     * curve piece by piece, turning about the axis square to the face the fill shares with nothing else —
+     * its **other** face, the one the band stands square to — which is the same sentence session 81 wrote
+     * for a pair pivoting about an upright, with the band in the upright's place. What differs is only the
+     * end: there is no second band to land on, so the walk runs to the end of the band's own curve and is
+     * **capped by the third face** at the vertex — the band's far face, whose plane every ring is clipped to
+     * ([emit]). At the last ring the section stands *on* that plane and the clip closes the tube itself.
+     */
+    private class Pivot(
+        val a: Int,
+        val aAtStart: Boolean,
+        /** The band the fill turns about — a boolean of the other sign, so never in [ends]. */
+        val b: Int,
+        /** The face the fill shares with nothing else here; the band stands square to it and it is the walk's plane. */
+        val shared: FacePatch,
+        /** The band's **far** face: the plane that caps the walk, and the third face of the vertex. */
+        val third: FacePatch,
+        val legs: List<Leg>,
+        val at: Vec3,
+    ) : Walk {
+        override val travelling: Int get() = a
+
+        override val walkLegs: List<Leg> get() = legs
+
+        override val walkNormal: Vec3? get() = shared.plane?.normal?.normalized()
+
+        override val rings: List<Placement> = walkRings(legs)
+
+        override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart)
+
+        override val extra: List<Int> get() = listOf(b)
+
+        override fun ringAt(end: Pair<Int, Boolean>): Placement = rings.first()
 
         /**
-         * How this corner's faces are laid out: **leg by leg, one per piece of the pair's own section**.
+         * The walk's tube, every ring **clamped to the third face's plane**.
          *
-         * One [Leg] is one surface family — a revolution about its pivot, or the section carried straight
-         * along a run — so the pivot about a sharp upright still states exactly one face per section piece
-         * (its single leg) and a pivot about a bevelled one states three.
+         * *Why clamping and not clipping.* The plane's condition reads in the section's own coordinates as an
+         * affine one, and its gradient there points along the section's reach into the shared face — which is
+         * the one direction the wedge is monotone in (each row of it is one interval, between the crease and
+         * the blend curve). So pulling every point that stands beyond the plane back **along that gradient**
+         * gives the clipped section exactly, as a polygon of the very same points in the very same order: the
+         * tube keeps one stitching, no ring has to be re-triangulated against a cut, and every clamped point
+         * lands *on* the plane, so the flat top the clip leaves is planar by construction rather than by
+         * tolerance. A row that lies wholly beyond the plane collapses to zero width and contributes nothing,
+         * which is the empty row said in the same arithmetic.
          */
-        fun facePlan(pieces: List<Piece>): List<Pair<Leg, ProfileElement?>> {
-            val sections = orientedSections(pieces[a])
-            return legs.flatMap { leg -> sections.map { leg to it } }
-        }
-
-        /**
-         * The pivot's own surface, as the **revolution or the sweep it is**: the band's section turned about
-         * the axis square to the shared face — which [Revolve3] then names, a torus where the section is an
-         * arc and a cone where it is a bevel — or carried straight along the upright bevel's own run, which
-         * is the very sweep a band along a straight edge is ([Section3.sweptFace]).
-         */
-        override fun faces(
+        override fun emit(
             pieces: List<Piece>,
-            nameAt: (Int) -> FaceName,
-        ): List<FacePatch> = facePlan(pieces).mapIndexed { k, (leg, sr) -> legPatch(pieces[a], leg, sr, nameAt(k)) }
-
-        private fun legPatch(
-            piece: Piece,
-            leg: Leg,
-            sr: ProfileElement?,
-            name: FaceName,
-        ): FacePatch {
-            if (sr == null) {
-                return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
+            out: Geom3.MeshBuilder,
+        ) {
+            val piece = pieces[a]
+            val plane = third.plane ?: return
+            val n3 = plane.normal.normalized()
+            val d0 = plane.origin.dot(n3)
+            val stations = stationsFor(piece, n3, d0)
+            val clamped = stations.map { p -> clampedSection(piece.grown, p, n3, d0) }
+            val strips = clamped.mapIndexed { l, qs -> qs.map { stations[l].at(it) } }
+            for (l in 0 until strips.size - 1) {
+                val lo = strips[l]
+                val hi = strips[l + 1]
+                for (m in lo.indices) {
+                    val n = (m + 1) % lo.size
+                    // the walk continues [a]'s own tube, so the two rings take the same roles its two did
+                    if (aAtStart) {
+                        triangleUnlessFlat(out, hi[m], hi[n], lo[n])
+                        triangleUnlessFlat(out, hi[m], lo[n], lo[m])
+                    } else {
+                        triangleUnlessFlat(out, lo[m], lo[n], hi[n])
+                        triangleUnlessFlat(out, lo[m], hi[n], hi[m])
+                    }
+                }
             }
-            if (leg.pivot != null) {
-                val (frame, map) =
-                    axisFrame(piece, leg)
-                        ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoAxisTurnAbout(name = name.label))
-                val mapped =
-                    mappedSection(sr, map)
-                        ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendTurnsPieceProfileThisDrawing(name = name.label))
-                return inCornersWords(Revolve3.bandPatch(frame, mapped, name), name)
+            // …and the far end, which no band closes: the clamped section standing on the third face itself
+            val last = stations.last()
+            for (t in capsOf(clamped.last())) {
+                if (aAtStart) {
+                    triangleUnlessFlat(out, last.at(t.c), last.at(t.b), last.at(t.a))
+                } else {
+                    triangleUnlessFlat(out, last.at(t.a), last.at(t.b), last.at(t.c))
+                }
             }
-            val from = leg.rings.first()
-            val to = leg.rings.last()
-            val v = to.origin - from.origin
-            val len = v.length()
-            if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
-            // the sweep runs along the section frame's own normal, so the run is stated from whichever end
-            // it leaves — the same right-handed convention [bandCarrier] states a straight band with
-            val u = from.cx.cross(from.cy).normalized()
-            val base = if (v.dot(u) >= 0.0) from else to
-            return inCornersWords(Section3.sweptFace(Plane3(base.origin, base.cx, base.cy), u, len, sr, name), name)
         }
 
         /**
-         * One leg as an axis frame and the pair's section in that frame's own `(s, r)` — all [Revolve3] ever
-         * needs, and null for a leg that slides rather than turns.
+         * The rings [emit] steps on: every leg's own, and for a **sliding** one the stations at which the
+         * cap's line passes a vertex of the section as well.
          *
-         * The **radial offset** is the whole of session 81 in one number: the section's own origin stands
-         * `rho` out from the pivot, so the surface is a *ring* torus where the sharp upright's was a horn
-         * one, and `rho = 0` reproduces session 80 verbatim.
+         * *Why those stations and no others.* Between two of them the same vertices stand beyond the plane,
+         * so each one moves **affinely** with the station and the strip between two rings is the solid
+         * exactly rather than nearly — where a plain two-ring slide loses a fifth of a bevelled corner to
+         * the straight line it draws between a full section and a collapsed one. A **turning** leg already
+         * steps on the upright band's own chords, finely enough that its own sag rule covers this too.
          */
-        fun axisFrame(
+        fun stationsFor(
             piece: Piece,
-            leg: Leg,
-        ): Pair<Revolve3.Frame, Affine>? {
-            val pivot = leg.pivot ?: return null
-            val n = shared.plane?.normal?.normalized() ?: return null
-            val axis = n * -1.0
-            val off = leg.rings.first().origin - pivot
-            val rho = off.length()
-            val p = if (rho <= Geom3.WELD_TOL) leg.dir else off * (1.0 / rho)
-            val frame =
-                Revolve3.Frame(
-                    Vec2(1.0, 0.0),
-                    Vec2(0.0, 1.0),
-                    Vec2(0.0, 0.0),
-                    pivot,
-                    axis,
-                    p,
-                    axis.cross(p),
-                    min(0.0, -leg.turn),
-                    max(0.0, -leg.turn),
-                    false,
-                )
-            val e1 = piece.crease.e1
-            val e2 = piece.crease.ref.e2
-            // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius,
-            // the whole section standing `rho` out from the axis it turns about
-            return frame to Affine(e1.dot(axis), e1.dot(p), e2.dot(axis), e2.dot(p), 0.0, rho)
+            n3: Vec3,
+            d0: Double,
+        ): List<Placement> {
+            val out = ArrayList<Placement>()
+            for ((k, leg) in legs.withIndex()) {
+                val rs =
+                    if (leg.pivot != null) {
+                        leg.rings
+                    } else {
+                        val from = leg.rings.first()
+                        val to = leg.rings.last()
+                        val den = (to.origin - from.origin).dot(n3)
+                        val cuts =
+                            if (abs(den) <= 1e-12) {
+                                emptyList()
+                            } else {
+                                piece.grown
+                                    .map { q -> (d0 - from.origin.dot(n3) - (from.cx.dot(n3) * q.x + from.cy.dot(n3) * q.y)) / den }
+                                    .filter { it > 1e-9 && it < 1.0 - 1e-9 }
+                                    .sorted()
+                            }
+                        (listOf(0.0) + cuts + listOf(1.0)).mapNotNull { placeAt(k + it) }
+                    }
+                for ((m, p) in rs.withIndex()) if (out.isEmpty() || m > 0) out.add(p)
+            }
+            return out
         }
+
+        override fun label(pieces: List<Piece>): Msg =
+            Msgs.nameBlendRunOutCorner(
+                first = pieces[a].crease.edge.name.label,
+                second = pieces[b].crease.edge.name.label,
+                face = third.name.label,
+            )
+
+        /**
+         * The placement at walk parameter [t] — the **ideal** one, with no chord anywhere in it: leg `k` runs
+         * over `[k, k+1]`, a turning leg carried about its own pivot and a sliding one along its own run.
+         *
+         * The tool's rings step on the upright band's own chords ([chordPath]) because a tool has to fit the
+         * mesh it cuts. What the *drawing* states is the surface itself, so this is where the drawing reads
+         * the walk (OP-15: the surface exact, only its triangles chorded).
+         */
+        fun placeAt(t: Double): Placement? {
+            val n = walkNormal ?: return null
+            val k = min(legs.size - 1, max(0, t.toInt()))
+            val u = (t - k).coerceIn(0.0, 1.0)
+            val leg = legs[k]
+            val from = leg.rings.first()
+            val pivot = leg.pivot ?: return Placement(from.origin + (leg.rings.last().origin - from.origin) * u, from.cx, from.cy)
+            return turnedPlacement(from, pivot, n, leg.dir, (from.origin - pivot).dot(leg.dir), leg.turn * u)
+        }
+
+        /** Where the travelling section's tangency on [shared] stands at walk parameter [t]. */
+        fun tangencyAt(
+            pieces: List<Piece>,
+            t: Double,
+        ): Vec3? {
+            val piece = pieces[a]
+            val q = if (shared.name == piece.crease.face1.name) piece.wedge.t1 else piece.wedge.t2
+            return placeAt(t)?.at(q)
+        }
+
+        /**
+         * Where the **cap's own boundary** stands at walk parameter [t] — the point at which the third
+         * face's plane crosses the travelling section's blend curve — or null while the walk is still wholly
+         * on the material side of it.
+         *
+         * This is the very line [emit] clamps every ring to, read on the *plain* section rather than the
+         * grown one: the tool is a micron proud of itself, the drawing is not.
+         */
+        fun capAt(
+            pieces: List<Piece>,
+            t: Double,
+        ): Vec3? {
+            val piece = pieces[a]
+            val plane = third.plane ?: return null
+            val n3 = plane.normal.normalized()
+            val p = placeAt(t) ?: return null
+            val g = Vec2(p.cx.dot(n3), p.cy.dot(n3))
+            if (g.length() <= DIR_EPS) return null
+            val depth = p.origin.dot(n3) - plane.origin.dot(n3)
+            val hits = piece.wedge.pieces.flatMap { sectionOnPlane(it, g, -depth) }
+            return hits.minByOrNull { it.length() }?.let { p.at(it) }
+        }
+
+        /**
+         * The walk parameter at which the section **first reaches** the third face, by halving — before it
+         * the tangency on [shared] is still on that face and after it the cap stands there instead, so this
+         * one number is where the two outline corrections hand over to each other.
+         */
+        fun capStart(pieces: List<Piece>): Double? {
+            val hi = legs.size.toDouble()
+            if (capAt(pieces, hi) == null) return null
+            if (capAt(pieces, 0.0) != null) return 0.0
+            var lo = 0.0
+            var top = hi
+            repeat(BISECT_STEPS) {
+                val mid = (lo + top) / 2.0
+                if (capAt(pieces, mid) == null) lo = mid else top = mid
+            }
+            return top
+        }
+
+        /**
+         * The corner's own correction of the face the walk runs in: the section's **tangency curve** on it,
+         * from the walk's start to [tEnd].
+         *
+         * Exact, piece for piece, and for the same reason the pivot's surface is: the tangency lies in that
+         * face's plane, the pivot lies in it too and the axis stands square to it — so a turning leg carries
+         * the tangency round the pivot on a **circle** of that plane and a sliding one along a straight run.
+         * Below the corner the face's boundary is the band's straight setback; from the corner up it is this
+         * curve, which is why the level section through the pivot closes instead of leaving a gap as wide as
+         * the corner is deep.
+         */
+        fun sharedChain(
+            pieces: List<Piece>,
+            tEnd: Double,
+        ): List<ProfileElement>? {
+            val plane = shared.plane ?: return null
+            val out = ArrayList<ProfileElement>()
+            for (k in legs.indices) {
+                val lo = k.toDouble()
+                val hi = min((k + 1).toDouble(), tEnd)
+                if (hi - lo <= 1e-12) continue
+                val p0 = plane.toLocal(tangencyAt(pieces, lo) ?: return null)
+                val p1 = plane.toLocal(tangencyAt(pieces, hi) ?: return null)
+                val leg = legs[k]
+                val pivot = leg.pivot
+                if (pivot == null || abs(leg.turn) <= TANGENT_TOL) {
+                    if ((p1 - p0).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(p0, p1)))
+                    continue
+                }
+                val c = plane.toLocal(pivot)
+                val r = (p0 - c).length()
+                if (r <= Geom3.WELD_TOL || (p1 - p0).length() <= Geom3.WELD_TOL) continue
+                out.add(ProfileElement.ArcE(Arc(c, r, (p0 - c).angle(), (p1 - c).angle(), leg.turn >= 0.0)))
+            }
+            return out.ifEmpty { null }
+        }
+
+        /**
+         * The corner's own correction of the **third** face: the boundary of the flat top the plane leaves
+         * on the walk, from [tStart] to the walk's end — a **fitted** cubic chain, and said so here.
+         *
+         * *Why fitted.* The curve is the walk's surface met by a plane **parallel to its own axis**, which
+         * for a rounded pair is a torus met that way: a quartic (a spiric of Perseus) and no member of this
+         * drawing's vocabulary. OP-31's Tier B is the decision that admits it — *"an approximation is better
+         * than nothing at all"* (the user) — so it is a chain of cubics through points that are every one of
+         * them **exact** on the surface and on the plane, halved until the midpoint of every span stands
+         * within [Combine3.FIT_TOL_MM] of the true curve. The alternative was to leave the top face stating
+         * a corner that is not on the body, which is the free end's notch bug one session on.
+         */
+        fun capChain(
+            pieces: List<Piece>,
+            tStart: Double,
+        ): List<ProfileElement>? {
+            val plane = third.plane ?: return null
+            val hi = legs.size.toDouble()
+            if (hi - tStart <= 1e-12) return null
+            return fittedChain(Combine3.FIT_TOL_MM) { u ->
+                capAt(pieces, tStart + (hi - tStart) * u)?.let { plane.toLocal(it) }
+            }
+        }
+
+        /**
+         * Where this corner **ends the band it turns about**: the fill covers the band's own surface over
+         * the last stretch of its run, so the band stops where the fill's tangency on the face the two share
+         * meets the band's own edge — its own setback, read from the fill's side.
+         */
+        override fun uprightEnd(pieces: List<Piece>): Pair<Pair<Int, Boolean>, Placement>? {
+            val up = pieces[b]
+            val seg = up.seg ?: return null
+            val atStart = (seg.start - at).length() <= RING_TOL
+            if (!atStart && (seg.end - at).length() > RING_TOL) return null
+            val along = ((if (atStart) seg.end else seg.start) - at).normalized()
+            val pair = pieces[a]
+            val other = otherFace(pair, shared) ?: return null
+            val t = if (other.name == pair.crease.face1.name) pair.wedge.t1 else pair.wedge.t2
+            val depth = (pair.crease.e1 * t.x + pair.crease.ref.e2 * t.y).dot(along)
+            if (depth <= Geom3.WELD_TOL) return null
+            return (b to atStart) to Placement(at + along * depth, up.crease.e1, up.crease.ref.e2)
+        }
+    }
+
+    /**
+     * A curve this drawing has no name for, stated as a **chain of cubics through exact points** and within
+     * [tol] of the true curve — OP-15's third class, the one OP-31's Tier B admits (*"an approximation is
+     * better than nothing at all"*).
+     *
+     * Two things make it converge fast enough to be worth having, each of them measured rather than hoped:
+     *
+     * - each span is a **Hermite** cubic on the curve's own tangents, taken as a central difference at a
+     *   width far below the span's, so the chain meets the curve to **fourth** order. Catmull–Rom's
+     *   central-difference-of-knots tangents are second order and cost 256 spans where this takes 32; an
+     *   arc-length re-reading of the knots was tried in between and is worse than useless here, because a
+     *   piecewise-linear re-parameterization is only C0 and takes the fourth order away again.
+     * - the span count is found by **halving and measuring**, the midpoint of every span against the true
+     *   curve at the matching parameter — an upper bound on the geometric distance, exactly as
+     *   [Intersect3]'s own ellipse fit states it.
+     *
+     * Every knot is a point of [at], so it is *on* the surface and on the plane; only the spans between are
+     * fitted, and the tolerance is the one number that says how far.
+     */
+    private fun fittedChain(
+        tol: Double,
+        at: (Double) -> Vec2?,
+    ): List<ProfileElement>? {
+        // `dC/du`, second order everywhere: a central difference inside, and the three-point one-sided
+        // formula at each end, so the ends are no worse than the middle. The step is wide enough that the
+        // curve's own arithmetic noise (an `acos` near ±1 costs half the digits) divides away and far
+        // narrower than any span this fit will take.
+        val d = 1e-4
+
+        fun slope(u: Double): Vec2? {
+            if (u <= d) {
+                val a = at(0.0) ?: return null
+                val b = at(d) ?: return null
+                val c = at(2.0 * d) ?: return null
+                return (a * -3.0 + b * 4.0 - c) * (1.0 / (2.0 * d))
+            }
+            if (u >= 1.0 - d) {
+                val a = at(1.0) ?: return null
+                val b = at(1.0 - d) ?: return null
+                val c = at(1.0 - 2.0 * d) ?: return null
+                return (a * 3.0 - b * 4.0 + c) * (1.0 / (2.0 * d))
+            }
+            val lo = at(u - d) ?: return null
+            val hi = at(u + d) ?: return null
+            return (hi - lo) * (1.0 / (2.0 * d))
+        }
+        var n = 2
+        var best: List<ProfileElement>? = null
+        repeat(9) {
+            val pts = (0..n).map { at(it.toDouble() / n) ?: return@repeat }
+            val ms = (0..n).map { slope(it.toDouble() / n) ?: return@repeat }
+            val chain =
+                (0 until n).map {
+                    ProfileElement.BezierE(
+                        Bezier(
+                            pts[it],
+                            pts[it] + ms[it] * (1.0 / (3.0 * n)),
+                            pts[it + 1] - ms[it + 1] * (1.0 / (3.0 * n)),
+                            pts[it + 1],
+                        ),
+                    )
+                }
+            best = chain
+            var worst = 0.0
+            for (k in chain.indices) {
+                val b = chain[k].bezier
+                val mid = (b.p0 + b.p1 * 3.0 + b.p2 * 3.0 + b.p3) * (1.0 / 8.0)
+                val exact = at((k + 0.5) / n) ?: continue
+                worst = max(worst, (mid - exact).length())
+            }
+            if (worst <= tol) return chain
+            n *= 2
+        }
+        return best
+    }
+
+    /**
+     * [section], clipped to the plane `(n, d)` at one ring and returned as a polygon of a **fixed** count —
+     * every point that stands beyond the plane pulled back onto it along the plane's own gradient in the
+     * section's frame, and every edge carrying one extra point that is the **crossing** where there is one.
+     *
+     * *Why the pull-back is the clip and not merely near it.* The plane reads in the section's own
+     * coordinates as an affine condition whose gradient points along the section's reach into the shared
+     * face — the one direction the wedge is monotone in, each row of it one interval between the crease and
+     * the blend curve. So moving every point that stands beyond back **along that gradient** lands it on the
+     * plane and nowhere else, and a row that lies wholly beyond collapses to zero width, which is the empty
+     * row said in the same arithmetic.
+     *
+     * *Why the extra point per edge.* Pulling the **vertices** back is not enough: a boundary edge that
+     * crosses the line has its far end pulled onto the line, and the straight run to it cuts the corner the
+     * crossing makes — a whole fifth of a bevelled corner, whose section is a triangle with one long edge
+     * and no other point on it. One extra vertex per edge, at the crossing where there is one and on top of
+     * the edge's own start where there is not, makes the clipped polygon exact and keeps the count fixed, so
+     * the tube still stitches ring to ring with no T-junction anywhere. The duplicates that leaves are
+     * zero-area triangles, which [triangleUnlessFlat] drops.
+     */
+    private fun clampedSection(
+        section: List<Vec2>,
+        p: Placement,
+        n: Vec3,
+        d: Double,
+    ): List<Vec2> {
+        val gx = p.cx.dot(n)
+        val gy = p.cy.dot(n)
+        val g2 = gx * gx + gy * gy
+        val c = p.origin.dot(n) - d
+        // …and the count is the same **even where the plane has no gradient here at all** (a ring standing
+        // square to it, where nothing is clipped): a ring of the plain count beside one of the doubled count
+        // is a T-junction, and the tube would not close along it
+        val flat = g2 <= 1e-18
+
+        fun off(q: Vec2) = if (flat) -1.0 else c + gx * q.x + gy * q.y
+
+        fun pull(q: Vec2): Vec2 {
+            val f = off(q)
+            return if (f <= 0.0) q else Vec2(q.x - gx * f / g2, q.y - gy * f / g2)
+        }
+        val out = ArrayList<Vec2>(2 * section.size)
+        for (i in section.indices) {
+            val a = section[i]
+            val b = section[(i + 1) % section.size]
+            out.add(pull(a))
+            val fa = off(a)
+            val fb = off(b)
+            // where the plane meets this edge, read on the **carrier** and then held to the edge's own span:
+            // a strict sign change would put the extra point back on a vertex exactly at the station where
+            // the crossing arrives there, and the strip either side of that station would then draw the
+            // straight line the crossing is meant to replace
+            val t = if (fa == fb) 0.0 else (fa / (fa - fb)).coerceIn(0.0, 1.0)
+            out.add(pull(a + (b - a) * t))
+        }
+        return out
+    }
+
+    /** [section] triangulated as a cap, its own points de-duplicated first; empty where it has no area. */
+    private fun capsOf(section: List<Vec2>): List<Geom3.Tri3> {
+        val distinct = ArrayList<Vec2>(section.size)
+        for (q in section) if (distinct.isEmpty() || (q - distinct.last()).length() > Geom3.WELD_TOL) distinct.add(q)
+        while (distinct.size > 1 && (distinct.first() - distinct.last()).length() <= Geom3.WELD_TOL) distinct.removeAt(distinct.size - 1)
+        if (distinct.size < 3) return emptyList()
+        return Geom3.triangulate(Geom3.TessRegion(distinct, emptyList())).first ?: emptyList()
+    }
+
+    /** [out] gains this triangle unless its three corners do not span one — a clamped row has no area. */
+    private fun triangleUnlessFlat(
+        out: Geom3.MeshBuilder,
+        a: Vec3,
+        b: Vec3,
+        c: Vec3,
+    ) {
+        if ((b - a).cross(c - a).length() <= 1e-18) return
+        out.triangle(a, b, c)
     }
 
     /**
@@ -2312,7 +2816,25 @@ object Blend3 {
                         if (c <= Geom3.WELD_TOL) continue
                         val placeA = mitrePlacement(a, shared, corner, bis, c) ?: continue
                         val placeB = mitrePlacement(b, shared, corner, bis, c) ?: continue
-                        if (!ringsAgree(a.grown.map { placeA.at(it) }, b.grown.map { placeB.at(it) })) continue
+                        if (!ringsAgree(a.grown.map { placeA.at(it) }, b.grown.map { placeB.at(it) })) {
+                            // **the incongruent inside corner**, and it is a refusal rather than a silence
+                            // (OP-31's matrix, session 83). Two wedges that are not congruent in the face
+                            // they share land on no common ring, and at a **convex** corner that costs
+                            // nothing — the two tools overlap and the boolean trims them exactly, which is
+                            // session 79's cut (2) and stays. At an **inside** corner they never overlap at
+                            // all: leaving the pair alone leaves GitHub #31's spike standing between the two
+                            // band ends, silently, whenever the two roundings differ in size or in kind. So
+                            // the pair is named here, with the cure, rather than built wrong.
+                            if (!(turnsInward(a, aAtStart, bis) && turnsInward(b, bAtStart, bis)) && refusal == null) {
+                                refusal =
+                                    Msgs.refusalBlendInsideCornerNotCongruent(
+                                        name = a.crease.edge.name.label,
+                                        name2 = b.crease.edge.name.label,
+                                        name3 = shared.name.label,
+                                    )
+                            }
+                            continue
+                        }
                         val made =
                             if (turnsInward(a, aAtStart, bis) && turnsInward(b, bAtStart, bis)) {
                                 Joint(i, aAtStart, placeA, j, bAtStart, placeB, shared)
@@ -2332,7 +2854,95 @@ object Blend3 {
                 }
             }
         }
+        // **the mixed-sign pair**, last (OP-31, item (b)). A fill meets a band's end, and the band has
+        // rounded away the very face the fill was tangent to over the last `r_U` of its run: the two never
+        // overlap, so there is nothing for a boolean to trim and the fill stands there as a ledge. Either it
+        // turns about the band or the body is wrong, which is why this one is **refused by name** where the
+        // turn cannot be stated rather than quietly left alone.
+        for (i in pieces.indices) {
+            for (j in pieces.indices) {
+                if (i == j) continue
+                // the fill travels and the band is pivoted about, always: a fill's ball rolls round the
+                // **outside** of the band's convex surface (`r + r_U`, and that circle always exists), while
+                // a band's ball would have to be tangent to the fill's concave one from inside, which is the
+                // air the fill was put there to keep. See [Pivot].
+                if (pieces[i].choice.convex || !pieces[j].choice.convex) continue
+                val sa = pieces[i].seg ?: continue
+                val sb = pieces[j].seg ?: continue
+                for (aAtStart in listOf(true, false)) {
+                    if ((i to aAtStart) in taken) continue
+                    val corner = if (aAtStart) sa.start else sa.end
+                    val bAtStart =
+                        listOf(true, false).firstOrNull { ((if (it) sb.start else sb.end) - corner).length() <= RING_TOL } ?: continue
+                    if ((j to bAtStart) in taken) continue
+                    // a ring is shared by two tubes: three or more roundings ending here are the vertex's
+                    // business or the two-ended pivot's, and both of those passes have already run
+                    val here =
+                        pieces.indices.count { k ->
+                            pieces[k].seg?.let { (it.start - corner).length() <= RING_TOL || (it.end - corner).length() <= RING_TOL } == true
+                        }
+                    if (here != 2) continue
+                    val (made, why) = mixedPivotOf(pieces, i, aAtStart, j, corner)
+                    if (why != null && refusal == null) refusal = why
+                    made ?: continue
+                    out.add(made)
+                    taken.add(i to aAtStart)
+                }
+            }
+        }
         return Corners(out, refusal)
+    }
+
+    /**
+     * The **one-ended pivot** where a fill meets a band's end, or the reason it cannot be stated, or neither
+     * where this pair does not make one (OP-31, item (b)).
+     *
+     * Three faces stand at the vertex and each has one job. The **common** one is the face the band rounded
+     * away and the fill was tangent to — the reason there is a corner here at all. The fill's **other** one
+     * is the face the walk runs in: the band stands square to it, so the band's own end-section curve lies
+     * *in* it and the pair's section follows that curve exactly as session 81's pivot follows an upright's.
+     * The band's far face is the **third**, and it caps the walk: there is no second band to land on, so the
+     * walk runs to the end of the band's curve and every ring is clipped to that plane ([Pivot.emit]).
+     *
+     * The one thing that has to hold at the end is that the walk arrives reaching **straight out through**
+     * the third face. That is what says the section stands on the cap rather than crossing it at an angle,
+     * and it is the same kind of statement [ringsAgree] makes of a two-ended one: where it fails the pair is
+     * named rather than built.
+     */
+    private fun mixedPivotOf(
+        pieces: List<Piece>,
+        i: Int,
+        aAtStart: Boolean,
+        j: Int,
+        at: Vec3,
+    ): Pair<Pivot?, Msg?> {
+        val a = pieces[i]
+        val b = pieces[j]
+        val common =
+            listOf(a.crease.face1, a.crease.face2)
+                .firstOrNull { f -> f.name == b.crease.face1.name || f.name == b.crease.face2.name } ?: return null to null
+        val shared = otherFace(a, common) ?: return null to null
+        val third = otherFace(b, common) ?: return null to null
+        if (third.name == shared.name || third.name == common.name) return null to null
+        val what =
+            Msgs.refusalBlendRunOutCornerWhere(name = a.crease.edge.name.label, name2 = b.crease.edge.name.label, name3 = common.name.label)
+        val n = shared.plane?.normal?.normalized() ?: return null to Msgs.refusalBlendRunOutHasNoPlane(what = what, name = shared.name.label)
+        val n3 = third.plane?.normal?.normalized() ?: return null to Msgs.refusalBlendRunOutHasNoPlane(what = what, name = third.name.label)
+        val ea = inFaceOf(a, shared) ?: return null to null
+        if (a.grown.maxOf { it.length() } <= Geom3.WELD_TOL) return null to null
+        val total = signedTurn(ea, n3, n)
+        if (abs(total) <= TANGENT_TOL || abs(abs(total) - PI) <= TANGENT_TOL) {
+            return null to Msgs.refusalBlendRunOutDoesNotTurn(what = what, name = third.name.label)
+        }
+        // …and the walk ends reaching **straight out through** the third face rather than on a second band's
+        // own end section. That is the one-ended pivot's whole difference from [Turn], and it is one
+        // argument: a bevelled band leaves the section sliding along its own plane, so the ball still has to
+        // pivot about the bevel's far rail before the cap can take it — the very last leg a two-ended walk
+        // takes onto its partner, taken here onto the plane instead.
+        val (walked, why) = uprightLegs(pieces, i, aAtStart, j, shared, at, ea, n3, total, n, what)
+        if (walked == null) return null to why
+        if (walked.dir.dot(n3) < 1.0 - 1e-6) return null to Msgs.refusalBlendRunOutDoesNotTurn(what = what, name = third.name.label)
+        return Pivot(i, aAtStart, j, shared, third, walked.legs, at) to null
     }
 
     /**
@@ -2414,8 +3024,11 @@ object Blend3 {
             if (!ringsAgree(a.grown.map { turn.rings.last().at(it) }, b.grown.map { placeB.at(it) })) return null to null
             return turn to null
         }
-        val (legs, why) = uprightLegs(pieces, i, aAtStart, j, u, shared, at, ea, eb, total, n)
-        if (legs == null) return null to why
+        val what =
+            Msgs.refusalBlendInsideCornerWhereMeets(name = a.crease.edge.name.label, name2 = b.crease.edge.name.label, name3 = shared.name.label)
+        val (walked, why) = uprightLegs(pieces, i, aAtStart, u, shared, at, ea, eb, total, n, what)
+        if (walked == null) return null to why
+        val legs = walked.legs
         val placeA = legs.first().rings.first()
         val placeB = Placement(legs.last().rings.last().origin, b.crease.e1, b.crease.ref.e2)
         val turn = Turn(i, aAtStart, placeA, j, bAtStart, placeB, shared, legs, at, listOf(u))
@@ -2485,19 +3098,17 @@ object Blend3 {
         pieces: List<Piece>,
         i: Int,
         aAtStart: Boolean,
-        j: Int,
         u: Int,
         shared: FacePatch,
         at: Vec3,
         ea: Vec3,
-        eb: Vec3,
+        eb: Vec3?,
         total: Double,
         n: Vec3,
-    ): Pair<List<Leg>?, Msg?> {
+        what: Msg,
+    ): Pair<Walked?, Msg?> {
         val a = pieces[i]
         val up = pieces[u]
-        val what =
-            Msgs.refusalBlendInsideCornerWhereMeets(name = a.crease.edge.name.label, name2 = pieces[j].crease.edge.name.label, name3 = shared.name.label)
         val seg =
             up.seg ?: return null to
                 Msgs.refusalBlendIsNotOneStraightRun(name = up.crease.edge.name.label, what = what)
@@ -2567,17 +3178,27 @@ object Blend3 {
             }
             if ((place.origin - to).length() > RING_TOL) return null to profileTurnRefusal(what, up)
         }
-        val last = signedTurn(dir, eb, n)
-        if (abs(last) > TANGENT_TOL) {
-            val leg = turnLeg(a, place, place.origin, n, dir, last)
-            legs.add(leg)
-            acc += last
+        // …and where a **second** band closes the walk, the last turn onto its own end section. A
+        // [Pivot] has none — the third face caps it instead — so it walks to the end of the curve and
+        // stops (OP-31, item (b)).
+        if (eb != null) {
+            val last = signedTurn(dir, eb, n)
+            if (abs(last) > TANGENT_TOL) {
+                val leg = turnLeg(a, place, place.origin, n, dir, last)
+                legs.add(leg)
+                dir = eb
+                acc += last
+            }
+            // the whole walk has to turn the corner and nothing more: a profile that doubles back would
+            // sweep the section through itself, and inventing what that means is the one thing this
+            // drawing does not do
+            if (abs(acc - total) > 1e-6) return null to profileTurnRefusal(what, up)
         }
-        // the whole walk has to turn the corner and nothing more: a profile that doubles back would sweep
-        // the section through itself, and inventing what that means is the one thing this drawing does not do
-        if (abs(acc - total) > 1e-6) return null to profileTurnRefusal(what, up)
-        return legs to null
+        return Walked(legs, dir, acc) to null
     }
+
+    /** A finished walk: its legs, the in-face direction it ends reaching along, and how far it turned. */
+    private class Walked(val legs: List<Leg>, val dir: Vec3, val turned: Double)
 
     /** Why a drawn upright's own profile cannot carry the corner, in the corner's own words. */
     private fun profileTurnRefusal(
@@ -2912,6 +3533,14 @@ object Blend3 {
         // the ends that stand **on** a pivot axis: a turn about a sharp upright, and only that one
         val pivots = HashSet<Pair<Int, Boolean>>()
         for (c in corners) if (c is Turn && c.extra.isEmpty()) pivots.addAll(c.ends)
+        // …and the band ends a **one-ended pivot** covers with its own fill (OP-31, item (b)). [endSteps]
+        // pulls such an end back a micron because the shared face runs on past it while the other stops —
+        // which is what an inside corner is, and there the micron of unrounded ridge stands beside a corner
+        // that keeps a whole spike anyway. Here the fill covers that very stretch, so the ridge is left
+        // *inside* the finished part with the fill's own surface a micron off it, and the boolean answers
+        // that pair with a sliver. The tube overshoots instead: it removes only material the fill puts back.
+        val covered = HashSet<Pair<Int, Boolean>>()
+        for (c in corners) if (c is Pivot) c.uprightEnd(pieces)?.let { covered.add(it.first) }
         for (at in group) {
             val piece = pieces[at]
             val seg = piece.seg ?: return null to Msgs.refusalBlendIsNotOneStraightRun2(name = piece.crease.edge.name.label)
@@ -2921,8 +3550,22 @@ object Blend3 {
             // a butting pair keeps its own micron of daylight, and every other free end is stepped by what
             // lies beyond it ([endSteps]) — the two agree wherever both speak, since a butt *is* an inside
             // corner, and the pair is kept named because that is where the rule was first written down
-            val back0 = if ((at to true) in butts) GROW_MM else piece.backAtStart
-            val back1 = if ((at to false) in butts) GROW_MM else piece.backAtEnd
+            val back0 =
+                if ((at to true) in covered) {
+                    -GROW_MM
+                } else if ((at to true) in butts) {
+                    GROW_MM
+                } else {
+                    piece.backAtStart
+                }
+            val back1 =
+                if ((at to false) in covered) {
+                    -GROW_MM
+                } else if ((at to false) in butts) {
+                    GROW_MM
+                } else {
+                    piece.backAtEnd
+                }
             val p0 = atStart ?: Placement(seg.start + u * back0, piece.crease.e1, piece.crease.ref.e2)
             val p1 = atEnd ?: Placement(seg.end - u * back1, piece.crease.e1, piece.crease.ref.e2)
             // stepped off everywhere but on a pivot axis: a tool never shares a face with the body, and
@@ -3609,7 +4252,7 @@ object Blend3 {
     internal fun deriveTrimmedFaces(f: Feature3.Blend): Trimmed {
         val (faces, why) = deriveTrimmedList(f)
         val pristine = if (faces == null) null else undressedFacesOf(f)
-        return Trimmed(faces, why, if (pristine == null) emptyList() else notchesOf(f, pristine))
+        return Trimmed(faces, why, if (pristine == null || faces == null) emptyList() else notchesOf(f, pristine, faces))
     }
 
     /**
@@ -3720,10 +4363,10 @@ object Blend3 {
         cut: Plane3,
     ): Revolve3.BandCut? {
         val (pieces, c) = cornerNamed(f, name) ?: return null
-        if (c is Turn) {
+        if (c is Walk) {
             val (leg, sr) = c.facePlan(pieces).getOrNull(name.piece) ?: return null
             if (sr == null || leg.pivot == null) return null
-            val (frame, map) = c.axisFrame(pieces[c.a], leg) ?: return null
+            val (frame, map) = c.axisFrame(pieces[c.travelling], leg) ?: return null
             return Revolve3.cutBandOf(frame, mappedSection(sr, map) ?: return null, cut)
         }
         if (c is Vertex) {
@@ -3836,7 +4479,7 @@ object Blend3 {
         name: FaceName.BlendCorner,
     ): Pair<Leg, ProfileElement>? {
         val (pieces, c) = cornerNamed(f, name) ?: return null
-        if (c !is Turn) return null
+        if (c !is Walk) return null
         val (leg, sr) = c.facePlan(pieces).getOrNull(name.piece) ?: return null
         if (leg.pivot != null || sr == null) return null
         return leg to sr
@@ -4315,7 +4958,7 @@ object Blend3 {
             for (e in c.ends) if (e.first == at) ends[e.second] = c.ringAt(e)
             // …and the **upright** a corner turns about is ended by it too, though it is no end of the tool:
             // above that plane the corner's own surface stands where the upright's band used to (session 81)
-            if (c is Turn) c.uprightEnd(pieces)?.let { (e, p) -> if (e.first == at) ends[e.second] = p }
+            if (c is Walk) c.uprightEnd(pieces)?.let { (e, p) -> if (e.first == at) ends[e.second] = p }
         }
         val lo = ends[true]
         val hi = ends[false]
@@ -4730,6 +5373,17 @@ object Blend3 {
         /** The free end itself, in the face's own plane — what a size that would fit is scaled about. */
         val at: Vec2,
         val pieces: List<ProfileElement>,
+        /**
+         * Whether this splice reaches **past** the boundary as it now stands rather than biting into it —
+         * true for the one-ended pivot's two corrections, false for a free end's own notch.
+         *
+         * It changes one thing and says why: a notch's junction is looked for **on the ring piece's own
+         * span**, because a fillet's arc is tangent to that piece's old place and its two crossings stand
+         * equally far from the corner they replace, so nearness cannot choose between them and the span can.
+         * A bulge has no such ambiguity — its two ends lie *on* the neighbours' carriers by construction, so
+         * the meeting is the end itself — and demanding the span would refuse the very extension it is.
+         */
+        val bulge: Boolean = false,
     )
 
     /**
@@ -4743,11 +5397,22 @@ object Blend3 {
     private fun notchesOf(
         f: Feature3.Blend,
         faces: List<FacePatch>,
+        trimmed: List<FacePatch>,
     ): List<Notch> {
         val pieces = piecesOf(f) ?: return emptyList()
         val claimed = HashSet<Pair<Int, Boolean>>()
         for (c in cornersOf(pieces).list) claimed.addAll(c.ends)
         val out = ArrayList<Notch>()
+        // **the one-ended pivot owes two corrections of its own** (OP-31, item (b)): the face the walk runs
+        // in loses the corner of its boundary to the section's tangency curve, and the third face **gains**
+        // the flat top the walk's cap leaves on it. The two hand over at one parameter — where the section
+        // first reaches the third face — so the two curves meet at the very vertex the body has there.
+        for (c in cornersOf(pieces).list) {
+            if (c !is Pivot) continue
+            val hand = c.capStart(pieces) ?: continue
+            c.sharedChain(pieces, hand)?.let { chain -> spliceInto(faces, trimmed, c.shared, c.at, pieces[c.a], chain)?.let { out.add(it) } }
+            c.capChain(pieces, hand)?.let { chain -> spliceInto(faces, trimmed, c.third, c.at, pieces[c.a], chain)?.let { out.add(it) } }
+        }
         for ((j, piece) in pieces.withIndex()) {
             // a **fill** adds material rather than taking it, so its cap closes a void and notches nothing;
             // and only a straight run has a cap that stands in one plane at all
@@ -4762,6 +5427,49 @@ object Blend3 {
             }
         }
         return out
+    }
+
+    /**
+     * One corner correction as a [Notch]: [chain] spliced into [face]'s own boundary at [at], the two ring
+     * pieces beside that corner re-trimmed to meet it.
+     *
+     * It is the free end's own splice with the sign of the change left to the geometry: a **notch** takes a
+     * bite out of the corner and the one-ended pivot's cap **bulges past** it, and neither the junction nor
+     * the assembly cares which — both are the chain's two ends met on the neighbours' own carriers.
+     */
+    private fun spliceInto(
+        faces: List<FacePatch>,
+        trimmed: List<FacePatch>,
+        face: FacePatch,
+        at: Vec3,
+        piece: Piece,
+        chain: List<ProfileElement>,
+    ): Notch? {
+        val index = faces.indexOfFirst { it.name == face.name }
+        if (index < 0) return null
+        val patch = faces[index]
+        val plane = patch.plane ?: return null
+        if (patch.reason != null) return null
+        val v = plane.toLocal(at)
+        val before = patch.outline.indices.filter { (GeomMath.endOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        val after = patch.outline.indices.filter { (GeomMath.startOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        if (before.size != 1 || after.size != 1 || before[0] == after[0]) return null
+        val head = GeomMath.startOf(chain.first())
+        // which way round the chain runs is read off the boundary **as it now stands**, not off the undressed
+        // one: at an undressed corner both pieces run through the very corner the chain replaces and stand
+        // the same distance from its ends, so the two tie and the tie is not a fact about the shape
+        val ring = trimmed.getOrNull(index)?.outline?.takeIf { it.size == patch.outline.size } ?: patch.outline
+        val forwards = offCarrier(ring[before[0]], head) <= offCarrier(ring[after[0]], head)
+        return Notch(
+            piece.crease.edge,
+            piece.sec,
+            index,
+            before[0],
+            after[0],
+            v,
+            if (forwards) chain else chain.reversed().map { GeomMath.reverse(it) },
+            bulge = true,
+        )
     }
 
     /**
@@ -4908,12 +5616,18 @@ object Blend3 {
     ): Triple<Vec2, Vec2, List<ProfileElement>>? {
         val head = pieces.first()
         val tail = pieces.last()
-        val s1 = meetOnSpan(outline[n.before], head, GeomMath.startOf(head)) ?: return null
-        val s2 = meetOnSpan(outline[n.after], tail, GeomMath.endOf(tail)) ?: return null
+        val s1 = meetOnSpan(outline[n.before], head, GeomMath.startOf(head), n.bulge) ?: return null
+        val s2 = meetOnSpan(outline[n.after], tail, GeomMath.endOf(tail), n.bulge) ?: return null
         val cut = pieces.toMutableList()
-        cut[0] = GeomMath.onCarrier(cut[0], GeomMath.offsetCarrier(cut[0], 0.0) ?: return null, s1, GeomMath.endOf(cut[0])) ?: return null
+        // …and a chain that already **ends** where it meets its neighbour is left alone: there is nothing to
+        // trim, and a fitted cubic has no offset carrier to be trimmed on (OP-31's cap curve)
+        if ((s1 - GeomMath.startOf(cut[0])).length() > SAME_CURVE_TOL) {
+            cut[0] = GeomMath.onCarrier(cut[0], GeomMath.offsetCarrier(cut[0], 0.0) ?: return null, s1, GeomMath.endOf(cut[0])) ?: return null
+        }
         val last = cut.size - 1
-        cut[last] = GeomMath.onCarrier(cut[last], GeomMath.offsetCarrier(cut[last], 0.0) ?: return null, GeomMath.startOf(cut[last]), s2) ?: return null
+        if ((s2 - GeomMath.endOf(cut[last])).length() > SAME_CURVE_TOL) {
+            cut[last] = GeomMath.onCarrier(cut[last], GeomMath.offsetCarrier(cut[last], 0.0) ?: return null, GeomMath.startOf(cut[last]), s2) ?: return null
+        }
         return Triple(s1, s2, cut)
     }
 
@@ -4922,9 +5636,10 @@ object Blend3 {
         ring: ProfileElement,
         end: ProfileElement,
         known: Vec2,
+        bulge: Boolean = false,
     ): Vec2? {
         val a = GeomMath.offsetCarrier(ring, 0.0) ?: return null
-        if (offCarrier(ring, known) <= SAME_CURVE_TOL) return if (onSpanOf(ring, known)) known else null
+        if (offCarrier(ring, known) <= SAME_CURVE_TOL) return if (bulge || onSpanOf(ring, known)) known else null
         val b = GeomMath.offsetCarrier(end, 0.0) ?: return null
         return GeomMath.carrierCrossings(a, b)
             .filter { onSpanOf(end, it) && onSpanOf(ring, it) }

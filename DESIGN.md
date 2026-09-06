@@ -16508,6 +16508,161 @@ a rounding larger than the faces it stands between.
 fitted tier is designed against the matrix's remaining residue rather than against a guess. The reporter's
 three scripts are the matrix's first three fixtures verbatim.
 
+#### Implementation status (as built — the mixed-sign pair, item 2, session 83)
+
+**The pair, and why it was neither built nor refused.** `Blend3.cornersOf` skipped a pair whose two members
+differ in **sign** — session 79's default, and right for a pair that *overlaps*, since the boolean trims that
+one exactly and every time. This pair does not overlap. The band has **rounded away the very face the fill is
+tangent to** over the last `r_U` of the fill's run, so above that the fill stands on nothing: a vertical ledge
+beside the band, watertight, unrefused, and at exactly the naive figure (GitHub #36's script 1 — band over the
+whole of edge 13, fill over the whole 20 mm of the upright, `40566.658 mm³`). That is OP-31's *"a pair the
+catalogue does not know and does not refuse"*, and it is now built.
+
+**Which of the two travels is derived, not chosen.** A **fill's** ball lives in the air, so where the face it
+was tangent to has become the band's own convex surface it rolls round the **outside** of it: external
+tangency, its centre on the circle of radius `r + r_U` about that band's axis, and that circle exists for
+every pair of sizes. A **band's** ball lives in the material, and where its face has become a fill's concave
+surface it would have to be tangent to that surface *from inside* — which is the very air the fill was put
+there to keep. So the band's spine simply ends and the fill's carries on: **the concave piece travels and the
+convex one is pivoted about**, always. On the reporter's L that is the fill's ball rolling up the crease to
+`z = 16` and then turning on the circle of radius `8` about the band's axis, its section following the band's
+own end-section arc exactly as session 81's pair follows an upright's.
+
+**So the walk is session 81's, one end short** (`Blend3.Pivot`, a second `Walk` beside `Turn`, the two sharing
+their rings, their face plan and their axis frames). Three faces stand at the vertex and each has one job: the
+**common** one is the face the band rounded away and the fill was tangent to — the reason there is a corner at
+all; the fill's **other** one is the face the walk runs in, and the band standing square to it is what puts
+the band's own blend curve *in* that face; the band's far face is the **third**, and where a two-ended pivot
+lands on a second band's end section this one **is capped by that plane**. The walk itself is
+`uprightLegs` verbatim, with `eb` the third face's own outward normal instead of a partner's in-face direction
+— which is the argument, not a convenience: a bevelled band leaves the section sliding along its own plane, so
+the ball still has to pivot about the bevel's far rail before the cap can take it, and that is exactly the
+last leg a two-ended walk takes onto its partner.
+
+**The cap is a clip taken in the section's own frame, and that is what keeps one stitching.** The third face's
+plane reads in the section's coordinates as an affine condition whose gradient points along the section's
+reach into the shared face — the one direction the wedge is monotone in, each row of it one interval between
+the crease and the blend curve. So every point that stands beyond is **pulled back along that gradient**,
+which lands it *on* the plane and nowhere else; the flat top the clip leaves is therefore planar by
+construction rather than by tolerance, and a row wholly beyond collapses to zero width, which is the empty row
+said in the same arithmetic. Two things had to be added to make that exact rather than merely close, and both
+were found by measuring a bevelled pair against its closed form:
+
+- **one extra vertex per section edge**, at the crossing where the plane makes one. Pulling the *vertices*
+  back is not enough — the far end of a crossed edge lands on the line and the straight run to it cuts the
+  corner the crossing makes, which is a fifth of a bevelled corner, whose section is a triangle with one long
+  edge and no other point on it. The count stays fixed (twice the section's own), so the tube still stitches
+  ring to ring with no T-junction, and the duplicates that leaves are zero-area triangles the emitter drops.
+  A ring standing square to the plane, where nothing is clipped at all, is doubled too: one ring of the plain
+  count beside one of the doubled count is itself a T-junction.
+- **a station wherever the clip line passes a vertex**, on a leg that *slides*. Between two of those the same
+  vertices stand beyond, so each moves affinely with the station and the strip between two rings is the solid
+  exactly. A turning leg already steps on the upright band's own chords, finely enough that this is covered.
+
+**The figure, closed form, and its bracket.** With the three faces square to one another, `r_U` the band's
+size and the fill's section standing at reach `x` with height `h(x)`, a corner about a **round** band adds
+
+```
+V = ∫_{r_U}^{r_U+r} ρ · arcsin(r_U / ρ) · h(ρ − r_U) dρ
+```
+
+— the section's own first moment about the band's axis, each ring counted only over the turn it stands below
+the third face for, which is `arcsin(r_U/ρ)` and nothing else. (Pappus' `w·φ·ρ̄` is the case with no cap: here
+the cap eats the far rings and the turn is a function of the radius.) About a **bevelled** band the walk is a
+quarter-turn about the first rail, a slide up the bevel, and a quarter-turn the cap takes away *entirely*, so
+it adds `(π/4)·∫₀^r x·h(x) dx + ∫₀^{c_U√2} A(K) dK` with `A(K)` the section's own area out to reach `K`. On
+the reporter's L with `r = r_U = 4`: `V = 16.7471` and the body is `40570.679` where the naive one was
+`40566.658` — and the build's own mesh says `40569.753`, inside the bracket the chords put round it (never
+below the exact figure by more than the band's inscribed arc takes extra off the whole of its run, never above
+it by more than the fill's adds over its own, and either way within a twentieth of the corner itself, whose
+turn is chorded like every arc here). The bevelled pair is bracketed too and deliberately **not** asserted
+exact: its two quarter-turns are revolutions, so a bevelled *pivot* is chorded exactly as session 81's cone is,
+which is a different thing from the bevelled *vertex* being three planes. Measured: `40520.411` exact against
+`40520.357` built, the whole difference being the first quarter-turn's four chord steps.
+
+**Evaluation order: the band's tool before the fill's, and the chain rebuilt from its root.** The corner is a
+function of the band, so it carries the band's index in `extra` — which is what `orderedGroups` reads, and
+what makes the pass `(root − band) ∪ fill'`. That also makes it a corner *about a band*, so session 81's rule
+applies unchanged: the level where it is fresh rebuilds the whole chain from its own undressed root rather
+than cutting the tip, because a further union can never take back a fill that was already run to its full
+length. Band first, upright first, the two as one dressing and the two as a chain are one body to a part in a
+million, and that is asserted.
+
+**What the drawing says, and the one place a fitted curve had to be admitted.** A level section through the
+corner did not close: two ends were missing and each needed its own answer.
+
+- *The corner's own cut.* A plane parallel to a surface of revolution's axis met it through the **tessellated**
+  surface, so each end of the run stood a chord's sag (0.036 mm here) off the exact ruling its neighbour
+  states, which no chaining tolerance absorbs without absorbing real gaps too. `Revolve3.parallelAxisRuns`
+  states it exactly instead, and the statement is one line: a point at `(s, r, θ)` stands `c₀ + r·(a cos θ +
+  b sin θ)` off such a plane — the axial term is gone — so the **profile point decides the turn** rather than
+  the other way round, `cos(θ − ψ) = −c₀/(r·|(a, b)|)`, and walking the profile gives the cut point by point,
+  every one of them exact and chords between. That is OP-15's approximated class, flagged and refused as an
+  input like every other member of it, and it is a general gain: a cone's hyperbola and a torus's spiric both
+  come off it now, and where the plane **grazes** the surface the two branches are joined at the exact graze
+  radius rather than at a bisected predicate, which is what makes them one run and not two halves 3 µm apart.
+- *The face the walk runs in* loses the corner of its boundary to the section's **tangency curve** — exact,
+  piece for piece: the tangency, the pivot and the axis all stand in that plane, so a turning leg carries the
+  tangency round the pivot on a circle of it and a sliding one along a straight run.
+- *The third face* **gains** the flat top the cap leaves on it, and its boundary is a torus met by a plane
+  parallel to its own axis: a spiric of Perseus, a quartic, and no member of this drawing's vocabulary. This
+  is where OP-31's Tier B decision is taken for the first time — *"an approximation is better than nothing at
+  all"* (the user) — as a **fitted cubic chain**: Hermite spans on the curve's own tangents through points
+  that are every one of them exact on the surface and on the plane, halved until the midpoint of every span
+  stands within `Combine3.FIT_TOL_MM` of the true curve. It costs 32 spans on the L-block; Catmull–Rom's
+  central-difference tangents are second order and cost 256, and an arc-length re-reading of the knots was
+  tried between the two and is worse than useless, a piecewise-linear re-parameterization being only C0.
+
+Both corrections are spliced by the free end's own `Notch` machinery, which turns out to be direction-blind:
+a notch bites into a corner and this cap **bulges past** it, and neither the junction nor the assembly cares,
+because both are the chain's two ends met on the neighbours' own carriers. The one thing a bulge does need is
+to be let past its neighbour's own span (`Notch.bulge`), the span being there to tell two tangent solutions
+apart and a bulge having no such ambiguity.
+
+**The honesty line, stated because it is not where it should be.** The fitted chain is *in* the face's
+outline and correct to a stated tolerance, but the **value does not say it is fitted**: `FacePatch` carries a
+`reason` for a face with no plane and a `surface` for one with an analytic family, and OP-31's Tier B asks for
+a third thing beside them — the tolerance a boundary was fitted to — which is one field on `FacePatch` in
+`Section3.kt`. That file was outside this package's boundary, so the field is **not added and is owed**: until
+it is, a reader of the top face's outline gets a Bézier chain that is within `1e-4 mm` of the truth and no
+statement to that effect. It is the smallest carrier the tier needs and it belongs with item (c) or with the
+tier itself; it is recorded here so it is not lost.
+
+**The matrix's other residue, closed with it: the incongruent inside corner.** `ringsAgree` failing left a
+pair alone, which at a **convex** corner costs nothing — the two tools overlap and the boolean trims them
+exactly, session 79's own cut, unchanged — and at an **inside** corner leaves GitHub #31's spike standing
+between the two band ends, silently, whenever the two sizes or the two kinds differ (24 cells of the matrix;
+a 4 mm and a 3 mm fillet on the L's two top edges built the naive `40362.201`). It is now **refused by name**,
+with both edges, the face they meet on and the cure, and it heals the moment the two agree.
+
+**One micron moved, and it is argued.** `endSteps` pulls a band's free end **back** where the shared face runs
+on past it while the other stops — an inside corner, where the micron of unrounded ridge stands beside a
+corner that keeps a whole spike anyway. Where a one-ended pivot covers that very stretch with its fill, the
+ridge ends up *inside* the finished part with the fill's surface a micron off it, and the general boolean
+answers that pair with a zero-area sliver on the top face. Such an end now **overshoots** instead: it removes
+only material the fill puts back, and `assertManifold` is clean on every body in this entry.
+
+**Cuts, each whole, each named and none silent.** (1) **A vertex where three or more roundings end** is left
+to the passes that already own it — the ball, the two-ended pivot, or nothing — and the mixed pass does not
+look at it; a fill and *two* bands ending at one point is the two-ended pivot and is untouched, and a trio
+this drawing makes no corner of keeps exactly what it kept. (2) **A band that is not one straight run**, or
+one **not square** to the face the walk runs in, is refused in session 81's own two sentences: the walk would
+have to follow a curve that moves along the edge, or one that is not a curve in that face at all. (3) **A
+third face that is not a plane** is refused by name — there is nothing to cap the walk with — and so is a walk
+that does not **arrive square** to it, which is what says the section stands *on* the cap rather than crossing
+it at an angle. (4) **The bevelled pair is not asserted exact**, above, and the reason is that its walk is a
+revolution. (5) **`FacePatch` still cannot say "fitted"**, above.
+
+Tests: `BlendMixedPairTest` (9) — the reporter's script verbatim, with the figure, the chords' own bracket,
+the naive figure proved to lie outside it, the ledge gone and the file a fixed point of save; the two gesture
+orders, the one dressing and the chain as one body to a part in a million; the symmetric pair over the L's
+other top edge; the bevelled twins and each kind against the other, each against its own closed form; two
+sizes (4 against 3, both ways round) built rather than refused, with the ring torus naming `r + r_U` and `r`;
+the level section closing into one area at four heights, the corner's cut saying it is chords, and the top
+face's boundary carrying the fitted chain with both of its ends exact; the incongruent inside corner refused
+by name and healing; one gesture undone leaving the one before it to the last bit; and the entry removed like
+any other row.
+
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -21090,11 +21245,16 @@ for. The format's version rose to 5 as the marker that lets an older file be tol
 
 
 **Queued in session 83 — OP-31, the rounding algebra (GitHub #36), in this order:** (1) the blend matrix
-test, with its named residue; (2) the mixed-sign pair as a one-ended pivot about a band; (3) edges as chains and
+test, with its named residue; ~~(2) the mixed-sign pair as a one-ended pivot about a band~~ — *retired in
+session 83: the fill travels and the band is pivoted about, the walk capped by the third face; the matrix's
+incongruent inside corner is refused by name with it, and the Tier B fitted chain is taken for the first time
+on the cap's own quartic; see the as-built note under OP-31*; (3) edges as chains and
 the mitre crease named; (4) face provenance through the general boolean, so a fused part has faces and creases
 to round; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
 against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
-See the OP-31 entry.
+See the OP-31 entry. **Parked by (2), for (c) or for the tier itself:** `FacePatch` has no way to *say* a
+boundary is fitted — one field beside `reason` and `surface` in `Section3.kt` — so the top face's cap curve is
+correct to `1e-4 mm` and does not state that it is.
 
 
 #### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)
