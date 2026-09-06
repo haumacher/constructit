@@ -1,16 +1,25 @@
 package constructit
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.dsl.Construction
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
 import constructit.editor.DocumentFormat
+import constructit.editor.Editor
 import constructit.editor.Element
 import constructit.editor.ElementKind
+import constructit.geom.Blend3
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.Geom3
-import constructit.geom.Section3
 import constructit.geom.Vec3
+import constructit.units.mm
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.sqrt
+import kotlin.math.tan
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -711,28 +720,99 @@ param "r" = 5mm
     /**
      * **Script 3, the reporter's own file** — a union and a subtract, and then a rounding of the result.
      *
-     * The script itself ends before the rounding, so the fixture is what the *next* gesture would meet: a
-     * general boolean's result is a `Feature3.MeshBoolean` and carries no faces, so `Section3.edges` refuses
-     * it by name, in these exact words. OP-9's own promise — *"Boolean results are analytic-preserving"* — is
-     * what OP-31's item (d) makes good on; until it does, the refusal is the honest state and it is pinned
-     * verbatim here so that making good on it fails this test.
+     * *"This is especially hard, since the target object is the result of add and subtract — but this is the
+     * only way to create the base solid of such structure."* Until OP-31's item (4) a general boolean's result
+     * carried no faces and this cell was pinned as the mesh-only refusal; now the fused body names every face as
+     * a piece of an operand's face and every crease as an exact line between two planes, so the matrix runs
+     * its single-edge class over **all** of them: each crease of `e76`, filleted and chamfered at the reporter's
+     * own 5 mm, is built inside the band's own figure at the crease's measured dihedral or refused by name.
      */
     @Test
-    fun theReportersThirdScriptRefusesTheRoundingByName() {
-        val body = Evaluator().solid(refOf(bodyOf(script3)))
-        val (edges, why) = Section3.edges(body.feature)
-        assertTrue(edges == null, "a general boolean's result carries no edge list — it handed back ${edges?.size}")
-        assertEquals(
-            "this solid is mesh-only (a general boolean's result, OP-9), so its section has no faces to name — " +
-                "its curves draw as chords and cannot be used as construction inputs; build the geometry you want " +
-                "to anchor on from the operands' own sketches instead",
-            assertNotNull(why, "and it says why").render(),
-            "the refusal script 3's next gesture meets, verbatim",
-        )
-        println("script 3 | refused | — | ${why.render().take(70)}")
+    fun theReportersThirdScriptTakesARoundingOnEveryOneOfItsCreases() {
+        val ed = Editor()
+        ed.replaceDocument(DocumentFormat.load(script3))
+        val el = ed.doc.elements.last { e -> e.kind == ElementKind.SOLID }
+        val on = Body(Evaluator().solid(refOf(el)))
+        assertTrue(on.count >= 40, "the fused body names its creases: ${on.count}")
+        val cx = ed.doc.cx
+        val size = cx.const(5.0.mm)
+        var cells = 0
+        for (k in kinds) {
+            for (i in 0 until on.count) {
+                val name = "script3(e$i,${tag(k)}5)"
+                cells++
+                if (!on.straight(i)) {
+                    assertTrue(on.edges[i].reason != null, "$name: a crease that is not a straight run says why")
+                    refused++
+                    continue
+                }
+                val (choices, whyChoice) = Blend3.choicesFor(on.solid, listOf(i), BlendSection(k, 5.0))
+                if (choices == null) {
+                    val reason = whyChoice?.render() ?: ""
+                    assertTrue(namesSomething(reason), "$name was refused a choice without naming anything: '$reason'")
+                    refused++
+                    println("$name | refused | — | ${reason.take(70)}")
+                    continue
+                }
+                val ref = cx.blendAll(refOf(el), cx.planeXY(), listOf(Construction.BlendRun(k, size, null, listOf(i), choices)))
+                val r = Evaluator().eval(ref.node)
+                if (r is EvalResult.Invalid) {
+                    val reason = r.reason ?: ""
+                    assertTrue(namesSomething(reason), "$name was refused without naming an edge or a face: '$reason'")
+                    refused++
+                    println("$name | refused | — | ${reason.take(70)}")
+                    continue
+                }
+                val v = measure(ref, name)
+                val theta = assertNotNull(on.wedgeAngle(i), "$name: two planes have a dihedral")
+                val band = Figures.wedgeArea(5.0, k, theta) * on.length(i)
+                val sign = if (assertNotNull(on.convex(i), "$name has a sign")) -1.0 else 1.0
+                val surplus = (Figures.wedgeAreaByChords(5.0, k, theta) - Figures.wedgeArea(5.0, k, theta)) * on.length(i)
+                val noise = 1e-6 * on.volume
+                // **A free end in an oblique face.** The band closes on a cap square to its own crease (the free
+                // end's notch, session 81); where the face the crease ends in is not square to it, the body
+                // beyond that cap is left standing (a convex band) or the tool reaches past the face (a fill),
+                // by at most the wedge's own section carried `reach·tan β` along the crease — bounded, not
+                // fitted, and zero at a square end.
+                val reach = if (k == BlendKind.CHAMFER) 5.0 else 5.0 * max(1.0, 1.0 / tan(theta / 2.0))
+                val stub = on.ends(i).sumOf { end -> Figures.wedgeArea(5.0, k, theta) * reach * endObliquity(on, i, end) }
+                val bracket =
+                    if (sign < 0) {
+                        Bracket(on.volume - band - surplus - noise, on.volume - band + stub + noise)
+                    } else {
+                        Bracket(on.volume + band - stub - noise, on.volume + band + surplus + stub + noise)
+                    }
+                assertTrue(v in bracket, "$name built $v, outside its own bracket $bracket (θ = $theta, L = ${on.length(i)}, stub ≤ $stub)")
+                built++
+                println("$name | built | $v | $bracket")
+            }
+        }
+        assertEquals(2 * on.count, cells, "every crease, both kinds")
+        tally("script 3, every crease")
     }
 
     // ---- plumbing ----
+
+    /**
+     * `tan β` for the face crease [i] ends in at [end], β being the angle between that face and the plane square
+     * to the crease — `0` at a square end, larger the more the end face leans along the crease; capped where the
+     * end face nearly contains the crease. The end face is the plane through [end] that is neither of the
+     * crease's own two.
+     */
+    private fun endObliquity(
+        b: Body,
+        i: Int,
+        end: Vec3,
+    ): Double {
+        val dir = (b.ends(i)[1] - b.ends(i)[0]).normalized()
+        val own = setOf(b.edges[i].between.a, b.edges[i].between.b)
+        return b.faces
+            .filter { f -> f.name !in own && f.plane != null && abs(f.plane!!.distanceTo(end)) < 1e-6 }
+            .maxOfOrNull { f ->
+                val c = abs(f.plane!!.normal.normalized().dot(dir)).coerceIn(1e-3, 1.0)
+                sqrt(1.0 - c * c) / c
+            } ?: 0.0
+    }
 
     /**
      * The end of rail [i] whose run starts **inside** the body, with the direction it runs in — or null where

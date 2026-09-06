@@ -60,6 +60,25 @@ object Figures {
         }
 
     /**
+     * **The same wedge as the engine sees it**: a round's arc reaches the boolean as inscribed chords over its
+     * sweep `π − θ`, stepped by `GeomMath.chordSteps` at the drawing's tolerance, and the chord polygon leaves
+     * the circular segments between chord and arc to the wedge — `r²/2·(α − n·sin(α/n))` more than the exact
+     * figure. A bevel has no arc and is exact. This is the upper end of a band's bracket at **any** dihedral,
+     * where [chordSurplus] is its quarter-arc approximation.
+     */
+    fun wedgeAreaByChords(
+        size: Double,
+        kind: BlendKind,
+        theta: Double = PI / 2.0,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Double {
+        if (kind == BlendKind.CHAMFER) return wedgeArea(size, kind, theta)
+        val alpha = PI - theta
+        val n = GeomMath.chordSteps(size, alpha, tolMm)
+        return wedgeArea(size, kind, theta) + size * size / 2.0 * (alpha - n * sin(alpha / n))
+    }
+
+    /**
      * `∫₀^size δ(h)² dh` over the section's own inset from the shared face — a round's rolling one
      * `r³(5/3 − π/2)`, a bevel's straight one `c³/3`. Stated at a right angle only, which is every crease of
      * the matrix's fixture that carries a corner.
