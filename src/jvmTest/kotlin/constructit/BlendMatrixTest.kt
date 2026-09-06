@@ -13,9 +13,10 @@ import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
 import constructit.geom.Geom3
+import constructit.geom.Revolve3
+import constructit.geom.Section3
 import constructit.geom.Vec3
 import constructit.units.mm
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -67,42 +68,6 @@ class BlendMatrixTest {
         val item: String,
         val what: String,
     ) {
-        /**
-         * **A convex band running into the concave fill** — `Blend3.cornersOf` skips a pair whose two members
-         * differ in sign, so the band runs the whole of its edge, the fill runs the whole of the upright, and
-         * nothing is built where they meet: a ledge, refused by nobody. Eighty-nine cells of the matrix, and
-         * the reporter's script 1 among them.
-         *
-         * Measured, one 4 mm fillet on edge 13 of the L-block and one on the concave upright, edge 2:
-         * **40566.627 mm³** with the fill's gesture first and **40566.658 mm³** with the band's — script 1's
-         * own figure — against the naive bracket **[40564.516, 40569.748] mm³**, which is
-         * `40611.445 + 3.4336·20 − 3.4336·32.75` with the chords. The corner that is owed is the pivot about a
-         * band with one end instead of two, and `Figures.pivotTakes(4, FILLET, π/2, 4)` is **26.393 mm³** of
-         * it — five times the whole width of that bracket, so this is not a matter of tolerance.
-         */
-        MIXED_SIGN_PAIR(
-            "(2) the mixed-sign pair — a fill meeting a band's end is the pivot about a band with one end",
-            "no corner is built between a convex band and the concave fill, and none is refused",
-        ),
-
-        /**
-         * **An inside corner whose two roundings are not congruent** — two kinds, or two sizes. `ringsAgree`
-         * fails, so `cornersOf` leaves the pair alone; at a *convex* corner that is right (the two tools
-         * overlap and the boolean trims what is doubled), but at an **inside** corner the two bands do not
-         * overlap at all and the face's sharp corner stands between their two ends: GitHub #31's own spike,
-         * back again whenever the two roundings differ. *Blend edge with a profile*'s own help says two edges
-         * given two different profiles "cannot share a corner **and say so**"; nothing says so.
-         * Twenty-four cells of the matrix.
-         *
-         * Measured, a 4 mm fillet on edge 13 and a 3 mm fillet on edge 14: **40362.201 mm³** against the naive
-         * bracket **[40361.438, 40369.229] mm³** — no corner, and no refusal either. A 4 mm fillet on edge 13
-         * and a 4 mm *bevel* on edge 14 is the same class: **39957.193 mm³** against **[39956.670, 39960.226]**.
-         */
-        INCONGRUENT_INSIDE_CORNER(
-            "(2) the mixed-sign pair, and with it the congruence rule at an inside corner",
-            "an inside corner between two roundings that are not congruent is neither built nor refused",
-        ),
-
         /**
          * **A rail is stated as one straight piece where the body's crease is a chain** — the reporter's
          * script 2. Bevel two cap edges that meet at the plan's inside corner and bevel the upright between
@@ -162,22 +127,17 @@ class BlendMatrixTest {
      * Classified **structurally** — by what meets what and with which sign — never by the cell's name, so a
      * class covers every gesture order and every route by construction.
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun residueOf(
         b: Body,
         entries: List<Rounding>,
     ): Residue? {
-        val byEdge = entries.associateBy { it.edge }
-        if (byEdge.size != entries.size) return null
-        for ((at, es) in b.vertices) {
-            val here = es.filter { it in byEdge }.map { byEdge.getValue(it) }
-            if (here.size != 2) continue
-            val convex = here.count { b.convex(it.edge) == true }
-            if (convex == 1) return Residue.MIXED_SIGN_PAIR
-            if (convex != 2) continue
-            val theta = b.sharedAngle(here[0].edge, here[1].edge, at) ?: continue
-            val congruent = here[0].kind == here[1].kind && here[0].size == here[1].size
-            if (theta > PI && !congruent) return Residue.INCONGRUENT_INSIDE_CORNER
-        }
+        // **No class of *cell* is in the residue any more** (session 83): the mixed-sign pair is built and
+        // the incongruent inside corner is refused by name, so both of the classes this used to sort into
+        // now reach one of the two legitimate states on their own. The two entries that stand are neither a
+        // volume nor a refusal — one is what the **edge list** says about a rail and the other is which
+        // gesture order builds at all — and each is asserted in its own test. The machinery stays, unused,
+        // because it is how the next class is named before anyone codes against it.
         return null
     }
 
@@ -290,8 +250,9 @@ class BlendMatrixTest {
      * consecutive gestures whose sizes are the drawing's own parameter.
      *
      * Thirty-six pairs cover every class the block has: convex crossings on a cap and on a side face, the two
-     * **inside-corner pivots** where the plan turns reflex, and the four **mixed-sign** pairs where a convex
-     * band runs into the concave fill — the class script 1 exposes.
+     * **inside-corner pivots** where the plan turns reflex, and the four **mixed-sign** pairs where the
+     * concave fill runs out into a band's end — the class script 1 exposes, built since session 83 as the
+     * one-ended pivot about that band.
      */
     @Test
     fun everyPairAtAVertexInOneDressing() {
@@ -374,8 +335,9 @@ class BlendMatrixTest {
      * inside both tools, a bevel of the larger contains both, and the two congruent crossings of those bound
      * it (see [predict]). That is a wide bracket and it is stated as wide on purpose.
      *
-     * At an **inside** corner the same rule leaves the two ends not touching at all, which is the residue
-     * entry [Residue.INCONGRUENT_INSIDE_CORNER].
+     * At an **inside** corner the same rule leaves the two ends not touching at all — no ring shared and no
+     * overlap either — and that pair is **refused by name** (session 83). A **mixed-sign** pair asks nothing
+     * of the two sizes: its ball turns on the circle `r + r_U`, which every pair of sizes has.
      */
     @Test
     fun twoSizesOnEveryPair() {
@@ -673,28 +635,65 @@ param "r" = 5mm
     private fun refOf(el: Element): SolidRef = el.ref as SolidRef
 
     /**
-     * **Script 1, the reporter's own file.** A top edge and the concave upright it ends at, both filleted by
-     * the one parameter `r`, which OP-30 joins into one dressing. It builds, it is watertight, and its volume
-     * is the **naive** figure — band over the whole edge, fill over the whole upright, no corner — which is
-     * [Residue.MIXED_SIGN_PAIR] and nothing else.
+     * **Script 1, the reporter's own file — the one-ended pivot, built** (OP-31 item (2), session 83).
+     *
+     * A top edge and the concave upright it ends at, both filleted by the one parameter `r`, which OP-30
+     * joins into one dressing. The band rounds away the very face the fill is tangent to over the last `r_U`
+     * of the fill's run, so the two never overlap and there is nothing for a boolean to trim: the fill turns
+     * about the band instead, on the circle of radius `r + r_U`, and the third face at the vertex caps the
+     * walk.
+     *
+     * **The volume alone cannot tell this body from the ledge**, and that is a fact about the arithmetic
+     * rather than a weakness of the test: the corner *adds* `runOutAdds = 16.747 mm³` and *shortens* the
+     * fill's own run by the band's size, which gives `w·r_U = 13.734 mm³` back — a net of `3.013 mm³` on a
+     * body whose two arcs' own chord slop over 32.75 + 20 mm of run is wider than that. So the naive bracket
+     * and this one **overlap**, and the two statements that carry the weight are made where no tolerance can
+     * reach them:
+     *
+     * - the **net against superposition** — the same two roundings measured *alone* and added — where every
+     *   chord term cancels because it is the same tessellation on both sides, and what is left is the
+     *   corner's own closed form;
+     * - the **corner itself**, a ring torus of centre radius `r + r_U` and tube `r`, which the naive body
+     *   has no face of at all, and which is [statesACorner]'s own positive control.
      */
     @Test
-    fun theReportersFirstScriptBuildsTheNaiveFigure() {
+    fun theReportersFirstScriptBuildsTheOneEndedPivot() {
+        val r = 4.0
+        val band = Rounding(13, BlendKind.FILLET, r)
+        val fill = Rounding(2, BlendKind.FILLET, r)
         val v = measure(refOf(bodyOf(script1)), "script 1")
-        val naive = assertNotNull(naive(L.block, listOf(Rounding(13, BlendKind.FILLET, 4.0), Rounding(2, BlendKind.FILLET, 4.0))))
-        assertTrue(
-            v in naive,
-            "RESIDUE ${Residue.MIXED_SIGN_PAIR.name}: script 1 no longer builds the naive figure $naive — it built $v. " +
-                "If the corner is built, delete the entry (${Residue.MIXED_SIGN_PAIR.item})",
-        )
-        assertTrue(
-            !statesACorner(Evaluator().solid(refOf(bodyOf(script1)))),
-            "RESIDUE ${Residue.MIXED_SIGN_PAIR.name}: script 1 now states a corner of its own — delete the entry",
-        )
-        // …and the corner it is owed is far bigger than the bracket, so this is not a matter of tolerance
-        val owed = Figures.pivotTakes(4.0, BlendKind.FILLET, PI / 2.0, 4.0)
-        assertTrue(owed > naive.hi - naive.lo, "the pivot owed ($owed mm³) is wider than the bracket itself")
-        println("script 1 | RESIDUE ${Residue.MIXED_SIGN_PAIR.name} | $v | naive $naive, owed a pivot of $owed mm³")
+        val bracket = assertNotNull(predict(L.block, listOf(band, fill)), "script 1's own bracket")
+        assertTrue(v in bracket, "script 1 built $v, outside the one-ended pivot's bracket $bracket")
+
+        // **superposition**: the two roundings alone, added, is the naive body to the last chord — so the
+        // difference is the corner and nothing else, with no chord term left in it
+        val alone =
+            listOf(band, fill).sumOf { e ->
+                val (only, why) = L.run(listOf(e), Route.ONE_PASS)
+                measure(assertNotNull(only, why).last(), "e${e.edge} alone") - L.baseVolume
+            }
+        val net = v - (L.baseVolume + alone)
+        val owed = Figures.runOutAdds(r, BlendKind.FILLET, r, BlendKind.FILLET) - Figures.wedgeArea(r, BlendKind.FILLET) * r
+        val give = Figures.runOutSlack(r, BlendKind.FILLET, r, BlendKind.FILLET) + 1e-5 * L.baseVolume
+        assertTrue(abs(net - owed) <= give, "the corner's own net is $net where the algebra says $owed (± $give)")
+        assertTrue(net > give, "…and it is not nothing: the ledge's own net is zero")
+
+        // **the corner itself**, which the naive body has no face of
+        val corner =
+            assertNotNull(
+                Section3
+                    .faces(Evaluator().solid(refOf(bodyOf(script1))).feature)
+                    .first
+                    ?.mapNotNull { it.surface?.band as? Revolve3.Band.Torus }
+                    ?.firstOrNull(),
+                "script 1 names the ring torus it turns on",
+            )
+        assertClose(corner.rc, 2.0 * r, 1e-9, "its centre circle is r + r_U")
+        assertClose(corner.minor, r, 1e-9, "…and its tube is the fill's own size")
+        assertTrue(statesACorner(Evaluator().solid(refOf(bodyOf(script1)))), "…and it is stated as a corner of the body")
+
+        val naive = assertNotNull(naive(L.block, listOf(band, fill)), "the naive figure the ledge used to build")
+        println("script 1 | built | $v | $bracket, a net of $net against the algebra's $owed (naive $naive overlaps)")
     }
 
     /**

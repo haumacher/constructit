@@ -6830,6 +6830,16 @@ Follow-up constructions rely on the **analytic layer**, not the mesh — because
   dependency. (This is what enables later STEP reconstruction.)
 - **Intersection edges/curves, datums, dimensions** — all analytic.
 
+**Half of this rule is retired, and half of it stands** (OP-31 item 4, session 83). The first bullet was a
+promise for eleven sessions: a general boolean's result was `Feature3.MeshBoolean`, which carried its `kind`
+and nothing else, and every provenance accessor refused it. It is now kept where both operands' faces are
+**planes** — the result keeps every one of them, on the operand's own exact carrier, with its outline trimmed
+by plane∩plane lines and its creases exact — so a fused part is sketched on, sectioned and **rounded** exactly
+as an extrusion is. What stands is the sentence's own precondition: a body with **no carrier at all** — an
+imported mesh, a skin, a sweep, anything whose faces are emergent triangles — is still a sink, and so, for now,
+is an operand face that is *curved* (see the OP-31 note for why that is a whole case rather than a gap).
+
+
 A follow-up genuinely relies on **mesh output** only here:
 1. **Mesh-only geometry ops** — `offset`/`shell`/`hull`/`minkowski`/mesh-smoothing of a
    composite: no clean analytic form → produce a `Mesh` value that stays mesh-only
@@ -16508,6 +16518,79 @@ a rounding larger than the faces it stands between.
 fitted tier is designed against the matrix's remaining residue rather than against a guess. The reporter's
 three scripts are the matrix's first three fixtures verbatim.
 
+### Implementation status (as built — the matrix, item 1, session 83)
+
+**One thousand three hundred cells, in fourteen test methods, in 3.5 s.** `BlendMatrixTest` (with
+`BlendMatrixSupport.kt` beside it, which holds the figures and the plumbing and asserts nothing) enumerates
+roundings over the reporter's own L-block — the script-1 extrusion, rebuilt through the DSL and asserted
+edge-for-edge and volume-for-volume against the file itself — and demands of every cell exactly one of two
+states: **built** (valid, `assertManifold` on the fine mesh, volume inside the cell's own closed-form bracket)
+or **refused by name** (`EvalResult.Invalid` whose reason, rendered through the English bundle, names an edge
+or a face). The third state, built and silently wrong, fails the build. **1142 cells build inside their
+bracket, 41 are refused by name, 117 are in the named residue.**
+
+The classes, and what each covers: **36** single edges (eighteen edges, both kinds, 4 mm); **288** pairs that
+share a vertex in one dressing (thirty-six pairs, four kind pairings, both gesture orders); **288** the same
+pairs stacked; **72** the same pairs as one gesture; **288** every triple at each of the twelve vertices, in
+all six orders and both routes; **144** two sizes (4 and 3 mm) on every pair; **72** a fillet on the rail of a
+bevel (each edge bevelled, each of the two rails it appends filleted at two sizes); **36** a fillet on the rail
+of a *round*, all refused, which is right — a round's rail is a tangent hand-over and there is no crease there;
+**72** the gesture-order comparison; and the three reporter scripts verbatim.
+
+**The bracket is derived, never fitted.** Every figure is written as an expression of the size, the run and the
+angle, read off the body rather than tabulated: the band's own wedge `r²(cot(θ/2) − (π−θ)/2)` for a round and
+`c²·sin θ/2` for a bevel (which is `r²(1−π/4)` and `c²/2` at a right angle, and `3π/4` at the rail of a bevel),
+taken at a convex crease and *added* at a concave one; `cot(θ/2)·∫δ²` off the sum at a crossing; Pappus'
+`w·φ·(ρ + ∫δ²/2w)` added at a pivot, with `ρ = 0` about a sharp upright and `ρ = r_U` about a rounded one, and a
+bevelled upright walked as turn–slide–turn; `(2 − 7π/12)r³` and `(3/4)c³` off the sum at a convex three-vertex.
+The upper margin is the chord surplus `π·r·tol·L/3` and a whole ball's worth of it per corner patch; a cell with
+no arc in it anywhere gets the boolean's own float32 noise and nothing else, so every all-planar figure is
+asserted to a part in 10⁵. Where two roundings are **incongruent** and no corner is built, the overlap the
+boolean trims is bracketed by *containment* — a round of the smaller size sits inside both tools, a bevel of the
+larger contains both — rather than by a fitted percentage. No bracket was ever widened to admit a body.
+
+**The residue, four classes, each asserted as its own inverse** so that fixing it fails this test and retires
+the entry (the seeded-defect discipline `TranslationReviewTest` runs over the translations, run here over the
+geometry). (1) **The mixed-sign pair** — 89 cells, and script 1 among them: `cornersOf` skips a pair whose
+members differ in sign, so a 4 mm fillet on edge 13 and one on the concave upright build **40566.658 mm³** (the
+band's gesture first; 40566.627 the other way round), which is the naive figure `40611.445 + 3.4336·20 −
+3.4336·32.75` inside its own bracket [40564.516, 40569.748] — while the pivot about a band with one end instead
+of two is **26.393 mm³**, five times that bracket's whole width. Closed by item (2). (2) **An incongruent inside
+corner** — 24 cells: `ringsAgree` fails, `cornersOf` leaves the pair alone, and where the shared face turns an
+*inside* corner the two bands do not overlap at all, so #31's spike is back whenever the two roundings differ
+(4 mm and 3 mm fillets on edges 13 and 14: **40362.201 mm³**, naive [40361.438, 40369.229]; a 4 mm fillet and a
+4 mm bevel: **39957.193**, naive [39956.670, 39960.226]). Nothing is built and nothing is refused, although
+*Blend edge with a profile*'s own help says such a pair "cannot share a corner **and say so**". Closed by item
+(2). (3) **A rail is not a chain** — 2 cells, and script 2: the body is right (the pivot-about-a-bevel figure to
+a part in 10⁵) and the *edge list* is wrong — each bevel's rails are stated at the whole 32.75 mm of the edge
+they round where the crease runs 28.75 mm, the two that lie on a side face are buried inside the fill over
+exactly the bevel's own 4 mm setback, and no mitre crease between the two bevels is listed at all. A fillet
+along such a rail runs 4 mm past the crease (**39959.770 mm³**); the volume alone cannot say so — a band over
+28.75 mm brackets to [39959.664, 39962.873] and the chord margin swallows the difference — so the residue is
+asserted on the rail's stated **run** and on the buried 4 mm instead. Closed by item (3). (4) **The gesture
+order decides the body** — 2 cells: rounding edges 6 and 11 (or 0 and 12) builds in one dressing and builds
+stacked one way round, and stacked the *other* way round the second pass folds the surface back on itself and
+`MeshCanon.flap` refuses it by name, at a point beside the far end of the first edge and not at the corner the
+two share at all. That is a legitimate state by the matrix's own rule, so it fails no cell; it is named because
+*which gesture arrived last* may not decide what a body is (OP-30's own sentence), and because it is the exact
+shape of the reporter's *"works fine in some cases but creates nonsense in others"*. Closed by item (3).
+
+**What the matrix cannot see, said so it is not assumed away.** A bracket built on a body's own edge list
+inherits that list's errors: where a rail is stated too long the band over it is bracketed over the same wrong
+run, so class (3) had to be caught structurally rather than by a figure. And the corner figures above are
+written at a **right-angled** wedge, which is every crease of the undressed block but not the 135° rail of a
+bevel — so a rounding of a rail is bracketed on its own, and two of them meeting at a vertex is a cell the
+algebra declines and the residue would have to name. Neither is a tolerance question; both are item (3)'s.
+
+**Script 3 is pinned as a refusal, verbatim.** The script ends before the rounding, so the fixture is what the
+next gesture meets: `Section3.edges` of a `Feature3.MeshBoolean` hands back no list and the mesh-only sentence,
+asserted word for word through the English bundle. Item (4) makes good on OP-9's own promise, and doing so will
+fail this assertion, which is the point of pinning it.
+
+**Nothing outside `src/jvmTest/` changed**, and nothing in `TestSupport.kt` had to: `assertManifold`,
+`assertClose` and the chord helpers already said what the matrix needed.
+
+
 #### Implementation status (as built — the mixed-sign pair, item 2, session 83)
 
 **The pair, and why it was neither built nor refused.** `Blend3.cornersOf` skipped a pair whose two members
@@ -16663,6 +16746,92 @@ face's boundary carrying the fitted chain with both of its ends exact; the incon
 by name and healing; one gesture undone leaving the one before it to the last bit; and the entry removed like
 any other row.
 
+
+#### Implementation status (as built — face provenance through the boolean, item 4, session 83)
+
+**Built, and the reporter's third script is the fixture.** A general boolean's result now **keeps its faces**.
+`Feature3.MeshBoolean` carries a `BoolProvenance` — the face list and the crease list — assembled once at
+`Geom3.combine` by `Section3.boolProvenance`, and `Section3.faces`/`edges`/`facesAreWholeBoundary` read it
+instead of refusing. GitHub #36's script 3 loads to a body of **28 named faces and 49 exact creases**, a 5 mm
+fillet runs along one of them and takes out `r²(1 − π/4)·L` to the last digit the chords allow, a sketch space
+opens on a face of it, and a level section through it comes back **exact** rather than as chords.
+
+**The argument, and why nothing is discovered.** A boolean never *moves* a surface: every triangle of the
+result lies in a face of one of the two operands, and the only emergent thing is where that face was trimmed.
+So the result face's carrier **is** the operand's own exact plane, and the crease between two result faces is
+the line those two exact planes meet in — computed, never fitted. The mesh contributes exactly two facts and no
+geometry: *which operand* a triangle came from, and *which faces are on the other side of each boundary edge*.
+
+**How the operand is carried, on both platforms.** Manifold's own triangle runs. The input meshes are
+originals, so each has an `originalID`; the result's `runOriginalID`/`runIndex` say, per run of triangles,
+which original that run's surface belongs to, and matching them against the two inputs' ids gives one integer
+per result triangle (`BoolMesh.owner`). It is read through `MeshGL.runOriginalID()` in the JavaCPP binding
+(Manifold 2.0.3) and through `Mesh.runOriginalID` in the WASM module (3.5.1) — the same fact under the same
+name on both. It survives canonicalisation because the sort **carries** it: `MeshCanon.canonicalWith` permutes
+the tag array with the triangles rather than recomputing it, so the same two meshes give the same triangles
+*and* the same tags, bit for bit. `-1` — *"the engine did not say"* — is honest and not an error: the assembly
+then looks that triangle up against **both** operands' carriers, which is why the two platforms cannot diverge
+even if one of them stops filling the runs in.
+
+*The measurement that decided this.* `MeshGL.faceID` was tried first, because it is the field that names a
+*face*. Manifold 2.0.3 does not maintain an input `faceID` through a boolean: a probe that tagged two boxes'
+twelve faces `100…105` and `200…205` got `0…11` back — the engine's own coplanar grouping, in its own
+numbering. `runOriginalID` came back as `[4, 5]` with `runIndex [0, 72, 96]`, i.e. exactly the two operands.
+So the operand is the engine's fact and the face is ours, which is the better split anyway: *which face* is then
+a lookup against carriers the drawing already knows exactly, rather than a number whose meaning is the engine's.
+
+**Which face, and how the lookup cannot lie.** A result triangle is matched to the operand face whose plane
+contains all three of its corners (within 64 float32 ULPs of the mesh's own scale — a micron on a 100 mm part,
+a *recognition* tolerance that never reaches the geometry) **and** whose own outline contains its centre. The
+outline half is what tells two *coplanar* faces of one operand apart — two straight pieces of one profile lying
+on the same line, an ordinary thing to draw — and it can, because a boolean only ever trims a face: a surviving
+piece lies inside the face it came from, never outside it. A triangle that matches nothing at all is refused,
+not guessed (`refusal.section.boolSurfaceOffCarrier`).
+
+**The outline is built from planes, not from vertices.** Each face's triangles are grouped into connected
+pieces; the boundary of a piece is chained into loops; each run of that boundary facing one neighbour lies on
+the line where this face's plane meets the neighbour's, stated in this face's own (u, v) as `A·x + B·y = C`;
+and each corner is where two of those lines cross. The mesh vertex is looked at exactly once, as a **check** —
+a corner further from it than the engine's own noise means the runs were read wrongly, and that is refused
+(`refusal.section.boolCornerNotDetermined`). Hence the corners of a fused body stand on the drawing's own
+lattice to 1e-9 on a mesh whose vertices are float32 and a thousand times coarser. A face whose triangles face
+against the operand plane — a wall of a cavity a subtraction cut — takes the flipped plane, so a face normal
+still points out of the material everywhere.
+
+**The ordering rule, which is what makes an address hold still.** The face list is **operand-major**: every
+face of the first operand in that operand's own order, then every face of the second; within one operand face,
+its surviving pieces in the order of their smallest canonical triangle. A face the boolean consumed **keeps its
+slot** and says so (`refusal.section.boolFaceConsumed`) rather than dropping out, and a slot an *earlier*
+boolean already emptied stays empty one boolean further — so booleans chain without an address moving. Creases
+are ordered by the pair of faces they separate, `(a, b)` with `a ≤ b`, then by the smallest canonical vertex the
+crease passes through. What can still move is an address *after* a face the geometry newly cuts into two
+pieces: the same exposure a blend's corner faces already carry, and for the same reason — how many pieces a
+face has is a fact about the shape. The names are recursive and read as such: *the top face of the first operand
+of the first operand*.
+
+**The one whole case cut, refused by name.** A **curved** operand face — a cylinder swept by an arc, a
+revolve's band — is not carried. Its result piece would be a patch of that cylinder, and the creases where it
+meets its planar neighbours would be conics, so the *planar* neighbour's outline would have to become a fitted
+chord chain. This slice does not build one: a boolean with a curved operand face refuses **wholly**, naming
+the face (`refusal.section.boolFaceNotPlane`), and heals the moment the operands are planar (OP-3). So the
+**fitted carrier of Tier B was deliberately not introduced here**: under a planar-only scope every crease is
+exact, and a fitted vocabulary with no producer would be dead words. It is Tier B's to introduce, against the
+matrix's residue, exactly as the order says.
+
+**What is still refused, in the old words.** An operand with no analytic faces at all — an imported mesh, a
+skin, a sweep — and an operand whose named faces are not its whole boundary (a prism's). The result is then
+mesh-only in exactly the sentence it always was, because the reader is being told about *this* body.
+
+**Two tests were rewritten because the behaviour they pinned is the behaviour that changed**, and both say so
+in place: `SectionInputTest`'s mesh-route section (a loft cut by a rectangular prism — all planes, so it now
+sections exactly and names every face) and `EdgeBlendTest`/`Face3DPickTest`'s two refusals (both over a
+*curved* operand, so they still refuse and now name the face rather than the route).
+
+**The silhouette plan is untouched.** `Feature3.MeshBoolean.plan` is still the projection a blend's own node
+computes where it needs one. With the faces named it *could* be derived from them instead of from the
+triangles — the outline of the union of the faces' projections — which would give every cross-axis boolean a
+plan without forcing a mesh. That is OP-22's decision to make and would change what every such body draws
+today; it is left, and recorded here so it is not looked for.
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -21244,15 +21413,24 @@ rather than three, and that is a vocabulary change no report has asked for — r
 for. The format's version rose to 5 as the marker that lets an older file be told once.
 
 
-**Queued in session 83 — OP-31, the rounding algebra (GitHub #36), in this order:** (1) the blend matrix
-test, with its named residue; ~~(2) the mixed-sign pair as a one-ended pivot about a band~~ — *retired in
+**Queued in session 83 — OP-31, the rounding algebra (GitHub #36), in this order:** ~~(1) the blend matrix
+test, with its named residue~~ — *retired in session 83, see below*; ~~(2) the mixed-sign pair as a one-ended pivot about a band~~ — *retired in
 session 83: the fill travels and the band is pivoted about, the walk capped by the third face; the matrix's
 incongruent inside corner is refused by name with it, and the Tier B fitted chain is taken for the first time
 on the cap's own quartic; see the as-built note under OP-31*; (3) edges as chains and
-the mitre crease named; (4) face provenance through the general boolean, so a fused part has faces and creases
-to round; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
+the mitre crease named; ~~(4) face provenance through the general boolean, so a fused part has faces and creases
+to round~~ — *retired in session 83, see below*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
 against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
-See the OP-31 entry. **Parked by (2), for (c) or for the tier itself:** `FacePatch` has no way to *say* a
+See the OP-31 entry.
+
+**(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
+refused by name, 117 in a residue of four named classes, which is now the specification items (2) and (3) are
+written against. See the OP-31 entry's implementation status.
+
+~~(4) face provenance through the general boolean~~ — **done in session 83**: a general boolean of two bodies
+whose faces are planes keeps every one of them, with exact carriers and exact creases, so GitHub #36's script 3
+is dressed like an extrusion. A curved operand face is the named residue and refuses by name; the fitted
+carrier is Tier B's to introduce. See the OP-31 implementation note. **Parked by (2), for (c) or for the tier itself:** `FacePatch` has no way to *say* a
 boundary is fitted — one field beside `reason` and `surface` in `Section3.kt` — so the top face's cap curve is
 correct to `1e-4 mm` and does not state that it is.
 

@@ -20,6 +20,7 @@ import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.math.tan
 
 // **The rounding matrix's own arithmetic and plumbing** (OP-31, item 1 — the matrix is the specification).
@@ -125,6 +126,94 @@ object Figures {
         size: Double,
         kind: BlendKind,
     ): Double = if (kind == BlendKind.CHAMFER) 0.75 * size * size * size else (2.0 - 7.0 * PI / 12.0) * size * size * size
+
+    /**
+     * **How high a section stands at reach [x] from its crease**, on a right-angled wedge: a bevel's straight
+     * `c − x`, a round's `r − √(r² − (x − r)²)`. It is the section read as a function rather than as an area,
+     * which is what a corner that eats part of it needs.
+     */
+    fun sectionHeight(
+        size: Double,
+        kind: BlendKind,
+        x: Double,
+    ): Double =
+        if (kind == BlendKind.CHAMFER) {
+            size - x
+        } else {
+            size - sqrt((size * size - (x - size) * (x - size)).coerceAtLeast(0.0))
+        }
+
+    /** Simpson over `[a, b]` — deterministic and fixed-step, so a figure stated through it is the same bit twice. */
+    private fun integral(
+        a: Double,
+        b: Double,
+        n: Int = 2000,
+        f: (Double) -> Double,
+    ): Double {
+        val h = (b - a) / n
+        var s = f(a) + f(b)
+        for (i in 1 until n) s += f(a + h * i) * (if (i % 2 == 0) 2.0 else 4.0)
+        return s * h / 3.0
+    }
+
+    /**
+     * **The one-ended pivot** — what the corner where a fill runs out into a band's end *adds* (OP-31 item 2).
+     *
+     * The fill's section turns about the band on the circle of radius `r + r_U` and the **third** face at the
+     * vertex caps the walk, so a ring at radius `ρ` from that axis is counted only over the turn it stands
+     * below the cap for, which is `arcsin(r_U/ρ)` and nothing else:
+     *
+     * ```
+     * V = ∫_{r_U}^{r_U+r} ρ · arcsin(r_U/ρ) · h(ρ − r_U) dρ
+     * ```
+     *
+     * Pappus' `w·φ·ρ̄` — [pivotTakes] — is the same integral with no cap over it; here the cap eats the far
+     * rings and the turn is a function of the radius, which is why this is its own figure and not that one.
+     *
+     * About a **bevelled** band the walk is a quarter-turn about the first rail, a slide the bevel's own
+     * `c_U√2`, and a quarter-turn the cap takes away entirely, so it adds
+     * `(π/4)·∫₀^r x·h(x) dx + ∫₀^{c_U√2} A(K) dK` with `A(K)` the section's area out to reach `K`.
+     *
+     * Stated at a right-angled vertex, which is every vertex of the matrix's fixture.
+     */
+    fun runOutAdds(
+        bandSize: Double,
+        bandKind: BlendKind,
+        size: Double,
+        kind: BlendKind,
+    ): Double =
+        if (bandKind == BlendKind.CHAMFER) {
+            val moment = integral(0.0, size) { x -> x * sectionHeight(size, kind, x) }
+            val area = { k: Double -> if (k <= 0.0) 0.0 else integral(0.0, kotlin.math.min(k, size)) { x -> sectionHeight(size, kind, x) } }
+            (PI / 4.0) * moment + integral(0.0, bandSize * sqrt(2.0)) { k -> area(k) }
+        } else {
+            integral(bandSize, bandSize + size) { rho ->
+                rho * kotlin.math.asin(kotlin.math.min(1.0, bandSize / rho)) * sectionHeight(size, kind, rho - bandSize)
+            }
+        }
+
+    /**
+     * **The chord allowance a one-ended pivot needs**, derived on both sides and from the sag rule alone.
+     *
+     * *Above*: the section reaches the engine as its own chord polygon, which is
+     * `wedgeAreaByChords − wedgeArea` larger and scales the whole corner with it. *Below*: the walk is stepped
+     * by the same rule, and a linear loft over a turn of `Δ` under-sweeps by `Δ²/6` of it, while the sag rule
+     * gives `Δ² ≤ 8·tol/R` at radius `R` — so at most `4·tol/(3·R)` of the corner, taken at the section's own
+     * size, which is the smallest radius any part of it turns at.
+     */
+    fun runOutSlack(
+        bandSize: Double,
+        bandKind: BlendKind,
+        size: Double,
+        kind: BlendKind,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Double {
+        val take = runOutAdds(bandSize, bandKind, size, kind)
+        val w = wedgeArea(size, kind)
+        val up = take * (wedgeAreaByChords(size, kind, PI / 2.0, tolMm) - w) / w
+        val down = take * 4.0 * tolMm / (3.0 * size)
+        return up + down
+    }
 
     /**
      * **The chord surplus** an inscribed arc leaves over [length] mm of band: the arc reaches the engine as
@@ -444,12 +533,16 @@ fun namesSomething(reason: String): Boolean {
  * chords and a chord always takes a hair more; a cell with no arc in it anywhere gets the float32 noise of
  * the boolean and nothing else.
  *
+ * A **mixed-sign** pair — a fill running out into a band's end — is the one-ended pivot [Figures.runOutAdds]
+ * states, added rather than taken and with the fill's own run set back by the band's size (OP-31 item (2),
+ * session 83).
+ *
  * What it declines to state, and each is a class rather than a case:
- * - a **mixed-sign** pair — a convex band running into a concave fill — which is OP-31 item (2);
- * - a corner at an edge whose wedge does not stand at a right angle, since the crossing, pivot and ball
- *   figures above are written at one (a **band** at any angle is stated, so a rounding of a rail on its own
- *   is bracketed; two of them meeting is not);
- * - an **incongruent** inside corner, where nothing is built and nothing is refused.
+ * - a corner at an edge whose wedge does not stand at a right angle, since the crossing, pivot, ball and
+ *   run-out figures above are written at one (a **band** at any angle is stated, so a rounding of a rail on
+ *   its own is bracketed; two of them meeting is not);
+ * - an **incongruent** inside corner, which since session 83 is refused by name and so never reaches a
+ *   bracket at all.
  */
 fun predict(
     b: Body,
@@ -506,8 +599,8 @@ fun predict(
                     }
                 } else {
                     // an inside corner of the shared face, the third edge left sharp: the ball pivots about
-                    // it through the corner's exterior angle. Incongruent, nothing is built there at all —
-                    // and nothing refused either, which is a residue rather than a figure.
+                    // it through the corner's exterior angle. An **incongruent** pair makes no such corner
+                    // and is refused by name (session 83), so it never reaches here.
                     if (!congruent) return null
                     val take = Figures.pivotTakes(size, kind, theta - PI, 0.0)
                     cornerLo += take - slack
@@ -542,7 +635,25 @@ fun predict(
                 cornerLo += take - slack
                 cornerHi += take + slack
             }
-            // **a mixed-sign pair** — a convex band running into a concave fill — is OP-31 item (2).
+            // **a mixed-sign pair** — a fill running out into a band's end (OP-31 item (2)). The fill's
+            // section turns about the band on the circle of radius `r + r_U` and the third face at the
+            // vertex caps the walk, so the corner **adds** [Figures.runOutAdds] and the fill's own run is
+            // set back by the band's size. Nothing here asks the two to be congruent: there is no ring for
+            // them to share, and the circle `r + r_U` exists for every pair of sizes and kinds.
+            here.size == 2 && concave.size == 1 && convex.size == 1 -> {
+                // the closed form is written where the shared face turns a **convex** corner at the vertex,
+                // which is where the band's own curve runs out of it — an inside one there is a different
+                // walk and this states no figure for it
+                val theta = b.sharedAngle(here[0].edge, here[1].edge, at) ?: return null
+                if (theta >= PI) return null
+                val fill = concave[0]
+                val band = convex[0]
+                val take = Figures.runOutAdds(band.size, band.kind, fill.size, fill.kind)
+                val give = Figures.runOutSlack(band.size, band.kind, fill.size, fill.kind)
+                cut(fill.edge, band.size)
+                cornerLo -= take + give
+                cornerHi -= take - give
+            }
             else -> return null
         }
     }

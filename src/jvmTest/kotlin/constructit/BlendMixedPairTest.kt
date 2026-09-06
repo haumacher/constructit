@@ -30,11 +30,7 @@ import constructit.geom.Vec3
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.asin
 import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
-import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -118,56 +114,10 @@ class BlendMixedPairTest {
     private val topAlongY = 14
 
     // ---- the arithmetic, closed form ----
-
-    private fun wedgeArea(
-        size: Double,
-        kind: BlendKind,
-    ): Double = if (kind == BlendKind.CHAMFER) size * size / 2.0 else (1.0 - PI / 4.0) * size * size
-
-    /** How high the section stands at reach [x] from the crease along the face it is measured on. */
-    private fun heightAt(
-        size: Double,
-        kind: BlendKind,
-        x: Double,
-    ): Double = if (kind == BlendKind.CHAMFER) size - x else size - sqrt((size * size - (x - size) * (x - size)).coerceAtLeast(0.0))
-
-    /** Simpson over [a, b] — deterministic, and enough for a closed-form integrand stated to six figures. */
-    private fun integral(
-        a: Double,
-        b: Double,
-        n: Int = 2000,
-        f: (Double) -> Double,
-    ): Double {
-        val h = (b - a) / n
-        var s = f(a) + f(b)
-        for (i in 1 until n) s += f(a + h * i) * (if (i % 2 == 0) 2.0 else 4.0)
-        return s * h / 3.0
-    }
-
-    /** What the corner adds where the band is **round**: the section's first moment, turn by turn. */
-    private fun pivotAboutRound(
-        rU: Double,
-        size: Double,
-        kind: BlendKind,
-    ): Double = integral(rU, rU + size) { rho -> rho * asin(min(1.0, rU / rho)) * heightAt(size, kind, rho - rU) }
-
-    /** …and where it is **bevelled**: a quarter-turn about the first rail, then the slide up the bevel. */
-    private fun pivotAboutBevel(
-        cU: Double,
-        size: Double,
-        kind: BlendKind,
-    ): Double {
-        val moment = integral(0.0, size) { x -> x * heightAt(size, kind, x) }
-        val area = { k: Double -> if (k <= 0.0) 0.0 else integral(0.0, min(k, size)) { x -> heightAt(size, kind, x) } }
-        return (PI / 4.0) * moment + integral(0.0, cU * sqrt(2.0)) { k -> area(k) }
-    }
-
-    /** How much larger a **round** wedge is when its arc reaches the engine as inscribed chords. */
-    private fun chordExcess(size: Double): Double {
-        val n = GeomMath.chordSteps(size, PI / 2.0, GeomMath.TESS_TOL_MM)
-        val th = (PI / 2.0) / n
-        return n * (size * size / 2.0) * (th - sin(th))
-    }
+    //
+    // The figures themselves live in [Figures], beside every other closed form the blend algebra is made of,
+    // so the matrix and this test state the corner **once** — `Figures.runOutAdds` for what a one-ended pivot
+    // adds and `Figures.runOutSlack` for the chord allowance it needs on either side, both derived there.
 
     private fun planArea(): Double {
         var s = 0.0
@@ -179,13 +129,20 @@ class BlendMixedPairTest {
         return abs(s) / 2.0
     }
 
+    /** How much larger a **round** wedge is when its arc reaches the engine as inscribed chords. */
+    private fun chordExcess(
+        size: Double,
+        kind: BlendKind,
+    ): Double = Figures.wedgeAreaByChords(size, kind) - Figures.wedgeArea(size, kind)
+
     /**
      * The closed-form volume of the L with one **band** on [bandEdge] and the **fill** on the reflex upright,
      * and the two-sided bracket the chords put round it.
      *
-     * *Never below* the exact figure by more than what the band's own inscribed arc takes extra off the whole
-     * of its run, *never above* it by more than what the fill's inscribed arc adds extra over its own, and
-     * either way within a twentieth of the corner itself, whose turn is chorded like every arc here.
+     * The band runs its own whole edge; the fill's run is set back by the band's size, because that is where
+     * the walk takes over; and the corner adds [Figures.runOutAdds]. *Never below* the exact figure by more
+     * than what the band's own inscribed arc takes extra off the whole of its run, *never above* it by more
+     * than what the fill's adds over its own, and either way within the corner's own [Figures.runOutSlack].
      */
     private fun figure(
         bandEdge: Int,
@@ -196,14 +153,13 @@ class BlendMixedPairTest {
     ): Triple<Double, Double, Double> {
         val runs = mapOf(topAlongX to (0.375 - -32.375), topAlongY to (61.875 - -5.521648428788623))
         val length = assertNotNull(runs[bandEdge], "a band on edge $bandEdge")
-        val wBand = wedgeArea(bandSize, bandKind)
-        val wFill = wedgeArea(fillSize, fillKind)
-        val corner =
-            if (bandKind == BlendKind.CHAMFER) pivotAboutBevel(bandSize, fillSize, fillKind) else pivotAboutRound(bandSize, fillSize, fillKind)
+        val wBand = Figures.wedgeArea(bandSize, bandKind)
+        val wFill = Figures.wedgeArea(fillSize, fillKind)
+        val corner = Figures.runOutAdds(bandSize, bandKind, fillSize, fillKind)
         val exact = planArea() * height - wBand * length + wFill * (height - bandSize) + corner
-        val slack = 0.05 * corner
-        val lo = exact - (if (bandKind == BlendKind.CHAMFER) 0.0 else chordExcess(bandSize)) * length - slack
-        val hi = exact + (if (fillKind == BlendKind.CHAMFER) 0.0 else chordExcess(fillSize)) * (height - bandSize) + slack
+        val slack = Figures.runOutSlack(bandSize, bandKind, fillSize, fillKind)
+        val lo = exact - chordExcess(bandSize, bandKind) * length - slack
+        val hi = exact + chordExcess(fillSize, fillKind) * (height - bandSize) + slack
         return Triple(exact, lo, hi)
     }
 
