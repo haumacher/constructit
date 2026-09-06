@@ -1,0 +1,53 @@
+constructit 6
+point -62.875,31.375 -> e1
+point -30.875,85.625 -> e2
+tool segment pts=e1,e2 clicks=-62.875,31.375;-30.875,85.625 -> e3
+point 0,40 -> e4
+tool segment pts=e2,e4 clicks=-30.625,85.625;-0.625,41.625 -> e5
+point -13.125,-16.625 -> e6
+point -2.875,10.375 -> e7
+tool segment pts=e6,e7 clicks=-13.125,-16.625;-2.875,10.375 -> e8
+point 23.875,-28.625 -> e9
+tool segment pts=e7,e9 clicks=-1.875,11.625;23.875,-28.625 -> e10
+orthostart 0,40 -> e11
+weldortho e11 e4
+orthovertex 55.375,40 -> e12,e13
+orthovertex 55.375,7.625 -> e14,e15
+orthovertex 42.625,7.625 -> e16,e17
+orthovertex 42.625,-28.625 -> e18,e19
+orthovertex 23.875,-28.625 -> e20,e21
+weldortho e20 e9
+orthostart -13.125,-16.625 -> e22
+weldortho e22 e6
+orthovertex -62.875,-16.625 -> e23,e24
+orthovertex -62.875,31.375 -> e25,e26
+weldortho e25 e1
+tool outline els=e26,e3,e5,e13,e15,e17,e19,e21,e10,e8,e24 clicks=-64.375,8.125;-53.375,45.875;-15.4375,62.8125;27.6875,40;55.375,23.8125;49,7.625;42.625,-10.5;33.25,-28.625;10.5,-9.125;-8,-3.125;-38,-16.625 -> e27,e28,e29,e30,e31,e32,e33,e34,e35,e36,e37,e38
+param "h" = 20mm
+tool extrude els=e38 clicks=-62.875,1.125 scalar="h" -> e39
+sketchspace "face1" el=e39 piece=12
+sectioninput "face1" corner=5 -> e40
+sectioninput "face1" corner=10 -> e41
+tool segment pts=e40,e41 clicks=0.3197102721685636,39.87857769973661;-2.670280948200181,8.982001755926243 -> e42
+sectioninput "face1" edge=9 -> e43
+sectioninput "face1" edge=8 -> e44
+sectioninput "face1" edge=7 -> e45
+sectioninput "face1" edge=6 -> e46
+sectioninput "face1" edge=5 -> e47
+tool outline els=e42,e43,e44,e45,e46,e47 clicks=-1.341395961369628,22.270851624231778;-7.819710272168575,-3.310184372256374;-31.739640035118533,-16.931255487269546;-63.13454784899036,2.337576821773477;-52.83568920105357,48.18410886742757;-17.28801580333627,64.1307287093942 -> e48,e49,e50,e51,e52,e53,e54
+point -37.221290605794564,16.290869183494287 -> e55
+point 24.22200452172562,7.247008565104377 -> e56
+param "h2" = 20.059973213497795mm
+param "h3" = -10mm
+tool extrudepoint pts=e55 els=e54 clicks=-62.968437225636535,7.320895522388052;-37.221290605794564,16.290869183494287 scalar="h2" signs=3;0 -> e57,e58
+sectioninput "face1" edge=4 -> e59
+sectioninput "face1" edge=3 -> e60
+sectioninput "face1" edge=2 -> e61
+sectioninput "face1" edge=1 -> e62
+sectioninput "face1" edge=0 -> e63
+sectioninput "face1" edge=10 -> e64
+tool outline els=e59,e60,e61,e62,e63,e64,e42 clicks=22.57853380158033,39.87857769973661;55.966769095697984,22.935294117647054;49.156233538191394,7.819227392449509;42.34569798068481,-6.466286215978938;32.7112818261633,-28.558999122036887;11.449122036874448,-12.11404741000879;-1.8397278314310854,23.76584723441615 -> e65,e66,e67,e68,e69,e70,e71,e72
+tool extrudepoint pts=e56 els=e72 clicks=13.608560140474097,-13.110711150131705;28.060184372256362,23.101404741000874 scalar="h3" signs=2;0 -> e73,e74
+tool union els=e39,e58 clicks=-32.07562232552941,-20.815122882110373;-30.58466836505312,26.41198263967152 -> e75
+tool subtract els=e75,e74 clicks=32.74583581902277,-32.13938581579633;28.083777267655293,-1.3892442991406568 -> e76
+param "r" = 5mm

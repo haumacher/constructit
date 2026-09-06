@@ -8,6 +8,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.sin
 
 /**
@@ -128,6 +129,36 @@ sealed interface FaceName {
         override val label: Msg
             get() = Msgs.nameSolidSkinBetweenSectionsStrip(interval = interval + 1, interval2 = interval + 2, strip = strip + 1)
     }
+
+    /**
+     * **What is left of one face of one operand of a general boolean** (OP-31, item 4): [of] is that face's
+     * own name, [operand] says which of the two solids it belonged to (0 or 1), [face] its position in that
+     * solid's own face list, and [piece] which piece of it this is where the boolean cut it in two.
+     *
+     * *Why the name is recursive.* A boolean never moves a surface — it trims one — so the honest name for a
+     * result face is the operand face it is a piece of, spoken in that face's own words: *the top face of the
+     * first operand*, and one boolean further in, *the top face of the first operand of the first operand*.
+     * Nothing about it is discovered from triangles (OP-8): the operand is [BoolMesh]'s own tag and the face
+     * is a lookup against that operand's exact carriers.
+     *
+     * *The index-stability rule this name carries* (OP-17, OP-21). The result's face list is
+     * **operand-major**: every face of the first operand in that operand's own order, then every face of the
+     * second, and within one operand face its surviving pieces in the order of their smallest canonical
+     * triangle. A face the boolean consumed **keeps its slot** and states that as its reason rather than
+     * dropping out, so a `sketchspace … piece=` written today addresses the same face tomorrow. What can
+     * still move is an address *after* a face that the geometry newly cuts into two pieces — the same
+     * exposure a blend's corner faces already carry, and for the same reason: how many pieces a face has is
+     * a fact about the shape.
+     */
+    data class BoolFace(val operand: Int, val face: Int, val of: FaceName, val piece: Int = 0) : FaceName {
+        override val label: Msg
+            get() =
+                if (piece == 0) {
+                    Msgs.nameSolidBoolOperandFace(name = of.label, which = if (operand == 0) "a" else "b")
+                } else {
+                    Msgs.nameSolidBoolOperandFacePiece(name = of.label, piece = piece + 1, which = if (operand == 0) "a" else "b")
+                }
+    }
 }
 
 /**
@@ -194,6 +225,21 @@ sealed interface EdgeName {
      */
     data class ShellInner(val edge: Int) : EdgeName {
         override val label: Msg get() = Msgs.nameSolidInnerEdgeBehindEdge(edge = edge + 1)
+    }
+
+    /**
+     * **A crease of a general boolean's result** (OP-31, item 4): where result faces [a] and [b] meet, run
+     * [run] where the same two faces meet along more than one.
+     *
+     * The one edge in this vocabulary that is *emergent* — a boolean's creases genuinely are new — and it is
+     * named by the two faces it separates, which is exactly what an edge is (see [EdgeName]'s own note). It
+     * is still **exact**: both faces are planes, so the crease is the line where those two planes meet and its
+     * two ends are where a third plane closes each face's outline. Ordered by `(a, b, run)` with `a < b`, and
+     * runs by the smallest canonical vertex the crease passes through — a deterministic function of the
+     * operands, which is what makes a recorded `filletedge … signs=` address hold still.
+     */
+    data class BoolCrease(val a: Int, val b: Int, val run: Int = 0) : EdgeName {
+        override val label: Msg get() = Msgs.nameSolidBoolCrease(a = a + 1, b = b + 1)
     }
 }
 
@@ -298,6 +344,18 @@ data class FacePatch(
      */
     val surface: Surface3? = null,
 )
+
+/**
+ * **What a general boolean's result keeps of its operands** (OP-31, item 4): its faces, and the creases
+ * between them.
+ *
+ * A value rather than a computation, and carried on [Feature3.MeshBoolean] rather than derived on demand,
+ * for the reason the blend's own trimmed list is memoized: whether this body *has* faces is a fact about the
+ * body, and it may not depend on who asks first or how often. It is assembled once by
+ * [Section3.boolProvenance], from the two operand features and the mesh the engine handed back, and it is a
+ * pure function of them (OP-4) — the same drawing gives the same faces in the same order on every run.
+ */
+data class BoolProvenance(val faces: List<FacePatch>, val edges: List<SolidEdge>)
 
 /** One edge of a solid, in the world: a straight one, or a curve lying on a known plane. */
 sealed interface EdgeGeom {
@@ -474,7 +532,11 @@ object Section3 {
             is Feature3.Prism -> prismFaces(feature) to null
             is Feature3.Loft -> loftFaces(feature)
             is Feature3.Revolution -> Revolve3.faces(feature)
-            is Feature3.MeshBoolean -> null to MESH_ONLY
+            // **A general boolean's result keeps its faces** (OP-31, item 4): each of them is a piece of one
+            // face of one operand, on that operand's own exact plane, trimmed where the boolean trimmed it.
+            // The refusal stands where there was nothing to keep — an imported operand, a skin, a prism, a
+            // curved face — and then it is [Feature3.MeshBoolean.provenanceRefusal]'s own words.
+            is Feature3.MeshBoolean -> feature.provenance?.faces to (if (feature.provenance == null) feature.provenanceRefusal ?: MESH_ONLY else null)
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
             // **The skin's list is constructed** (session 78): one strip per (interval × piece) in the
@@ -509,7 +571,11 @@ object Section3 {
             // piece sweeps exactly one band, a partial turn adds exactly two caps, and a piece lying on
             // the axis sweeps nothing — which is not a hole in the shell but the pole it closes on.
             is Feature3.Revolution -> true
-            is Feature3.MeshBoolean -> false
+            // **Exactly when it has faces at all.** A general boolean's named faces *are* its whole boundary —
+            // every triangle of the result was traced to one of them, which is what [Section3.boolProvenance]
+            // refuses to hand back a list without — so its section may be assembled from them and comes out
+            // exact rather than as chords (OP-31, item 4).
+            is Feature3.MeshBoolean -> feature.provenance != null
             is Feature3.Imported -> false
             is Feature3.Sweep -> false
             // **False for a skin, and that is the honesty line rather than a gap.** Its faces are named and
@@ -551,7 +617,7 @@ object Section3 {
             is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution, is Feature3.Blend, is Feature3.Shell ->
                 faces(feature).second
             is Feature3.Prism -> PRISM_ONLY
-            is Feature3.MeshBoolean -> MESH_ONLY
+            is Feature3.MeshBoolean -> faces(feature).second
             is Feature3.Imported -> IMPORT_ONLY
             is Feature3.Sweep -> SWEEP_ONLY
             is Feature3.Skin -> Skin3.LOFT_ONLY
@@ -958,7 +1024,8 @@ object Section3 {
             is Feature3.Loft -> loftEdges(feature)
             is Feature3.Revolution -> Revolve3.edges(feature)
             is Feature3.Prism -> null to PRISM_ONLY
-            is Feature3.MeshBoolean -> null to MESH_ONLY
+            // the creases between the faces above — exact, since both sides are planes (OP-31, item 4)
+            is Feature3.MeshBoolean -> feature.provenance?.edges to (if (feature.provenance == null) feature.provenanceRefusal ?: MESH_ONLY else null)
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
             // **A skin's edges are the one half of its provenance this cut does not build** (session 78, and
@@ -2413,4 +2480,498 @@ object Section3 {
         }
         return PlaneSection(emptyList(), emptyList(), null, reason, out, true)
     }
+
+    // ---- the faces a general boolean's result keeps (OP-31, item 4) ----
+
+    /**
+     * How far a result vertex may sit off the operand carrier it belongs to and still be **on** it, in float32
+     * ULPs of the mesh's own scale.
+     *
+     * The general engine's vertex positions are float32 ([MeshCanon.F32_ULP]), so a face's own plane comes back
+     * with a few ULPs of noise on it and the trim points with rather more — a cut position is computed, not
+     * copied. Sixty-four ULPs is a micron on a 100 mm part: six orders below any feature this drawing has and
+     * two decades above the noise it has to absorb. It is a **recognition** tolerance and nothing that reaches
+     * the geometry: what the outline is built from is the operands' own exact planes, never these vertices.
+     */
+    private const val CARRIER_ULPS = 64.0
+
+    /** Directions whose 2D cross product is under this count as parallel — a corner two lines do not fix. */
+    private const val CORNER_EPS = 1e-9
+
+    /**
+     * **The faces and edges a general boolean's result keeps** — the whole of OP-31's item 4, and the half of
+     * OP-9's mesh-is-a-sink rule that is hereby retired.
+     *
+     * *The argument.* A boolean never **moves** a surface. Every triangle of the result lies in a face of one
+     * of the two operands; what the engine computes is only *where that face was trimmed*. So the result's
+     * faces are the operands' own faces cut down, exactly — the carrier is the operand's exact plane, not a
+     * plane fitted to triangles — and its creases are where two of those exact planes meet, which is a line
+     * and not a measurement. Nothing here is discovery (OP-8): **which operand** a triangle came from is the
+     * engine's own `runOriginalID` ([BoolMesh.owner]), and **which face of it** is a lookup against that
+     * operand's own carriers, checked rather than fitted.
+     *
+     * *What is still a sink, and says so.* An operand with no analytic faces at all — an imported mesh, a
+     * skin, a sweep — has no carrier to look anything up against, and the result then refuses in exactly the
+     * words it always did ([MESH_ONLY]). So does an operand whose faces are named but are not its **whole**
+     * boundary (a prism's, by [facesAreWholeBoundary]'s own note).
+     *
+     * *The one whole case cut, and it refuses by name.* A **curved** operand face (a cylinder swept by an
+     * arc, a revolve's band) is not carried: its result piece would be a patch of that cylinder, and the
+     * creases where it meets its planar neighbours would be conics — statable, but the outline of the
+     * neighbouring *planar* face would then have to be a fitted chord chain, and this slice does not build
+     * one. So a boolean with a curved operand face refuses **wholly and by name**
+     * ([Msgs.refusalSectionBoolFaceNotPlane]) rather than answering half of itself, and heals the moment the
+     * operands become planar. Everything below therefore knows that every carrier is a plane and every crease
+     * is a line — which is why every number it produces is exact.
+     *
+     * Watertight or refused, applied to provenance: a result whose triangles cannot all be traced to a
+     * carrier, or whose outline has a corner the meeting planes do not fix, is **not** given a face list that
+     * is nearly right. It stays a mesh-only body with a reason (OP-3), and the mesh itself is untouched.
+     */
+    fun boolProvenance(
+        a: Feature3,
+        b: Feature3,
+        r: BoolMesh,
+    ): Pair<BoolProvenance?, Msg?> {
+        val carriers = ArrayList<Carrier>()
+        for ((k, f) in listOf(a, b).withIndex()) {
+            val (fs, _) = faces(f)
+            // **The result's own words, not the operand's.** A body whose operand has no faces is mesh-only
+            // in exactly the sentence it has always been mesh-only in — the reader is looking at *this* body,
+            // and OP-9's sink rule is what it is being told about (an imported operand, a skin, a sweep).
+            if (fs == null) return null to MESH_ONLY
+            // a face list that is not the whole boundary cannot be looked up against: a prism's faces stand
+            // over the solid's full extent whether or not the material is there ([facesAreWholeBoundary])
+            if (!facesAreWholeBoundary(f)) return null to MESH_ONLY
+            for ((j, p) in fs.withIndex()) {
+                val plane = p.plane
+                if (plane == null || p.reason != null) {
+                    // **A slot an earlier boolean already emptied is not a curved face.** A face this operand
+                    // lost to a boolean of its own keeps its slot and states that as its reason
+                    // ([Msgs.refusalSectionBoolFaceConsumed]) — it is the only plane-less patch this file
+                    // emits — so it carries no surface here either and keeps its slot one boolean further.
+                    // That is what lets booleans chain without an address ever moving (OP-17, OP-21).
+                    if (plane == null && p.name is FaceName.BoolFace) {
+                        carriers.add(Carrier(k, j, p.name, null, emptyList()))
+                        continue
+                    }
+                    return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
+                }
+                val segs = ArrayList<Segment>(p.outline.size)
+                for (e in p.outline) {
+                    if (e !is ProfileElement.Seg) return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
+                    segs.add(e.segment)
+                }
+                carriers.add(Carrier(k, j, p.name, plane, segs))
+            }
+        }
+        return assembleBool(carriers, r)
+    }
+
+    /** One operand face as the lookup sees it: its exact plane and its own boundary in that plane's (u, v). */
+    private class Carrier(
+        val operand: Int,
+        val face: Int,
+        val name: FaceName,
+        /** Null for a slot that has no surface left at all — see [boolProvenance]'s note on an empty slot. */
+        val plane: Plane3?,
+        val outline: List<Segment>,
+    )
+
+    /** One connected piece of one carrier, as it stands in the result: its triangles and its own index. */
+    private class Piece(
+        val carrier: Int,
+        val tris: MutableList<Int> = ArrayList(),
+    )
+
+    /**
+     * One run of a face's boundary along a single crease: which face is on the other side, the two exact ends
+     * in this face's own (u, v), and the two mesh vertices they stand at — the last only so that two runs can
+     * be ordered and a crease taken once.
+     */
+    private class Run(
+        val other: Int,
+        val fromVertex: Int,
+        val toVertex: Int,
+        val from: Vec2,
+        val to: Vec2,
+    )
+
+    private fun assembleBool(
+        carriers: List<Carrier>,
+        r: BoolMesh,
+    ): Pair<BoolProvenance?, Msg?> {
+        val mesh = r.mesh
+        val n = mesh.triangles.size
+        var scale = 1.0
+        for (v in mesh.vertices) scale = max(scale, max(abs(v.x), max(abs(v.y), abs(v.z))))
+        val tol = max(1e-6, CARRIER_ULPS * MeshCanon.F32_ULP * scale)
+
+        // ---- 1. every triangle onto the carrier it is a piece of ----
+        val onCarrier = IntArray(n)
+        val hints = HashMap<Long, Int>()
+        for (i in 0 until n) {
+            val t = mesh.triangles[i]
+            val va = mesh.vertices[t.a]
+            val vb = mesh.vertices[t.b]
+            val vc = mesh.vertices[t.c]
+            val centre = (va + vb + vc) * (1.0 / 3.0)
+            val key = planeKey(va, vb, vc)
+            val hint = hints[key]
+            var pick = if (hint != null && sits(carriers[hint], va, vb, vc, centre, tol, inside = true)) hint else -1
+            if (pick < 0) pick = scanCarriers(carriers, r.owner[i], va, vb, vc, centre, tol)
+            if (pick < 0 && r.owner[i] >= 0) pick = scanCarriers(carriers, -1, va, vb, vc, centre, tol)
+            if (pick < 0) return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+            onCarrier[i] = pick
+            hints[key] = pick
+        }
+
+        // ---- 2. the directed-edge map, and the pieces each carrier survives in ----
+        val owner = HashMap<Long, Int>(n * 4)
+        for (i in 0 until n) {
+            val t = mesh.triangles[i]
+            owner[edgeKey(t.a, t.b)] = i
+            owner[edgeKey(t.b, t.c)] = i
+            owner[edgeKey(t.c, t.a)] = i
+        }
+        val pieceOf = IntArray(n) { -1 }
+        val pieces = ArrayList<Piece>()
+        for (start in 0 until n) {
+            if (pieceOf[start] >= 0) continue
+            val piece = Piece(onCarrier[start])
+            val id = pieces.size
+            pieces.add(piece)
+            // triangle order is canonical, so a piece's id is a function of the mesh and never of the walk
+            val stack = ArrayList<Int>()
+            stack.add(start)
+            pieceOf[start] = id
+            while (stack.isNotEmpty()) {
+                val i = stack.removeAt(stack.size - 1)
+                piece.tris.add(i)
+                val t = mesh.triangles[i]
+                for ((from, to) in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+                    val j = owner[edgeKey(to, from)] ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+                    if (pieceOf[j] >= 0 || onCarrier[j] != piece.carrier) continue
+                    pieceOf[j] = id
+                    stack.add(j)
+                }
+            }
+            piece.tris.sort()
+        }
+
+        // ---- 3. the face list: operand-major, one slot per operand face, its pieces in canonical order ----
+        val order = ArrayList<Int>()
+        val slotOfPiece = IntArray(pieces.size) { -1 }
+        val names = ArrayList<FaceName>()
+        val planes = ArrayList<Plane3?>()
+        for (c in carriers.indices) {
+            val mine = pieces.indices.filter { pieces[it].carrier == c }.sortedBy { pieces[it].tris.first() }
+            if (mine.isEmpty()) {
+                order.add(-1 - c)
+                names.add(FaceName.BoolFace(carriers[c].operand, carriers[c].face, carriers[c].name))
+                planes.add(null)
+                continue
+            }
+            for ((k, pi) in mine.withIndex()) {
+                slotOfPiece[pi] = order.size
+                order.add(pi)
+                names.add(FaceName.BoolFace(carriers[c].operand, carriers[c].face, carriers[c].name, k))
+                planes.add(carriers[c].plane?.let { orientedPlane(mesh, pieces[pi], it) })
+            }
+        }
+
+        // ---- 4. every face's outline, and with it every crease ----
+        val patches = ArrayList<FacePatch>(order.size)
+        val runsOf = ArrayList<List<Run>>(order.size)
+        for ((slot, pi) in order.withIndex()) {
+            if (pi < 0) {
+                val c = carriers[-1 - pi]
+                patches.add(FacePatch(names[slot], null, emptyList(), Msgs.refusalSectionBoolFaceConsumed(which = if (c.operand == 0) "a" else "b")))
+                runsOf.add(emptyList())
+                continue
+            }
+            val plane = planes[slot] ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+            val (outline, runs) = outlineOf(mesh, pieces[pi], pieceOf, slotOfPiece, planes, plane, owner, tol) ?: return null to Msgs.refusalSectionBoolCornerNotDetermined()
+            patches.add(FacePatch(names[slot], plane, outline, null))
+            runsOf.add(runs)
+        }
+
+        // ---- 5. the creases, each taken once, ordered by the two faces they separate ----
+        val creases = ArrayList<Triple<Int, Int, Run>>()
+        val seen = HashSet<Long>()
+        for (slot in runsOf.indices) {
+            for (run in runsOf[slot]) {
+                if (run.other < slot) continue
+                if (run.other == slot && !seen.add(edgeKey(min(run.fromVertex, run.toVertex), max(run.fromVertex, run.toVertex)))) continue
+                creases.add(Triple(slot, run.other, run))
+            }
+        }
+        creases.sortWith(compareBy({ it.first }, { it.second }, { min(it.third.fromVertex, it.third.toVertex) }, { max(it.third.fromVertex, it.third.toVertex) }))
+        val edges = ArrayList<SolidEdge>(creases.size)
+        var at = 0
+        while (at < creases.size) {
+            var to = at
+            while (to < creases.size && creases[to].first == creases[at].first && creases[to].second == creases[at].second) to++
+            for (k in at until to) {
+                val (i, j, run) = creases[k]
+                val p = patches[i].plane ?: return null to Msgs.refusalSectionBoolCornerNotDetermined()
+                edges.add(
+                    SolidEdge(
+                        EdgeName.BoolCrease(i, j, k - at),
+                        EdgeGeom.Straight(p.toWorld(run.from), p.toWorld(run.to)),
+                        FacePair(names[i], names[j]),
+                    ),
+                )
+            }
+            at = to
+        }
+        return BoolProvenance(patches, edges) to null
+    }
+
+    /**
+     * Whether [c] carries the triangle `(va, vb, vc)`: all three corners on its plane within [tol], and —
+     * when [inside] is asked and the carrier states an outline — its centre within that outline.
+     *
+     * The outline test is what tells two **coplanar** faces of one operand apart (two straight pieces of one
+     * profile lying on the same line, which is an ordinary thing to draw), and it can do so because a boolean
+     * only ever trims a face: a surviving piece lies inside the face it came from, never outside it.
+     */
+    private fun sits(
+        c: Carrier,
+        va: Vec3,
+        vb: Vec3,
+        vc: Vec3,
+        centre: Vec3,
+        tol: Double,
+        inside: Boolean,
+    ): Boolean {
+        val plane = c.plane ?: return false
+        if (abs(plane.distanceTo(va)) > tol) return false
+        if (abs(plane.distanceTo(vb)) > tol) return false
+        if (abs(plane.distanceTo(vc)) > tol) return false
+        if (!inside || c.outline.isEmpty()) return true
+        return within(c.outline, plane.toLocal(centre))
+    }
+
+    /**
+     * The carrier a triangle belongs to, searched in the face list's own order so the answer is a function of
+     * that order and never of the search: the first carrier whose outline **contains** the triangle wins, and
+     * a carrier that only shares the plane is the fallback.
+     *
+     * [only] is the operand the engine said the triangle came from, or `-1` for *"it did not say"* — in which
+     * case both operands are searched and the tie goes to the first, which is the same rule stated once.
+     */
+    private fun scanCarriers(
+        carriers: List<Carrier>,
+        only: Int,
+        va: Vec3,
+        vb: Vec3,
+        vc: Vec3,
+        centre: Vec3,
+        tol: Double,
+    ): Int {
+        var any = -1
+        for (i in carriers.indices) {
+            val c = carriers[i]
+            if (only >= 0 && c.operand != only) continue
+            if (!sits(c, va, vb, vc, centre, tol, inside = false)) continue
+            if (any < 0) any = i
+            if (sits(c, va, vb, vc, centre, tol, inside = true)) return i
+        }
+        return any
+    }
+
+    /** Whether [p] is inside the closed loops [outline] draws — even-odd, which reads holes for free. */
+    private fun within(
+        outline: List<Segment>,
+        p: Vec2,
+    ): Boolean {
+        var inside = false
+        for (s in outline) {
+            val a = s.a
+            val b = s.b
+            if ((a.y > p.y) == (b.y > p.y)) continue
+            val x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+            if (x > p.x) inside = !inside
+        }
+        return inside
+    }
+
+    /**
+     * [carrier] turned so its normal points **out of the result's material** — which is the operand plane
+     * itself where the operand's material survived, and the flipped one where a subtraction turned the face
+     * into a wall of the cavity it cut.
+     */
+    private fun orientedPlane(
+        mesh: Mesh3,
+        piece: Piece,
+        carrier: Plane3,
+    ): Plane3 {
+        val n = carrier.normal.normalized()
+        var s = 0.0
+        for (i in piece.tris) {
+            val t = mesh.triangles[i]
+            val a = mesh.vertices[t.a]
+            s += (mesh.vertices[t.b] - a).cross(mesh.vertices[t.c] - a).dot(n)
+        }
+        return if (s >= 0.0) carrier else carrier.flipped()
+    }
+
+    /**
+     * One face's **outline in its own (u, v)**, and the runs it is made of — or null where the planes meeting
+     * at a corner do not fix it.
+     *
+     * The whole point of this function is that **it does not use the mesh's coordinates**. The mesh says only
+     * *which* faces are on the other side of each boundary edge; the geometry is then: each run of the
+     * boundary that faces one neighbour lies on the line where this face's plane meets that neighbour's, and
+     * each corner is where two of those lines cross. Both are exact — plane ∩ plane, then line ∩ line, in
+     * this plane's own frame — so the outline is the drawing's own numbers and not float32's. The mesh vertex
+     * is used once, as a **check**: a corner that comes out further from it than the engine's own noise means
+     * the runs were read wrongly, and that is refused rather than shipped.
+     */
+    private fun outlineOf(
+        mesh: Mesh3,
+        piece: Piece,
+        pieceOf: IntArray,
+        slotOfPiece: IntArray,
+        planes: List<Plane3?>,
+        plane: Plane3,
+        owner: Map<Long, Int>,
+        tol: Double,
+    ): Pair<List<ProfileElement>, List<Run>>? {
+        val mine = piece.tris.toHashSet()
+        // the boundary of the piece, as directed edges, each with the face on the other side of it
+        val out = HashMap<Int, MutableList<IntArray>>()
+        for (i in piece.tris) {
+            val t = mesh.triangles[i]
+            for ((from, to) in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+                val twin = owner[edgeKey(to, from)] ?: return null
+                if (twin in mine) continue
+                out.getOrPut(from) { ArrayList() }.add(intArrayOf(to, slotOfPiece[pieceOf[twin]]))
+            }
+        }
+        for (v in out.values) v.sortWith(compareBy({ it[0] }, { it[1] }))
+        val pending = HashMap<Int, MutableList<IntArray>>()
+        for ((k, v) in out) pending[k] = ArrayList(v)
+
+        val outline = ArrayList<ProfileElement>()
+        val runs = ArrayList<Run>()
+        val starts = out.keys.sorted()
+        for (first in starts) {
+            while (!pending[first].isNullOrEmpty()) {
+                val loop = ArrayList<IntArray>()
+                var at = first
+                while (true) {
+                    val here = pending[at] ?: return null
+                    if (here.isEmpty()) break
+                    val step = here.removeAt(0)
+                    loop.add(intArrayOf(at, step[0], step[1]))
+                    at = step[0]
+                    if (at == first) break
+                }
+                if (at != first || loop.size < 3) return null
+                val made = runsOfLoop(mesh, loop, planes, plane, tol) ?: return null
+                outline.addAll(made.second)
+                runs.addAll(made.first)
+            }
+        }
+        if (runs.isEmpty()) return null
+        return outline to runs
+    }
+
+    /** One closed boundary loop as exact runs and the segments they draw — see [outlineOf] for the argument. */
+    private fun runsOfLoop(
+        mesh: Mesh3,
+        loop: List<IntArray>,
+        planes: List<Plane3?>,
+        plane: Plane3,
+        tol: Double,
+    ): Pair<List<Run>, List<ProfileElement>>? {
+        val m = loop.size
+        // start the walk at a run boundary, and at the one with the smallest canonical vertex, so which
+        // corner a run begins at is a function of the mesh and not of where the chain happened to start
+        var head = -1
+        for (i in 0 until m) {
+            if (loop[i][2] == loop[(i + m - 1) % m][2]) continue
+            if (head < 0 || loop[i][0] < loop[head][0]) head = i
+        }
+        if (head < 0) return null
+        val groups = ArrayList<IntArray>()
+        var i = 0
+        while (i < m) {
+            val a = loop[(head + i) % m]
+            var j = i + 1
+            while (j < m && loop[(head + j) % m][2] == a[2]) j++
+            groups.add(intArrayOf(a[2], a[0], loop[(head + j - 1) % m][1]))
+            i = j
+        }
+        if (groups.size < 3) return null
+        val lines = ArrayList<DoubleArray>(groups.size)
+        for (g in groups) {
+            val other = planes.getOrNull(g[0]) ?: return null
+            lines.add(creaseLine(plane, other) ?: return null)
+        }
+        val corners = ArrayList<Vec2>(groups.size)
+        for (k in groups.indices) {
+            val p = cross2(lines[k], lines[(k + 1) % groups.size]) ?: return null
+            // the check, and the only place a mesh coordinate is looked at: the exact corner must stand where
+            // the engine put its own vertex, to within the engine's own noise
+            if ((p - plane.toLocal(mesh.vertices[groups[(k + 1) % groups.size][1]])).length() > 64.0 * tol) return null
+            corners.add(p)
+        }
+        val runs = ArrayList<Run>(groups.size)
+        val drawn = ArrayList<ProfileElement>(groups.size)
+        for (k in groups.indices) {
+            val from = corners[(k + groups.size - 1) % groups.size]
+            val to = corners[k]
+            runs.add(Run(groups[k][0], groups[k][1], groups[k][2], from, to))
+            drawn.add(ProfileElement.Seg(Segment(from, to)))
+        }
+        return runs to drawn
+    }
+
+    /** Where [other] crosses [plane], in [plane]'s own (u, v): `A·x + B·y = C`, or null when they are parallel. */
+    private fun creaseLine(
+        plane: Plane3,
+        other: Plane3,
+    ): DoubleArray? {
+        val n = other.normal.normalized()
+        val a = n.dot(plane.u)
+        val b = n.dot(plane.v)
+        if (a * a + b * b < CORNER_EPS) return null
+        return doubleArrayOf(a, b, n.dot(other.origin - plane.origin))
+    }
+
+    /** Where two in-plane lines cross, or null where they do not fix a point. */
+    private fun cross2(
+        p: DoubleArray,
+        q: DoubleArray,
+    ): Vec2? {
+        val det = p[0] * q[1] - q[0] * p[1]
+        if (abs(det) < CORNER_EPS) return null
+        return Vec2((p[2] * q[1] - q[2] * p[1]) / det, (p[0] * q[2] - q[0] * p[2]) / det)
+    }
+
+    /** A triangle's own plane, rounded to a lattice — a *hint* key only, never a decision ([sits] decides). */
+    private fun planeKey(
+        va: Vec3,
+        vb: Vec3,
+        vc: Vec3,
+    ): Long {
+        val n = (vb - va).cross(vc - va)
+        val len = n.length()
+        val u = if (len <= Vec3.EPS) n else n * (1.0 / len)
+        val s = if (u.x < 0.0 || (u.x == 0.0 && (u.y < 0.0 || (u.y == 0.0 && u.z < 0.0)))) -1.0 else 1.0
+        val q = 1e-4
+        var h = 1469598103934665603L
+        for (x in listOf(u.x * s, u.y * s, u.z * s, u.dot(va) * s)) {
+            h = (h xor round(x / q).toLong()) * 1099511628211L
+        }
+        return h
+    }
+
+    private fun edgeKey(
+        a: Int,
+        b: Int,
+    ): Long = (a.toLong() shl 32) or (b.toLong() and 0xffffffffL)
 }

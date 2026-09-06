@@ -87,7 +87,7 @@ actual object MeshBool {
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, Msg?> {
+    ): Pair<BoolMesh?, Msg?> {
         val why = failure
         if (why != null) return null to meshBoolUnavailable(why)
         if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanNeedsTwoClosed()
@@ -104,10 +104,58 @@ actual object MeshBool {
                 }
             if (r.status() != 0) return null to Msgs.refusalMeshboolGeneralBooleanFailedManifoldStatus(status = r.status())
             if (r.isEmpty) return null to Msgs.refusalMeshboolBooleanLeavesNothingSolid()
-            MeshCanon.finish(mesh3(r.getMeshGL()))
+            val gl = r.getMeshGL()
+            MeshCanon.finish(mesh3(gl), owners(gl, ma.originalID(), mb.originalID()))
         } catch (t: Throwable) {
             null to Msgs.refusalMeshboolGeneralBooleanEngineFailed(simpleName = t::class.simpleName ?: "", message = t.message ?: "")
         }
+    }
+
+    /**
+     * **Which operand each result triangle came from** ([BoolMesh]), read off Manifold's own triangle runs.
+     *
+     * A `MeshGL` built from a plain mesh is an *original*, so it has an `originalID`; the result's
+     * `runOriginalID` says, per run of triangles, which original that run's surface belongs to, and
+     * `runIndex` says where each run starts (in *indices*, so divisible by 3). Matching the two against the
+     * two inputs' own ids is the whole derivation — nothing here measures anything, which is exactly why the
+     * faces this ends up naming are provenance and not discovery (OP-8, OP-31 item 4).
+     *
+     * **Never a throw and never a wrong answer**: a binding that does not fill the runs in, or an id that
+     * matches neither input, leaves `-1` — *"the engine did not say"* — and the assembly then looks that
+     * triangle up against both operands' carriers instead of trusting a guess.
+     */
+    private fun owners(
+        gl: MeshGL,
+        idA: Int,
+        idB: Int,
+    ): IntArray {
+        val tris = gl.triVerts().toIntArray().size / 3
+        val out = IntArray(tris) { -1 }
+        val ids =
+            try {
+                gl.runOriginalID().toIntArray()
+            } catch (t: Throwable) {
+                return out
+            }
+        val starts =
+            try {
+                gl.runIndex().toIntArray()
+            } catch (t: Throwable) {
+                return out
+            }
+        if (ids.isEmpty() || starts.size < ids.size) return out
+        for (run in ids.indices) {
+            val which =
+                when (ids[run]) {
+                    idA -> 0
+                    idB -> 1
+                    else -> continue
+                }
+            val from = starts[run] / 3
+            val to = (if (run + 1 < starts.size) starts[run + 1] / 3 else tris)
+            for (i in from until minOf(to, tris)) out[i] = which
+        }
+        return out
     }
 
     /** [mesh] as a `MeshGL`: three float properties per vertex, triangles as an unsigned index run. */
