@@ -452,6 +452,107 @@ data class FacePatch(
  */
 data class BoolProvenance(val faces: List<FacePatch>, val edges: List<SolidEdge>)
 
+/**
+ * **Which kind of thing one recorded shared slot holds** (OP-31, slice 5g) — the three a corner puts on a
+ * dressed body, and the whole of the vocabulary [CornerSlots] is closed over.
+ */
+enum class CornerSlotKind {
+    /** A [EdgeName.BlendMitre]: the curve *across* the corner, and a run-in crease. */
+    MITRE,
+
+    /** A [EdgeName.BlendCornerRail]: the corner's own surface running tangent onto a face. */
+    RAIL,
+
+    /** A [FaceName.BlendCorner]: the corner's own patch. */
+    PATCH,
+}
+
+/**
+ * **One recorded shared slot** (OP-31, slice 5g): which base edges the corner stands between, which kind of
+ * curve or surface it put there, and which piece of it — an **identity**, and never a position.
+ *
+ * It is the [EdgeName]/[FaceName] of the slot in the one form the file can write, and deliberately a closed
+ * vocabulary rather than the open name interface: a record that could hold a name the writer cannot state
+ * would be a record that silently loses a slot, which is the very instability it exists to remove. A live
+ * curve whose name is outside it ([of]) is simply never recorded — it appends, every time — so a new kind of
+ * shared curve is a visible gap here and never a corrupted address (`CornerSlotVocabularyTest` is what keeps
+ * the gap from opening unnoticed).
+ */
+data class CornerSlot(val kind: CornerSlotKind, val edges: List<Int>, val piece: Int) {
+    /** What an **edge** slot of this record is called — the name a tombstone at it carries. */
+    val edgeName: EdgeName
+        get() = if (kind == CornerSlotKind.RAIL) EdgeName.BlendCornerRail(edges, piece) else EdgeName.BlendMitre(edges, piece)
+
+    /** What a **face** slot of this record is called. */
+    val faceName: FaceName get() = FaceName.BlendCorner(edges, piece)
+
+    companion object {
+        /** The slot [name] would be recorded as, or null where it is no shared curve at all. */
+        fun of(name: EdgeName): CornerSlot? =
+            when (name) {
+                is EdgeName.BlendMitre -> CornerSlot(CornerSlotKind.MITRE, name.edges, name.piece)
+                is EdgeName.BlendCornerRail -> CornerSlot(CornerSlotKind.RAIL, name.edges, name.piece)
+                else -> null
+            }
+
+        /** The slot [name] would be recorded as, or null where it is no corner patch at all. */
+        fun of(name: FaceName): CornerSlot? = if (name is FaceName.BlendCorner) CornerSlot(CornerSlotKind.PATCH, name.edges, name.piece) else null
+    }
+}
+
+/**
+ * **The shared slots a dressing has stated** (OP-31, slice 5g) — the record that makes the curves and faces
+ * two or more of a dressing's entries make *together* hold still.
+ *
+ * A dressed body's appended lists are one **block per entry** and then, after every block, the things the
+ * entries make *together*: the corner curves, the run-in creases and the corner patches ([Blend3] states the
+ * whole ordering rule once, at its `entryOwning`). Every count inside a block is a function of its own entry,
+ * so a block holds still through both edits. The shared part did not: **how many curves a corner puts on the
+ * body is a fact about the corner's own kind**, so a corner *made or unmade* by an edit — a third rounding
+ * that turns two free ends into a crossing, a size change that makes a congruent pair incongruent, a
+ * rounding removed so the corner goes — moved every shared slot listed after it, and a stored `signs=`
+ * addressing one of them then named a different curve (OP-18's own prohibition, and the one class slice 5b
+ * left open).
+ *
+ * So the slot count is **decided at build time and recorded**, exactly as a tombstone's band count is
+ * ([Feature3.Blend.absent]) — and what is recorded is the slot's own **identity** ([CornerSlot]), which is
+ * the count and one thing more: the layout puts each recorded slot back where the record puts it, leaves a
+ * recorded slot the body no longer has standing as a **tombstone** with a reason, and appends a curve the
+ * record does not know after everything (`Blend3.SlotPool`, whose note states the rule once).
+ *
+ * **The record is per entry, and that is the half of it that matters** — one list of slots at the *end of
+ * each entry's block*, rather than one run after all the blocks. A run after the blocks holds still through
+ * a corner's own change and still moves the moment a rounding is **added**, because the new entry's block
+ * goes in ahead of it: rails held and corner curves did not, which is only half a fix. Inside the blocks
+ * nothing can push it, since a block is only ever appended after the last one and a removed entry keeps its
+ * own (OP-30's tombstone). A slot the record does not yet know joins the **last** block, which is exactly
+ * where the layout has just appended it, so recording it moves nothing either.
+ *
+ * The record is written into the file by the step that makes the dressing's body — one `slots=` argument,
+ * each slot stated with the entry block it belongs to ([DocumentFormat.CORNER_SLOT_VERSION]) — so a replay
+ * lays the same slots out from the first step on, and it is refreshed by every gesture that edits the
+ * dressing: it only ever **grows**, which is what makes appending safe.
+ */
+data class CornerSlots(
+    /** Per entry position, the shared **edge** slots laid out at the end of that entry's block. */
+    val edges: List<List<CornerSlot>>,
+    /** Per entry position, the shared **face** slots laid out at the end of that entry's block. */
+    val faces: List<List<CornerSlot>>,
+) {
+    val isEmpty: Boolean get() = edges.all { it.isEmpty() } && faces.all { it.isEmpty() }
+
+    /** The shared edge slots recorded at entry [k]'s block — none where this record says nothing of it. */
+    fun edgesAt(k: Int): List<CornerSlot> = edges.getOrElse(k) { emptyList() }
+
+    /** The shared face slots recorded at entry [k]'s block. */
+    fun facesAt(k: Int): List<CornerSlot> = faces.getOrElse(k) { emptyList() }
+
+    companion object {
+        /** No record at all — a dressing that has stated no shared slot yet, and every file older than 9. */
+        val NONE = CornerSlots(emptyList(), emptyList())
+    }
+}
+
 /** One edge of a solid, in the world: a straight one, or a curve lying on a known plane. */
 sealed interface EdgeGeom {
     data class Straight(val a: Vec3, val b: Vec3) : EdgeGeom

@@ -8,6 +8,9 @@ import constructit.core.SourceNode
 import constructit.dsl.PointRef
 import constructit.exchange.MeshText
 import constructit.exchange.PathText
+import constructit.geom.CornerSlot
+import constructit.geom.CornerSlotKind
+import constructit.geom.CornerSlots
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.geom.Xform3
@@ -119,7 +122,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 8
+    const val VERSION = 9
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -234,6 +237,33 @@ object DocumentFormat {
      * says so once, rather than building a different body in silence (OP-18).
      */
     const val GROUPED_SLOT_VERSION = 8
+
+    /**
+     * The first version whose dressed body **records the slots its corners occupy** (OP-31, slice 5g) — the
+     * last address a dressed body did not hold still.
+     *
+     * [GROUPED_SLOT_VERSION] put the curves two or more entries make *together* after every entry's own
+     * block, so that no block's size could depend on a corner, and left one class open: a corner **made or
+     * unmade by an edit** — a third rounding that turns two free ends into a crossing, a size change that
+     * makes a congruent pair incongruent, a rounding removed so a corner is gone — still moved every shared
+     * slot listed after it, and a `filletedge` step holding one of those addresses then silently rounded a
+     * different curve. How many curves a corner puts on the body is a fact about the corner's own *kind*,
+     * which is structure and therefore decided at build time and recorded ([Feature3.Blend.corners]).
+     *
+     * **The file states it, because the drawing does** (OP-18, OP-21). One new optional `tool` argument on
+     * the step that makes a dressing's **body** — `slots=m3.7-0;r3.7.11-0;f3.7.11-0`, the names in slot
+     * order, mitres, corner rails and corner patches — which is where the whole record belongs rather than
+     * one piece of it per entry: a corner is *shared*, its owner is whichever entry happens to be latest, and
+     * a record split by owner would have to be *inserted* into when an edit makes a corner between two old
+     * entries, which is the very re-packing it exists to stop. On the body's own step the record is complete
+     * from the first line of the replay, so an address means the same thing at every point of the load.
+     *
+     * **The migration is a no-op on the geometry**, which is what makes it safe: a file written before this
+     * carries no record, so the record is taken **from the body as that file draws it**
+     * ([Document.recordSlotsOfEveryDressing]) — which reproduces exactly the layout it was written against —
+     * and is saved with it from then on. The load says so once.
+     */
+    const val CORNER_SLOT_VERSION = 9
 
     const val HEADER = "constructit $VERSION"
 
@@ -603,7 +633,12 @@ object DocumentFormat {
                 // band slots it keeps. One more *optional* `tool` argument, exactly as `law=`, `laws=` and
                 // `match=` arrived: no existing literal means anything new, so no version is owed (OP-18).
                 val tomb = doc.tombstoneBands(step)?.let { listOf(Arg.Keyed("removed", Arg.Text(it.toString()))) } ?: emptyList()
-                withPairs + signsOf(doc, step) + tomb + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
+                // …and the **shared slots** of the dressing whose body this step makes (OP-31, slice 5g):
+                // the corner curves and patches by identity, in slot order, so that a corner a later edit
+                // makes or unmakes cannot move a curve some other step already addresses
+                // ([CORNER_SLOT_VERSION]). One more optional `tool` argument, by the same rule as `removed=`.
+                val slots = doc.dressingSlotsOf(step)?.let { listOf(Arg.Keyed("slots", Arg.Text(encodeSlots(it)))) } ?: emptyList()
+                withPairs + signsOf(doc, step) + tomb + slots + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
             // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
             // [Document.intersectNear]
@@ -632,6 +667,71 @@ object DocumentFormat {
         doc.storedSigns(step).let {
             if (it.isEmpty()) emptyList() else listOf(Arg.Keyed("signs", Arg.Text(it.joinToString(";"))))
         }
+
+    /**
+     * **A dressing's recorded shared slots**, as `0:m8.9-0;0:m9.10-0;2:r2.13.14-0` (OP-31, slice 5g).
+     *
+     * The **entry block** the slot is laid out in, then one letter for what it holds — `m` a mitre or run-in
+     * crease, `r` a corner rail, `f` a corner patch — then the **base edges** the corner stands between,
+     * joined by dots, then the piece. Base edge indices and entry positions are the two addresses in a
+     * dressing that never move ([Document.DressEntry], [Feature3.Blend.absent]), which is why the record is
+     * written in them and never in slot numbers: a stored position is exactly what this record exists to stop
+     * depending on (OP-18). Semicolon-separated, like `signs=`, and the edge slots and the face slots ride
+     * one list because their letters already tell them apart.
+     */
+    private fun encodeSlots(slots: CornerSlots): String {
+        val out = ArrayList<String>()
+        for ((k, block) in slots.edges.withIndex()) for (slot in block) out.add(encodeSlot(k, slot))
+        for ((k, block) in slots.faces.withIndex()) for (slot in block) out.add(encodeSlot(k, slot))
+        return out.joinToString(";")
+    }
+
+    private fun encodeSlot(
+        k: Int,
+        slot: CornerSlot,
+    ): String {
+        val what =
+            when (slot.kind) {
+                CornerSlotKind.MITRE -> "m"
+                CornerSlotKind.RAIL -> "r"
+                CornerSlotKind.PATCH -> "f"
+            }
+        return "$k:$what" + slot.edges.joinToString(".") + "-" + slot.piece
+    }
+
+    /** The same record, read back — malformed is a load error, because a slot guessed at is an address moved. */
+    private fun parseSlots(v: String): CornerSlots {
+        val edges = HashMap<Int, MutableList<CornerSlot>>()
+        val faces = HashMap<Int, MutableList<CornerSlot>>()
+        for (item in v.split(';').filter { it.isNotEmpty() }) {
+            val colon = item.indexOf(':')
+            if (colon <= 0) throw LoadError("malformed corner slot '$item'")
+            val k = item.substring(0, colon).toIntOrNull() ?: throw LoadError("malformed corner slot '$item'")
+            val body = item.substring(colon + 1)
+            val kind =
+                when (body.firstOrNull()) {
+                    'm' -> CornerSlotKind.MITRE
+                    'r' -> CornerSlotKind.RAIL
+                    'f' -> CornerSlotKind.PATCH
+                    else -> throw LoadError("malformed corner slot '$item'")
+                }
+            val dash = body.lastIndexOf('-')
+            if (dash <= 1) throw LoadError("malformed corner slot '$item'")
+            val piece = body.substring(dash + 1).toIntOrNull() ?: throw LoadError("malformed corner slot '$item'")
+            val which =
+                body.substring(1, dash).split('.').map {
+                    it.toIntOrNull() ?: throw LoadError("malformed corner slot '$item'")
+                }
+            if (which.isEmpty() || piece < 0 || k < 0) throw LoadError("malformed corner slot '$item'")
+            val into = if (kind == CornerSlotKind.PATCH) faces else edges
+            into.getOrPut(k) { ArrayList() }.add(CornerSlot(kind, which, piece))
+        }
+        val n = ((edges.keys + faces.keys).maxOrNull() ?: -1) + 1
+        return CornerSlots(
+            (0 until n).map { edges[it] ?: emptyList() },
+            (0 until n).map { faces[it] ?: emptyList() },
+        )
+    }
 
     private fun value(
         e: ScalarEntry,
@@ -845,7 +945,12 @@ object DocumentFormat {
             doc.dressingJoins = true
             doc.dressingDeclares = -1
             doc.dressingRemoved = -1
+            doc.dressingSlots = CornerSlots.NONE
         }
+        // **the record every loaded dressing needs** (OP-31, slice 5g) — a migration for a file older than
+        // it, taken from the body as that file draws it so that no address moves, and a no-op for a file at
+        // it, which already states its own
+        doc.recordSlotsOfEveryDressing(say = versionOf(lines.first()) < CORNER_SLOT_VERSION)
         doc.publishLoadNotes()
         return doc to ctx.notes
     }
@@ -885,7 +990,10 @@ object DocumentFormat {
             doc.dressingJoins = true
             doc.dressingDeclares = -1
             doc.dressingRemoved = -1
+            doc.dressingSlots = CornerSlots.NONE
         }
+        // …and the same on this route, for the same reason (OP-31, slice 5g)
+        doc.recordSlotsOfEveryDressing(say = versionOf(head) < CORNER_SLOT_VERSION)
         doc.publishLoadNotes()
     }
 
@@ -918,6 +1026,8 @@ object DocumentFormat {
             doc.dressingDeclares = declared.size
             // …and the tombstone marker is this step's alone, read from its own `removed=` (OP-30)
             doc.dressingRemoved = -1
+            // …and so is the shared-slot record, read from its own `slots=` (OP-31, slice 5g)
+            doc.dressingSlots = CornerSlots.NONE
             // …and the migration's element-count allowance is this step's alone: a step that was dropped
             // with a reason must not lend its allowance to the next one (OP-18)
             doc.takeMigrationExtras()
@@ -1726,6 +1836,11 @@ object DocumentFormat {
                 // verbatim, and never re-derived — a drawn profile's piece count is a value, and re-reading
                 // it would let editing that profile slide the numbers after it (OP-18, OP-21).
                 "removed" -> doc.dressingRemoved = v.toIntOrNull() ?: throw LoadError("malformed removed '$v'")
+                // …and the **shared slots** this dressing has stated: which corner curves and patches stand
+                // at which of its appended indices, verbatim and never re-derived (OP-31, slice 5g). It is
+                // read from the step that makes the body, so the numbering is the file's from the first line
+                // of the replay on ([CORNER_SLOT_VERSION]).
+                "slots" -> doc.dressingSlots = parseSlots(v)
                 else -> throw LoadError("unknown tool argument '$key'")
             }
         }

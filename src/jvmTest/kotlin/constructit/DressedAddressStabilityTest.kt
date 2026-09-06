@@ -8,13 +8,17 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Element
 import constructit.editor.ElementKind
+import constructit.editor.Tools
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
+import constructit.geom.CornerSlot
 import constructit.geom.EdgeName
 import constructit.geom.FaceName
 import constructit.geom.Geom3
 import constructit.geom.Section3
+import constructit.geom.Vec2
+import constructit.units.mm
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -239,7 +243,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
     @Test
     fun anOlderFilesAppendedAddressIsMappedAndSaidOnce() {
         assertEquals(8, DocumentFormat.GROUPED_SLOT_VERSION, "the version that says the slots are one block per entry")
-        assertEquals(DocumentFormat.GROUPED_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
+        assertTrue(DocumentFormat.VERSION >= DocumentFormat.GROUPED_SLOT_VERSION, "…and this build writes that numbering or a later one")
         val doc = DocumentFormat.load(script2)
         assertTrue(doc.loadNotes.any { "one block per rounding" in it }, "the load says the numbering moved: ${doc.loadNotes}")
         // …and once written at this version nothing is said again, and the body is the same one
@@ -251,6 +255,365 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertClose(a, b, abs(a) * 1e-9, "the mapped file and the re-saved one are one body")
         assertEquals(once, DocumentFormat.save(again), "…and the file is a fixed point of save")
     }
+
+    // ---- 4. a corner's own slot count, recorded (OP-31, slice 5g) ----
+
+    private fun Editor.click(world: Vec2) {
+        val s = camera.worldToScreen(world)
+        pointerMove(s)
+        pointerDown(s)
+        pointerUp(s)
+    }
+
+    /** The 40 × 30 × 20 plate, drawn and extruded by gestures — `DressedBodyTombstoneTest`'s own fixture. */
+    private fun plateBody(): Editor {
+        val ed = Editor()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 30.0))
+        ed.activeScalar = ed.doc.newParameter("depth", 20.0.mm)
+        ed.setTool(Tools.EXTRUDE)
+        ed.click(Vec2(20.0, 0.0))
+        return ed
+    }
+
+    /** Where a click lands on each of the plate's four top-rim edges, in the order 8, 9, 10, 11. */
+    private val rimClicks = listOf(Vec2(20.0, 0.0), Vec2(40.0, 15.0), Vec2(20.0, 30.0), Vec2(0.0, 15.0))
+
+    /** The plate with its first [n] rim edges rounded at one size — [n] congruent crossings in a row. */
+    private fun rims(
+        n: Int,
+        tool: String = Tools.BLEND_EDGE,
+    ): Editor {
+        val ed = plateBody()
+        ed.activeScalar = ed.doc.newParameter("r", 4.0.mm)
+        for (i in 0 until n) {
+            ed.setTool(tool)
+            ed.click(rimClicks[i])
+        }
+        return ed
+    }
+
+    private fun volumeOf(el: Element): Double {
+        val mesh = Evaluator().solid(refOf(el)).mesh
+        assertManifold(mesh, "the dressed body")
+        return Geom3.volume(mesh)
+    }
+
+    /**
+     * **A corner the edit unmakes keeps its slots, and the corners after it do not move** — the defect this
+     * slice closes, on the four-cornered plate.
+     *
+     * Four rim roundings of one radius make four crossings, and the mitres of the last two are listed after
+     * the mitres of the first two. Take the second rounding off and both of *its* corners are gone: without
+     * the record the two that remain slide up into the freed slots, so a `filletedge` step addressing the
+     * corner between rims 10 and 11 would silently round the corner between rims 8 and 11 instead. With it
+     * every slot still names the curve it named, and the two that are gone say so.
+     */
+    @Test
+    fun aCornerUnmadeByARemovalKeepsItsSlotsAndMovesNothingAfterIt() {
+        val ed = rims(4)
+        val base = 12
+        val before = appendedEdges(refOf(body(ed)), base)
+        val mitres = before.indices.filter { before[it] is EdgeName.BlendMitre }
+        assertEquals(4, mitres.size, "four crossings, one mitre each: $before")
+        val whole = volumeOf(body(ed))
+
+        ed.selectElement(ed.doc.elements.filter { it.kind == ElementKind.DRESSING }[1])
+        assertTrue(ed.deleteSelection(), "the second rim's rounding comes off: ${ed.statusHint}")
+        val after = appendedEdges(refOf(body(ed)), base)
+        assertEquals(before, after, "every appended slot still names the curve it named")
+        assertTrue(volumeOf(body(ed)) > whole, "…and the body really did lose that rounding")
+
+        // the two corners the removed rounding took part in are the two that are gone, each in its own slot
+        val edges = edgesOf(refOf(body(ed)))
+        for (i in mitres) {
+            val name = edges[base + i].name as EdgeName.BlendMitre
+            val why = edges[base + i].reason?.render()
+            if (9 in name.edges) {
+                assertTrue(why != null && "no curve of this body any more" in why, "$name is gone and says so: $why")
+            } else {
+                assertEquals(null, why, "$name is a crease of this body still")
+            }
+        }
+    }
+
+    /**
+     * **A corner *re-turned* by a third rounding keeps its slot too, and the corner that replaces it
+     * appends.** The L-block's two bevels meet at an inside corner; bevelling the upright between them makes
+     * a different corner of three edges, so the pair's own corner rail and corner patch are no curve and no
+     * surface of this body any more. They keep their indices with a reason, which is what a step holding one
+     * of those addresses is owed (OP-3), and the three rails of the new corner go after every block.
+     */
+    @Test
+    fun aCornerReTurnedByAThirdRoundingKeepsItsSlotAndTheNewOneAppends() {
+        val ed = load(DocumentFormat.save(DocumentFormat.load(twoBevels)))
+        val base = L.block.count
+        val was = appendedEdges(refOf(body(ed)), base)
+        val wasF = appendedFaces(refOf(body(ed)), L.block.faces.size)
+        val rail = was.indexOf(EdgeName.BlendCornerRail(listOf(13, 14), 0))
+        val patch = wasF.indexOf(FaceName.BlendCorner(listOf(13, 14), 0))
+        assertTrue(rail >= 0 && patch >= 0, "the pair's corner puts a rail and a patch on the body: $was / $wasF")
+        volumeOf(body(ed))
+
+        // the third bevel, **added to the file** — the upright between the two, which turns their corner
+        // into a corner of three edges
+        val third = "tool chamferedge els=e14 clicks=0,0 scalar=\"c\" signs=2;-1;1;0;-1 -> e17\n"
+        val grown = load(DocumentFormat.save(ed.doc) + third)
+        val now = appendedEdges(refOf(body(grown)), base)
+        val nowF = appendedFaces(refOf(body(grown)), L.block.faces.size)
+        assertEquals(was[rail], now.getOrNull(rail), "the pair's corner rail is where it was")
+        assertEquals(wasF[patch], nowF.getOrNull(patch), "…and so is its patch")
+        val edges = edgesOf(refOf(body(grown)))
+        val why = assertNotNull(edges[base + rail].reason, "…and it is a tombstone now").render()
+        assertTrue("no curve of this body any more" in why, "…that says why: '$why'")
+        assertTrue(
+            now.drop(rail + 1).any { it == EdgeName.BlendCornerRail(listOf(2, 13, 14), 0) },
+            "the corner of three edges appends after it: $now",
+        )
+        volumeOf(body(grown))
+
+        // …and the record is in the file, so the same body comes back out of it
+        val text = DocumentFormat.save(grown.doc)
+        assertTrue("slots=" in text, "the record is written down:\n$text")
+        val again = DocumentFormat.load(text)
+        assertEquals(text, DocumentFormat.save(again), "the file round-trips byte-equal")
+        assertEquals(now, appendedEdges(again.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef, base), "…and lays the same slots out")
+    }
+
+    /**
+     * **A step that addresses a corner curve builds the same body after another rounding is added to the
+     * dressing below it** — the defect as a user meets it, on GitHub #36's own script 2.
+     *
+     * Its three bevels make a corner of three edges, and a rounding of that corner's own **rail** is a
+     * dressing of its own (a corner curve is no edge of the base — OP-30's rail decision). A fourth,
+     * unrelated rounding is then added to the dressing below, in the file, exactly as a user adds one. Its
+     * block goes in ahead of the corner's slots, so without the record slot 30 would be the *first rail of
+     * the fourth rounding's own band* and the step would silently round that. With the record the corner's
+     * slots stand at the end of the block they were stated in, the step names the curve it named, and where
+     * the fourth rounding stands in the file makes no difference to the body at all.
+     */
+    @Test
+    fun aStepAddressingACornerCurveSurvivesAnotherRoundingInTheDressing() {
+        val three = DocumentFormat.save(DocumentFormat.load(script2.lines().filter { "r2" !in it }.joinToString("\n") + "\n"))
+        assertTrue("slots=2:r2.13.14-0" in three, "the three bevels record their corner's slots:\n$three")
+        val rail = EdgeName.BlendCornerRail(listOf(2, 13, 14), 0)
+
+        fun dressed(doc: constructit.editor.Document): Element = doc.elements.filter { it.kind == ElementKind.SOLID }.let { it[it.size - 2] }
+
+        fun tip(doc: constructit.editor.Document): Element = doc.elements.last { it.kind == ElementKind.SOLID }
+        val at = 30
+        // …the rounding of the corner rail, and an **unrelated** fourth bevel on an upright no rounding of
+        // this dressing touches, whose own choices the load scores (an address with no signs after it)
+        val roundIt = "param \"r2\" = 1mm\ntool filletedge els=e14 clicks=0,0 scalar=\"r2\" signs=$at -> e18,e19\n"
+        val fourth = "tool chamferedge els=e14 clicks=0,0 scalar=\"r\" signs=4 -> e20\n"
+
+        val plain = DocumentFormat.load(three + roundIt)
+        assertEquals(rail, edgesOf(refOf(dressed(plain))).getOrNull(at)?.name, "the step addresses the corner's own rail")
+        val alone = volumeOf(tip(plain))
+
+        val grown = DocumentFormat.load(three + fourth + roundIt)
+        assertEquals(rail, edgesOf(refOf(dressed(grown))).getOrNull(at)?.name, "…and still does, with a fourth rounding ahead of it")
+        val a = volumeOf(tip(grown))
+        assertTrue(a < alone, "the fourth rounding really did take material off: $a against $alone")
+        val b = volumeOf(tip(DocumentFormat.load(three + roundIt + fourth)))
+        assertClose(a, b, abs(a) * 1e-9, "and where the fourth rounding stands in the file makes no difference to the body")
+        val text = DocumentFormat.save(grown)
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "the file round-trips byte-equal")
+    }
+
+    /**
+     * **A corner whose *kind* changes under a parameter keeps its slot.** Three rim roundings on three
+     * parameters of their own make two crossings; dropping the first to 3 mm makes that pair incongruent, so
+     * the corner between them is no crossing any more and the drawing states the crease the boolean's trim
+     * leaves instead. The slot is the same slot either way, which is what a stored address needs — and the
+     * body really did change, which is what says the case was exercised.
+     */
+    @Test
+    fun aCornerWhoseKindChangesUnderAParameterKeepsItsSlot() {
+        val ed = plateBody()
+        for (i in 0 until 3) {
+            ed.activeScalar = ed.doc.newParameter("r$i", 4.0.mm)
+            ed.setTool(Tools.BLEND_EDGE)
+            ed.click(rimClicks[i])
+        }
+        val before = appendedEdges(refOf(body(ed)), 12)
+        val congruent = volumeOf(body(ed))
+        ed.doc.setParameter(ed.doc.scalars.first { it.name == "r0" }, 3.0.mm)
+        val after = appendedEdges(refOf(body(ed)), 12)
+        assertEquals(before, after, "every appended slot names what it named")
+        val edges = edgesOf(refOf(body(ed)))
+        val at = 12 + before.indexOf(EdgeName.BlendMitre(listOf(8, 9), 0))
+        assertTrue(edges[at].reason == null, "the crease between the two rims is a crease of this body still")
+        assertTrue(volumeOf(body(ed)) > congruent, "…and the smaller first rounding really did take less away")
+        // …and the record is not touched by a *value*: it is structure, decided when the gesture ran (OP-21)
+        assertTrue("slots=1:m8.9-0;2:m9.10-0" in DocumentFormat.save(ed.doc), "the record is the gesture's:\n${DocumentFormat.save(ed.doc)}")
+    }
+
+    /**
+     * **Add, undo, redo is one body** — the record travels with the journal like every other piece of
+     * structure, so an undo that reloads the drawing lays exactly the same slots out.
+     */
+    @Test
+    fun addingARoundingAndUndoingAndRedoingItIsOneBody() {
+        val ed = rims(2)
+        val two = DocumentFormat.save(ed.doc)
+        val slots = appendedEdges(refOf(body(ed)), 12)
+        ed.setTool(Tools.BLEND_EDGE)
+        ed.click(rimClicks[2])
+        val three = DocumentFormat.save(ed.doc)
+        val v = volumeOf(body(ed))
+        val grown = appendedEdges(refOf(body(ed)), 12)
+        assertEquals(slots, grown.take(slots.size), "the third rounding appends and moves nothing")
+
+        assertTrue(ed.undo(), "the third rounding is one undo step")
+        assertEquals(two, DocumentFormat.save(ed.doc), "…and the drawing is the two-rounding one again")
+        assertEquals(slots, appendedEdges(refOf(body(ed)), 12), "…with the slots it had")
+        assertTrue(ed.redo(), "and it comes back")
+        assertEquals(three, DocumentFormat.save(ed.doc), "…as the very file it was")
+        assertEquals(grown, appendedEdges(refOf(body(ed)), 12), "…with the very slots it had")
+        assertClose(v, volumeOf(body(ed)), abs(v) * 1e-12, "…and it is one body")
+    }
+
+    /**
+     * **A file written before the record has it taken from the body as that file draws it** (OP-18) — the
+     * migration, which moves nothing at all, is said once, and is a fixed point of save from then on.
+     */
+    @Test
+    fun anOlderFileHasItsCornerSlotsRecordedOnceAndMovesNothing() {
+        assertEquals(9, DocumentFormat.CORNER_SLOT_VERSION, "the version that records a corner's slots")
+        assertEquals(DocumentFormat.CORNER_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
+        val old = DocumentFormat.save(rims(3).doc).replace("constructit 9", "constructit 8").replace(Regex(" slots=\\S+"), "")
+        val doc = DocumentFormat.load(old)
+        assertTrue(doc.loadNotes.any { "numbered from a record" in it }, "the load says the record was taken: ${doc.loadNotes}")
+        // the layout is the one that file was written against: the shared curves after every block, which is
+        // what the migration reproduces by recording them all into the last one
+        val edges = appendedEdges(doc.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef, 12)
+        assertEquals(EdgeName.BlendMitre(listOf(8, 9), 0), edges[12], "the first mitre is where the older numbering had it")
+        assertEquals(EdgeName.BlendMitre(listOf(9, 10), 0), edges[13], "…and so is the second")
+        val once = DocumentFormat.save(doc)
+        assertTrue("slots=2:m8.9-0;2:m9.10-0" in once, "…and the record says so, in the last block:\n$once")
+        val again = DocumentFormat.load(once)
+        assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
+        assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")
+    }
+
+    /**
+     * **A file at version 8 whose step addresses a corner curve loads unmoved, is told once, and is saved
+     * with the record.** The migration takes the record from the body as *that* file draws it — the shared
+     * curves after every block, which is where version 8 put them — so the address it holds means exactly
+     * what it meant, and the body is the same body to the last bit.
+     */
+    @Test
+    fun aVersionEightFileAddressingACornerCurveLoadsUnmovedAndIsSavedWithTheRecord() {
+        assertEquals(9, DocumentFormat.CORNER_SLOT_VERSION, "the version that records a corner's slots")
+        assertEquals(DocumentFormat.CORNER_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
+
+        val doc = DocumentFormat.load(cornerRoundedAtEight)
+        assertTrue(doc.loadNotes.any { "numbered from a record" in it }, "the load says the record was taken: ${doc.loadNotes}")
+        val solids = doc.elements.filter { it.kind == ElementKind.SOLID }
+        assertEquals(
+            EdgeName.BlendCornerRail(listOf(2, 13, 14), 0),
+            edgesOf(refOf(solids[solids.size - 2])).getOrNull(30)?.name,
+            "slot 30 is the corner rail it was when the file was written",
+        )
+        // …and it is the very body the same drawing makes with the record written down
+        val a = volumeOf(solids.last())
+        val nine = DocumentFormat.load(cornerRoundedAtNine)
+        assertTrue(nine.loadNotes.none { "numbered from a record" in it }, "a file at the version says nothing: ${nine.loadNotes}")
+        assertClose(a, volumeOf(nine.elements.last { it.kind == ElementKind.SOLID }), abs(a) * 1e-9, "and it is the same body")
+
+        val once = DocumentFormat.save(doc)
+        assertTrue(once.startsWith("constructit ${DocumentFormat.CORNER_SLOT_VERSION}\n"), "it is saved at the version that records:\n$once")
+        assertTrue("slots=2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2" in once, "…with the record the body states:\n$once")
+        val again = DocumentFormat.load(once)
+        assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
+        assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")
+    }
+
+    /**
+     * The L-block's three bevels with the **corner rail of their corner rounded** — the address this slice is
+     * about — written by hand at version 8, which is the last version that states no record. Frozen, because
+     * an in-build round trip proves nothing across builds (OP-18): this is a file such a build wrote.
+     */
+    private val cornerRoundedAtEight =
+        """
+constructit ${DocumentFormat.GROUPED_SLOT_VERSION}
+orthostart -26.875,-32.375 -> e1
+orthovertex -26.875,15.375 -> e2,e3
+orthovertex 61.875,15.375 -> e4,e5
+orthovertex 61.875,0.375 -> e6,e7
+orthovertex -5.521648428788623,0.375 -> e8,e9
+orthovertex -5.521648428788623,-32.375 -> e10,e11
+orthoclose -> e12
+param "h" = 20mm
+tool extrude els=e11 clicks=-48.125,37.875 scalar="h" -> e13
+param "r" = 4mm
+tool chamferedge els=e13 clicks=-12.581664043342087,5.018353790754986 scalar="r" signs=2;-1;1;0;-1 -> e14,e15
+tool chamferedge els=e14 clicks=-36.10499303384047,0.8875707537249014 scalar="r" signs=13;-1;1;0;1 -> e16
+tool chamferedge els=e14 clicks=-6.480180051294639,24.048959979858537 scalar="r" signs=14;-1;1;0;1 -> e17
+param "r2" = 1mm
+tool filletedge els=e14 clicks=0,0 scalar="r2" signs=30 -> e18,e19
+""".trimStart()
+
+    /** The same drawing at version 9, where the dressing states the record its corner's slots stand by. */
+    private val cornerRoundedAtNine =
+        cornerRoundedAtEight
+            .replace("constructit ${DocumentFormat.GROUPED_SLOT_VERSION}", "constructit ${DocumentFormat.CORNER_SLOT_VERSION}")
+            .replace(
+                "signs=2;-1;1;0;-1 ->",
+                "signs=2;-1;1;0;-1 slots=2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2;2:f2.13.14-0;2:f2.13.14-1;2:f2.13.14-2 ->",
+            )
+
+    /**
+     * **Every curve and surface a corner appends is one the record can hold** — the closed vocabulary
+     * [CornerSlot] is, asserted over the corners the L-block's pairs and triples make rather than assumed.
+     *
+     * The record is a closed vocabulary on purpose: a record that could not *write* a slot would be a record
+     * that silently loses one, and a lost slot is an address that moves. So the day a corner puts a new kind
+     * of curve on the body is the day this fails, which is what keeps the gap from opening unnoticed.
+     */
+    @Test
+    fun everyCurveACornerAppendsIsOneTheRecordCanHold() {
+        var corners = 0
+        for (edges in listOf(listOf(13, 14), listOf(2, 13), listOf(2, 14), listOf(2, 13, 14), listOf(12, 13), listOf(12, 13, 14))) {
+            for (kind in listOf(BlendKind.CHAMFER, BlendKind.FILLET)) {
+                val (stages, _) = L.run(edges.map { Rounding(it, kind, 4.0) }, Route.ONE_PASS)
+                val ref = stages?.lastOrNull() ?: continue
+                if (Evaluator().eval(ref.node) is EvalResult.Invalid) continue
+                val base = L.block.count
+                for (name in appendedEdges(ref, base)) {
+                    if (name is EdgeName.BlendRail || name is EdgeName.BlendNotch) continue
+                    assertNotNull(CornerSlot.of(name), "$edges/$kind: the record can hold $name")
+                    corners++
+                }
+                for (name in appendedFaces(ref, L.block.faces.size)) {
+                    if (name is FaceName.BlendBand || name is FaceName.BlendCap) continue
+                    assertNotNull(CornerSlot.of(name), "$edges/$kind: the record can hold $name")
+                    corners++
+                }
+            }
+        }
+        assertTrue(corners > 10, "and the corners were really there to be asked about: $corners")
+    }
+
+    /** The L-block with the two bevels that meet at its inside corner, as a file this build has written. */
+    private val twoBevels =
+        """
+constructit ${DocumentFormat.VERSION}
+orthostart -26.875,-32.375 -> e1
+orthovertex -26.875,15.375 -> e2,e3
+orthovertex 61.875,15.375 -> e4,e5
+orthovertex 61.875,0.375 -> e6,e7
+orthovertex -5.521648428788623,0.375 -> e8,e9
+orthovertex -5.521648428788623,-32.375 -> e10,e11
+orthoclose -> e12
+param "h" = 20mm
+tool extrude els=e11 clicks=-48.125,37.875 scalar="h" -> e13
+param "c" = 4mm
+tool chamferedge els=e13 clicks=-36.10499303384047,0.8875707537249014 scalar="c" signs=13;-1;1;0;1 -> e14,e15
+tool chamferedge els=e14 clicks=-6.480180051294639,24.048959979858537 scalar="c" signs=14;-1;1;0;1 -> e16
+""".trimStart()
 
     /** GitHub #36's script 2, verbatim — its last step addresses rail 20 of the older numbering. */
     private val script2 =

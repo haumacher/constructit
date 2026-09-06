@@ -88,10 +88,12 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
         val withRail = load(threeBevels + railFillet)
         assertTrue(withRail.doc.loadNotes.isNotEmpty(), "a version-6 file whose rounding addresses a rail is told its run grew")
         assertTrue(DocumentFormat.save(withRail.doc).startsWith("constructit ${DocumentFormat.VERSION}\n"), "and it is written at the version this build writes")
+        // …every one of these files is older than the corner-slot record too, and that migration says its
+        // own sentence once (OP-31, slice 5g); what this test is about is the *run*, so it asks about that
         val bevelsOnly = load(threeBevels)
-        assertTrue(bevelsOnly.doc.loadNotes.isEmpty(), "a version-6 file with base-edge roundings only has nothing to be told: ${bevelsOnly.doc.loadNotes}")
+        assertTrue(bevelsOnly.doc.loadNotes.none { "run" in it }, "a version-6 file with base-edge roundings only has nothing to be told of its run: ${bevelsOnly.doc.loadNotes}")
         val script1 = load(base + script1Roundings)
-        assertTrue(script1.doc.loadNotes.isEmpty(), "script 1 (base edges only) has nothing to be told: ${script1.doc.loadNotes}")
+        assertTrue(script1.doc.loadNotes.none { "run" in it }, "script 1 (base edges only) has nothing to be told of its run: ${script1.doc.loadNotes}")
         val reloaded = load(DocumentFormat.save(withRail.doc))
         assertTrue(reloaded.doc.loadNotes.isEmpty(), "once written at this build's own version nothing is said again")
     }

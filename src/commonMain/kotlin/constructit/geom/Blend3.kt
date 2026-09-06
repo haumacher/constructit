@@ -5020,8 +5020,7 @@ object Blend3 {
         // once at [entryOwning], read for faces: this entry's bands, its flat-end slots, and then the corner
         // patches whose latest participating entry it is. So adding a rounding only appends, and removing
         // one leaves every slot of its own block standing with a reason.
-        val sharedFaces = HashMap<Int, MutableList<FacePatch>>()
-        for ((who, p) in cornerFacesOf(f)) sharedFaces.getOrPut(who) { ArrayList() }.add(p)
+        val pool = SlotPool(liveSharedFaces(f)) { CornerSlot.of(it.name) }
         for ((k, d) in dressings.withIndex()) {
             // **a removed rounding keeps its band slots** — a reason and no surface, exactly what a consumed
             // edge already emits, so the bands of every entry after it keep their own numbers (OP-30)
@@ -5031,6 +5030,7 @@ object Blend3 {
                 for (slot in 0 until capSlotsAt(f, baseEdges, k)) {
                     out.add(FacePatch(FaceName.BlendCap(f.targets[k], slot == 0), null, emptyList(), why))
                 }
+                for (slot in f.corners.facesAt(k)) out.add(pool.take(slot) ?: goneFace(slot))
                 continue
             }
             // …each of them **bounded by the corners at its ends** (OP-31, item 3b) before the level above
@@ -5038,8 +5038,11 @@ object Blend3 {
             // next says what a rounding of its rail took off it.
             out.addAll(bandPatchesOf(d).map { bandToItsCorners(f, it) })
             out.addAll(capFaces(f, baseEdges, k, d))
+            // …and the corner patches this entry's block records, by the very rule the edge list states one
+            // function along ([SlotPool], OP-31 slice 5g)
+            for (slot in f.corners.facesAt(k)) out.add(pool.take(slot) ?: goneFace(slot))
         }
-        for (k in dressings.indices) sharedFaces[k]?.let { out.addAll(it) }
+        out.addAll(pool.rest())
         return out to null
     }
 
@@ -5441,12 +5444,9 @@ object Blend3 {
             )
         }
         // **the curves two or more entries make together**, gathered by the entry that owns each — the
-        // latest one that takes part in it ([entryOwning], where the whole ordering rule is stated)
-        val shared = HashMap<Int, MutableList<SolidEdge>>()
-        if (pieces != null) {
-            for ((who, e) in cornerEdgesOf(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
-            for ((who, e) in runInEdges(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
-        }
+        // latest one that takes part in it ([entryOwning], where the whole ordering rule is stated) — and
+        // then handed out **by the dressing's own record** ([SlotPool], OP-31 slice 5g)
+        val pool = SlotPool(liveSharedEdges(f, pieces, corners)) { CornerSlot.of(it.name) }
         for ((k, d) in dressings.withIndex()) {
             // **a removed rounding keeps its two rail slots too**, with the same reason and a degenerate
             // carrier: what a chained rounding addressed is still numbered where it was, and asking for it
@@ -5464,6 +5464,7 @@ object Blend3 {
                 for (slot in 0 until notchSlotsAt(f, baseEdges, k)) {
                     out.add(SolidEdge(notchNameAt(f, k, slot), EdgeGeom.Straight(at, at), FacePair(band, band), why))
                 }
+                for (slot in f.corners.edgesAt(k)) out.add(pool.take(slot) ?: goneEdge(slot))
                 continue
             }
             val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
@@ -5482,10 +5483,13 @@ object Blend3 {
                 )
             }
             out.addAll(notchEdges(f, baseEdges, pieces, corners, k, d))
+            // …and, at the **end of this entry's block**, the shared curves the record puts there: the one
+            // it has and the tombstone it does not ([SlotPool], OP-31 slice 5g)
+            for (slot in f.corners.edgesAt(k)) out.add(pool.take(slot) ?: goneEdge(slot))
         }
-        // …and **after every entry's own block**, so that no block's size can ever depend on a corner: the
-        // shared curves, in the order of the latest entry that takes part in each
-        for (k in dressings.indices) shared[k]?.let { out.addAll(it) }
+        // …and last, whatever the record does not know yet — appended, which disturbs nothing, and joined to
+        // the last block by the next gesture that records ([sharedSlots])
+        out.addAll(pool.rest())
         return out to null
     }
 
@@ -5568,10 +5572,11 @@ object Blend3 {
      * removed entry then shortens its block and every later block re-packs — which is the very defect,
      * moved one entry along (`DressedBodyTombstoneTest` is the fixture that says so).
      *
-     * *What is still not held still, and it is one class.* The **shared** curves themselves: a corner made or
-     * unmade by an edit moves the ones listed after it. Closing that needs the count recorded on the feature
-     * at build time, the way [Feature3.Blend.absent] records a tombstone's bands — a stored field and its own
-     * migration. It is named in the OP-31 note and queued rather than half-done here.
+     * *And the shared curves themselves hold still too, since slice 5g.* A corner made or unmade by an edit
+     * used to move the ones listed after it, which this rule left as its one residual class. It is closed the
+     * way [Feature3.Blend.absent] closes a tombstone's bands: the slot count is decided at build time and
+     * **recorded** on the feature ([Feature3.Blend.corners]), so what [entryOwning] now decides is only the
+     * order in which a *new* corner is appended and recorded — see [SlotPool] for the three cases.
      */
     private fun entryOwning(
         f: Feature3.Blend,
@@ -5582,6 +5587,140 @@ object Blend3 {
         for (p in who) if (p < standing.size) best = max(best, standing[p])
         return best
     }
+
+    /**
+     * **The shared slots, laid out by the dressing's own record** (OP-31, slice 5g) — the last address a
+     * dressed body did not hold still, and the rule that closes it.
+     *
+     * [entryOwning] states the ordering the appended lists have: the base's list, then **one block per
+     * entry**, and the curves two or more entries make *together* after them, because a block's size may
+     * never depend on a corner — **how many curves a corner puts on the body is a fact about the corner's own
+     * kind**. That left exactly one class exposed, and it is two things rather than one: a corner *made or
+     * unmade* by an edit (a third rounding that turns two free ends into a crossing, a size change that makes
+     * a congruent pair incongruent, a rounding removed so a corner is gone) moved every shared curve after
+     * it, and a rounding **added** to the dressing moved *all* of them, because the new entry's block goes in
+     * ahead of the whole run. A `filletedge` step holding one of those addresses then silently rounded a
+     * different curve.
+     *
+     * So the count is **decided at build time and recorded**, exactly as a tombstone's band count is
+     * ([Feature3.Blend.absent], [Feature3.Blend.corners]) — and the record is read **inside the blocks**,
+     * one list of slots at the end of each entry's own, which is what makes an added rounding append rather
+     * than push. What the record holds is the slot's own **identity** ([CornerSlot]): which base edges the
+     * corner stands between, which kind of curve, which piece — never a position, so it means the same thing
+     * on the day it is read as on the day it was written (OP-18). Three cases, and they are the whole rule:
+     *
+     * - a **recorded** slot the body still has takes the curve back, whatever else changed;
+     * - a recorded slot the body no longer has stands as a **tombstone** with a reason ([goneEdge],
+     *   [goneFace]) — the same answer a removed rounding's rail slot gives, for the same reason;
+     * - a curve the record does not know is **appended after every block**, and the next gesture records it
+     *   into the last one, which is exactly where it already stands ([sharedSlots]) — so recording moves
+     *   nothing either. Appending is the one move that disturbs nothing, which is why a *grown* corner takes
+     *   it too: where a corner puts down more curves than were recorded for it — a drawn profile gains a
+     *   piece, a crossing becomes a walk — the extra ones go to the end rather than pushing the record along.
+     *
+     * The record therefore only ever **grows**, and a body with no record at all lays out exactly as it did
+     * before this slice, which is what makes the migration a no-op on the geometry
+     * ([DocumentFormat.CORNER_SLOT_VERSION]).
+     */
+    private class SlotPool<T>(
+        private val live: List<T>,
+        keyOf: (T) -> CornerSlot?,
+    ) {
+        // by identity, and **in order** within one identity: two corners can in principle stand between the
+        // same base edges, and the honest answer there is first come first served rather than a guess
+        private val queued = HashMap<CornerSlot, ArrayDeque<Int>>()
+        private val used = BooleanArray(live.size)
+
+        init {
+            for ((i, t) in live.withIndex()) keyOf(t)?.let { queued.getOrPut(it) { ArrayDeque() }.addLast(i) }
+        }
+
+        /** The curve recorded slot [slot] holds, or null where the body no longer has one. */
+        fun take(slot: CornerSlot): T? {
+            val i = queued[slot]?.removeFirstOrNull() ?: return null
+            used[i] = true
+            return live[i]
+        }
+
+        /** What no recorded slot claimed, in the order the corners put it down. */
+        fun rest(): List<T> = live.indices.filter { !used[it] }.map { live[it] }
+    }
+
+    /** The curves two or more entries make together, in the order of the latest entry that takes part. */
+    private fun liveSharedEdges(
+        f: Feature3.Blend,
+        pieces: List<Piece>?,
+        corners: List<Corner>,
+    ): List<SolidEdge> {
+        if (pieces == null) return emptyList()
+        val shared = HashMap<Int, MutableList<SolidEdge>>()
+        for ((who, e) in cornerEdgesOf(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
+        for ((who, e) in runInEdges(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
+        return f.targets.indices.flatMap { shared[it] ?: emptyList() }
+    }
+
+    /** The same for the surfaces: the corner patches, by the entry that owns each. */
+    private fun liveSharedFaces(f: Feature3.Blend): List<FacePatch> {
+        val shared = HashMap<Int, MutableList<FacePatch>>()
+        for ((who, p) in cornerFacesOf(f)) shared.getOrPut(who) { ArrayList() }.add(p)
+        return f.targets.indices.flatMap { shared[it] ?: emptyList() }
+    }
+
+    /**
+     * **The record as it stands after this body** — what a gesture writes back ([Feature3.Blend.corners]).
+     *
+     * Every recorded slot is kept, whether the body still has its curve or not (a tombstone is a slot too),
+     * and everything the record did not know joins the **last** block, which is exactly where the layout has
+     * just appended it. So recording is position-preserving, and running it twice changes nothing.
+     */
+    fun sharedSlots(f: Feature3.Blend): CornerSlots {
+        val pieces = piecesOf(f)
+        val corners = pieces?.let { cornersOf(it).list } ?: emptyList()
+        return CornerSlots(
+            recordedBlocks(f.corners.edges, liveSharedEdges(f, pieces, corners), f.targets.size) { CornerSlot.of(it.name) },
+            recordedBlocks(f.corners.faces, liveSharedFaces(f), f.targets.size) { CornerSlot.of(it.name) },
+        )
+    }
+
+    private fun <T> recordedBlocks(
+        was: List<List<CornerSlot>>,
+        live: List<T>,
+        n: Int,
+        keyOf: (T) -> CornerSlot?,
+    ): List<List<CornerSlot>> {
+        val pool = SlotPool(live, keyOf)
+        val out = ArrayList<List<CornerSlot>>(n)
+        for (k in 0 until n) {
+            val block = was.getOrElse(k) { emptyList() }
+            for (slot in block) pool.take(slot)
+            out.add(block)
+        }
+        if (n == 0) return out
+        // …and a curve outside the recordable vocabulary is left out of the record rather than written down
+        // wrong: it appends every time, which is visible, where a lost slot would not be ([CornerSlot])
+        val extra = pool.rest().mapNotNull(keyOf)
+        if (extra.isNotEmpty()) out[n - 1] = out[n - 1] + extra
+        return out
+    }
+
+    /** The tombstone a recorded **edge** slot keeps when the corner that put a curve there is gone. */
+    private fun goneEdge(slot: CornerSlot): SolidEdge {
+        val name = slot.edgeName
+        val at = Vec3(0.0, 0.0, 0.0)
+        // each of the two says which surfaces its curve ran between, which is what an edge is even when the
+        // body no longer has it: a mitre stood between the two bands, a corner rail alongside the patch
+        val between =
+            if (slot.kind == CornerSlotKind.RAIL) {
+                FacePair(slot.faceName, slot.faceName)
+            } else {
+                FacePair(FaceName.BlendBand(slot.edges.first(), slot.piece), FaceName.BlendBand(slot.edges.last(), slot.piece))
+            }
+        return SolidEdge(name, EdgeGeom.Straight(at, at), between, Msgs.refusalBlendCornerSlotGone(name = name.label))
+    }
+
+    /** The same tombstone for a recorded **face** slot — a corner patch the body no longer has. */
+    private fun goneFace(slot: CornerSlot): FacePatch =
+        FacePatch(slot.faceName, null, emptyList(), Msgs.refusalBlendCornerFaceGone(name = slot.faceName.label))
 
     /** How many free-end notch slots entry [k] owns: two per band, and none where its crease is not one run. */
     private fun notchSlotsAt(

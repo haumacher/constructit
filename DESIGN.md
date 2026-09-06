@@ -17171,12 +17171,13 @@ as a tool.
   `Dressing` whose section is not rigid, a fourth carrier in the face list for a canal band, and a **sampled**
   reader for its cut in `Section3` (a `RuledStrip` is a family of straight rulings and a canal band has none).
   The concave twin — two fills crossing — is the same case one sign over.
-- **(5g) A corner curve's slot count, recorded** — the last address a dressed body does not hold still: the
-  curves two or more entries make together are ordered by their latest participant and come after every
-  entry's own block, so they never disturb a rail or a notch, but a corner *made or unmade* by an edit still
-  moves the ones after it. The fix is the one a tombstone's band count already is — the count decided at build
-  time and recorded on the feature (`Feature3.Blend`), which is a stored field, a format version and a
-  migration. See the OP-31 as-built note for slice 5b.
+- ~~**(5g) A corner curve's slot count, recorded**~~ — **delivered in session 83, and it was two defects
+  rather than one**: a corner *made or unmade* by an edit moved the shared curves after it, and a rounding
+  merely **added** to the dressing moved *all* of them, because the new entry's block goes in ahead of the
+  whole run. The slot's own **identity** is decided at build time and recorded on the feature
+  (`Feature3.Blend.corners`), read **inside** each entry's block, written into the file by the step that makes
+  the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load. See the
+  as-built note below.
 
 
 Each slice extends the matrix with the fixture that exercises it, and the matrix's rule is unchanged: built
@@ -17392,7 +17393,9 @@ rail `20`, which under the block rule is rail `22`, and the reporter's body is t
 **What is still not held still, and it is one class.** The **shared** curves themselves: a corner made or
 unmade by an edit moves the ones listed after it. Closing that needs the corner's own slot count recorded on
 the feature at build time, the way a tombstone's band count already is — a stored field and its own migration,
-queued rather than half-done here.
+queued rather than half-done here. *(Delivered as slice 5g later in this
+session, where it turned out to be two defects rather than one — a rounding merely **added** moved every
+shared curve too, since the new entry's block goes in ahead of the whole run. See the as-built note for 5g.)*
 
 **And one thing about a stored address.** A **whole-face** gesture records one scored choice *per edge of its
 run*, so the length of that list is part of what a stored face address means — and how many notch curves a
@@ -17449,6 +17452,103 @@ corner patch is cut by `Revolve3` over its whole turn — which is right whereve
 is the standing gap where it does not. (5) No **cap face is ever superseded**, because every corner the
 catalogue builds is between two straight creases and a cap only exists on a curved one; the day that changes
 it needs `cornerSuperseded`'s own treatment.
+
+
+#### Implementation status (as built — the corner's slot count recorded, slice 5g, session 83)
+
+**The last address a dressed body did not hold still, and it was two things rather than one.** Slice 5b put
+the curves two or more entries make *together* — the corner curves, the run-in creases, the corner patches —
+after every entry's own block, because a block's size may never depend on a corner: *how many curves a corner
+puts on the body is a fact about the corner's own kind*. That held every rail and every notch slot through
+both edits and left the shared run itself exposed twice over. A corner **made or unmade** by an edit moved
+every shared curve after it — a third rounding that turns two free ends into a crossing, a size change that
+makes a congruent pair incongruent, a rounding removed so a corner is gone, a bevel of the upright that
+*re-turns* a pair's corner into a corner of three edges. And a rounding merely **added** to the dressing moved
+*all* of them, because the new entry's block goes in ahead of the whole run: on GitHub #36's own script 2,
+whose three bevels make a corner of three edges, a `filletedge` step addressing that corner's rail at slot 30
+would after one more rounding have addressed **the first rail of the fourth rounding's own band** and rounded
+that instead, silently and validly. That is precisely what OP-30 forbids of a rail and OP-18 of any stored
+literal.
+
+**The fix is the one a tombstone already is: decided at build time, recorded on the feature.** A dressing
+records, per shared slot it has stated, the slot's own **identity** — `CornerSlot`: which base edges the
+corner stands between, which kind of curve or surface it put there (a mitre, a corner rail, a corner patch),
+and which piece of it. Never a position, because a stored position is the very thing the record exists to stop
+depending on. The count follows from the identity and one thing more comes with it: the layout can put each
+recorded slot *back*, and say by name what is missing. Three cases and they are the whole rule
+(`Blend3.SlotPool`, where the rule is stated once): a recorded slot the body still has takes its curve back whatever else changed; a
+recorded slot the body no longer has stands as a **tombstone** with a reason, exactly as a removed rounding's
+rail slot does; and a curve the record does not know **appends after everything**, which disturbs nothing.
+
+**The record is read *inside* the blocks, and that is the half of it that matters.** One list of slots at the
+end of each entry's own block, rather than one run after all of them — because a run after the blocks is
+pushed along by the next block that is added, which is the second half of the defect above. Inside the blocks
+nothing can push it: a block is only ever appended after the last one, and a removed entry keeps its own
+(OP-30's tombstone). A slot the record does not yet know joins the **last** block, which is exactly where the
+layout has just appended it, so recording moves nothing either and running the recorder twice changes nothing.
+One consequence is worth stating plainly, because it is the price: a corner curve's index is now a fact about
+the **history** of the dressing and not only about its final shape. Two drawings with the same three roundings
+number their corner curves differently if one of them stated the corner before the third rounding and the
+other after — and that is right, because the file carries the record and every address in it means what that
+file says (OP-18). It is the same trade a tombstone makes.
+
+**The file states it, because the drawing does** ([`DocumentFormat.CORNER_SLOT_VERSION`] = 9). One new
+optional `tool` argument on the step that makes a dressing's **body** —
+`slots=1:m8.9-0;2:r2.13.14-0;2:f2.13.14-0`: the entry block, then `m` for a mitre or run-in crease, `r` for a
+corner rail, `f` for a corner patch, then the base edges the corner stands between and the piece. Base edge
+indices and entry positions are the two addresses in a dressing that never move, which is why the record is
+written in them. **The whole record on the body's own step**, rather than each entry's block on that entry's
+step, and the reason is the replay: on the body's step the record is complete from the first line, so an
+address means the same thing at every point of the load, where a record split across the steps would grow
+into its final numbering as the replay ran. A corner is *shared* in any case — its owner is whichever entry
+happens to be latest — so a record split by owner would have to be **inserted** into when an edit makes a
+corner between two older entries, which is the re-packing it exists to stop.
+
+**The migration moves nothing, which is what makes it safe.** A file written before version 9 carries no
+record, so the record is taken **from the body as that file draws it** — the shared curves in the order they
+then stood, all recorded into the *last* block, which reproduces the version-8 layout exactly — and the load
+says so once (`Document.recordSlotsOfEveryDressing`, `note.oneDressedBody.cornerSlotsRecorded`). Version 8's
+own fixture is the proof: script 2 downgraded to 8 loads with slot 30 still the corner rail it was, builds the
+same body to a part in 10⁹, and saves at 9 with `slots=2:r2.13.14-0;…`. The completion runs for **every**
+version and not only the older ones, and that is deliberate: a replay records nothing as it goes (the file's
+record is the authority, and re-deriving it mid-replay would let a parameter a later step sets write a corner
+into the record that the finished drawing does not have), so a dressing that came out of a file with no record
+would let the very next rounding re-pack the corner curves that stood before it — the defect, one load along.
+For a file at version 9 the completion is a no-op and the file it writes is the file it read.
+
+**Where the record is written, and where it is not.** Every gesture that edits a dressing — a rounding added,
+a rounding removed — re-stamps the body and then records what stands (`Document.recordSlots`, one extra
+re-stamp only when the record actually changed). A **value** never touches it: retyping a radius so that a
+congruent pair becomes incongruent leaves the record exactly as the gesture wrote it, which is OP-21's line
+between structure and value read once more. Undo and redo carry it like every other piece of structure,
+because it is in the file the journal replays.
+
+**Tests: 2905 → 2913**, all green, and the eight are the slice's own claims. `DressedAddressStabilityTest`
+gains them: a corner unmade by a **removal** keeps its slots and moves nothing after them (four rim roundings,
+four crossings, the second rounding off — the two corners it took part in tombstone in place and the other two
+are creases still, where before they slid up two slots); a corner **re-turned** by a third bevel keeps its rail
+and its patch, with a reason, and the corner of three edges appends after; a **step addressing a corner
+curve** builds the same body before and after a fourth rounding is added to the dressing below it, and where
+that rounding stands in the file makes no difference; a corner whose **kind** changes under a parameter keeps
+its slot and the record is untouched; **add → undo → redo** is one body and one file; the version-8 file
+above; and the closed vocabulary itself — every curve and surface a corner appends over the L-block's pairs
+and triples is one `CornerSlot` can hold, so the day a new kind of corner curve arrives is the day that test
+fails rather than the day a record silently loses a slot. `BlendMatrixTest` is unmoved class for class — its corner-curve
+class still reads **292 cells, 246 built inside their own bracket, 46 refused by name**, and no class of it
+has a residue — and `BlendChainCostTest` is unmoved.
+
+**Cuts, each named and none silent.** (1) A **grown** corner does not grow its record: where a corner puts
+down more curves than were recorded for it — a drawn profile gains a piece — the extra ones append at the end
+rather than pushing the record along, and the next gesture records them there. Appending is the one move that
+disturbs nothing, and it is the honest choice: making room in the middle would move exactly the addresses the
+record protects. (2) The record is a **closed** vocabulary of three, so a shared curve outside it would append
+every time rather than hold still; it cannot happen today (the corners state only mitres, corner rails and
+corner patches) and the vocabulary test is what says so. (3) The **base's own** shared curves — those a
+*chain* of dressings states one level down — are the base's list and are not this record's business; they hold
+still for the older reason, that a base's list never re-packs. (4) A re-stamp of a dressing rebuilds its node
+graph, and the mesh boolean's own summation order can differ by a part in 10¹², so the migration's body is
+asserted equal to a part in 10⁹ rather than bit for bit; that is the mesh's noise and not the record's, and it
+predates this slice.
 
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
@@ -22047,7 +22147,7 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, (5g) a corner curve's slot count recorded, so the last appended address a dressed body does not hold still does; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41

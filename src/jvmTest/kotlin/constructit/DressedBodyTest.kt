@@ -99,8 +99,11 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertEquals(7, (f as Feature3.Blend).targets.size, "…with all seven roundings in one pass")
         assertTrue(f.base !is Feature3.Blend, "…and nothing chained under it")
 
-        // the migration says so, once
-        assertEquals(1, doc.loadNotes.size, "one load note: ${doc.loadNotes}")
+        // the migration says so, once — beside the one every file older than the corner-slot record gets
+        // (OP-31, slice 5g), which is a different migration and says a different thing
+        assertEquals(1, doc.loadNotes.count { "chain of solids" in it }, "one load note about the chain: ${doc.loadNotes}")
+        assertEquals(1, doc.loadNotes.count { "numbered from a record" in it }, "…and one about the record: ${doc.loadNotes}")
+        assertEquals(2, doc.loadNotes.size, "and nothing else: ${doc.loadNotes}")
         assertTrue("one dressed body" in doc.loadNotes.first(), "…and it says what changed: ${doc.loadNotes.first()}")
     }
 
@@ -108,7 +111,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
     fun theMigratedBodyIsTheChainsBodyAndTheFileIsAFixedPoint() {
         val chain = DocumentFormat.load(reportedAsChain)
         assertEquals(8, chain.elements.count { it.kind == ElementKind.SOLID }, "the impure chain stays a chain")
-        assertTrue(chain.loadNotes.isEmpty(), "…and says nothing about a migration: ${chain.loadNotes}")
+        assertTrue(chain.loadNotes.none { "chain of solids" in it }, "…and says nothing about a chain migration: ${chain.loadNotes}")
         val chained = volumeOf(bodyOf(chain))
 
         val dressed = volumeOf(bodyOf(DocumentFormat.load(reported)))
@@ -158,7 +161,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val doc = fixedPoint(impureChain, "an impure chain")
         assertEquals(8, doc.elements.count { it.kind == ElementKind.SOLID }, "the extrusion and seven levels")
         assertEquals(7, entriesOf(doc).size, "each level with a rounding row of its own")
-        assertTrue(doc.loadNotes.isEmpty(), "nothing was migrated, so nothing is said: ${doc.loadNotes}")
+        assertTrue(doc.loadNotes.none { "chain of solids" in it }, "no chain was migrated, so nothing is said of one: ${doc.loadNotes}")
         // every level's step declares its own body **and** that body's one rounding
         val once = DocumentFormat.save(doc)
         assertEquals(7, once.lines().count { it.startsWith("tool filletedge") && Regex("-> e\\d+,e\\d+$").containsMatchIn(it) }, "seven chain steps:\n$once")
@@ -171,7 +174,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         // and the rest is a second one standing on it
         assertEquals(3, doc.elements.count { it.kind == ElementKind.SOLID }, "the extrusion and two dressed bodies")
         assertEquals(7, entriesOf(doc).size, "all seven roundings are still roundings")
-        assertEquals(1, doc.loadNotes.size, "…and the load says the prefix was re-stated once: ${doc.loadNotes}")
+        assertEquals(1, doc.loadNotes.count { "chain of solids" in it }, "…and the load says the prefix was re-stated once: ${doc.loadNotes}")
         // the boundary is where the read intermediate is, and it is the declaration count that states it
         val once = DocumentFormat.save(doc)
         val steps = once.lines().filter { it.startsWith("tool filletedge") }
@@ -343,7 +346,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         // body and no rounding, and says how many band slots it holds, so nothing after it renumbers
         assertEquals(3, text.lines().count { it.startsWith("tool filletedge") }, "three steps, one of them a tombstone:\n$text")
         assertEquals(1, text.lines().count { "removed=" in it }, "…and it says so: \n$text")
-        assertTrue("removed=1 -> e10" in text, "the tombstone still declares the body it made:\n$text")
+        assertTrue(text.lines().any { it.startsWith("tool filletedge") && "removed=1" in it && it.endsWith("-> e10") }, "the tombstone still declares the body it made:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and the file is a fixed point")
     }
 

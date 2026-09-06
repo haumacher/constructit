@@ -273,12 +273,12 @@ class BlendIncongruentCornerTest {
         assertTrue(ed.deleteSelection(), "the shallower rounding comes off: ${ed.statusHint}")
         val alone = volumeOf(bodyRef(ed.doc), "the deeper band alone")
         assertTrue(alone > pair + 100.0, "…and its band's worth of material with it: $alone against $pair")
-        // and with it the corner: one band alone states no corner patch at all
-        assertEquals(
-            0,
-            facesOf(Evaluator().solid(bodyRef(ed.doc))).count { it.name is FaceName.BlendCorner },
-            "a lone band has no corner",
-        )
+        // and with it the corner: one band alone states no corner patch at all — the **slots** the corner
+        // held stay where they are, tombstoned and speaking, so that no address after them moves (OP-31,
+        // slice 5g)
+        val left = facesOf(Evaluator().solid(bodyRef(ed.doc))).filter { it.name is FaceName.BlendCorner }
+        assertEquals(0, left.count { it.reason == null }, "a lone band has no corner")
+        assertTrue(left.isNotEmpty() && left.all { it.reason != null }, "…and the corner's slots stay, each saying why: $left")
 
         assertTrue(ed.undo(), "the removal is one undo step")
         assertEquals(pair, volumeOf(bodyRef(ed.doc), "the pair, restored"), "one undo gives the pair back to the last bit")

@@ -526,6 +526,25 @@ sealed interface Feature3 {
          * since the kind is all the refusal needs and there is no geometry left to state.
          */
         val absent: Map<Int, Int> = emptyMap(),
+        /**
+         * **The shared slots this dressing has stated** (OP-31, slice 5g) — the record that keeps the curves
+         * and faces two or more entries make *together* at the indices they were first given.
+         *
+         * Everything a single entry owns — its two rails, its free-end notch slots, its bands, its flat-end
+         * faces — is counted from that entry alone and holds still through both edits ([absent] is what
+         * carries a removed one's counts). What a **corner** puts on the body is a fact about the corner's
+         * own *kind*, which an edit can change without touching any entry: a third rounding that turns two
+         * free ends into a crossing, a size change that makes a congruent pair incongruent, a rounding
+         * removed so a corner is gone. Every shared slot after it then moved, and a stored `signs=` naming
+         * one of them silently addressed a different curve (OP-18).
+         *
+         * So the count is decided when the gesture that makes the corner is recorded and stored here, exactly
+         * as a tombstone's band count is — see [CornerSlots] for the record's shape, [Blend3.sharedSlots] for
+         * what a gesture writes back into it, and [DocumentFormat.CORNER_SLOT_VERSION] for the file it rides
+         * in. Empty is the honest state of a body that has stated none: everything appends, and the first
+         * gesture records it.
+         */
+        val corners: CornerSlots = CornerSlots.NONE,
     ) : Feature3 {
         override val footprint: List<Region> get() = base.footprint
 

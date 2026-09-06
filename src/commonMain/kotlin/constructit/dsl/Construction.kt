@@ -59,6 +59,7 @@ import constructit.geom.Conics
 import constructit.geom.Connect3
 import constructit.geom.Continuity
 import constructit.geom.CornerCut
+import constructit.geom.CornerSlots
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
@@ -3655,6 +3656,12 @@ class Construction {
         from: SolidRef,
         space: PlaneRef,
         runs: List<BlendRun>,
+        /**
+         * **The shared slots this dressing has already stated** (OP-31, slice 5g) — structure, handed over
+         * with the runs and never re-derived at eval time, so that a corner made or unmade by a later edit
+         * cannot move a curve some step already addresses ([Feature3.Blend.corners]).
+         */
+        corners: CornerSlots = CornerSlots.NONE,
     ): SolidRef {
         // the chain's undressed root, read off the graph exactly as [blend] reads it (session 81)
         val chainRoot = chainRootOf(from.node)
@@ -3703,7 +3710,7 @@ class Construction {
                 val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
                 val (out, why) = Blend3.blended(body, body, targets, sections, choices, absent, rootBody)
                 if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotBlendThatEdge())
-                val f = Feature3.Blend(body.feature, targets, sections, choices, absent)
+                val f = Feature3.Blend(body.feature, targets, sections, choices, absent, corners)
                 val (faces, whyFaces) = Section3.faces(f)
                 if (faces == null) return@op EvalResult.Invalid(whyFaces ?: Msgs.refusalOpThisBlendHasNoFaces())
                 EvalResult.Ok(SolidValue(out.restated(f)))

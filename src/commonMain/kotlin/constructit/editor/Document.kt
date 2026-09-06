@@ -89,6 +89,7 @@ import constructit.geom.ChamferVariant
 import constructit.geom.Conics
 import constructit.geom.Continuity
 import constructit.geom.CornerCut
+import constructit.geom.CornerSlots
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
@@ -13974,6 +13975,19 @@ class Document {
     ) {
         val entries = ArrayList<DressEntry>()
 
+        /**
+         * **The shared slots this dressing has stated** (OP-31, slice 5g) — the curves and faces two or more
+         * of its entries make *together*, each recorded by name at the index it was first given.
+         *
+         * Structure, decided when the gesture that makes a corner is recorded and written into the file with
+         * the step that makes the body (`slots=`, [DocumentFormat.CORNER_SLOT_VERSION]) — never re-derived at
+         * eval time, because how many curves a corner puts on the body is a fact about the corner's own
+         * *kind* and an edit can change that without touching an entry ([Feature3.Blend.corners] argues it in
+         * full). It only ever **grows**: [recordSlots] merges what the body now has into it after every edit,
+         * so a corner that is gone leaves a tombstoned slot and a fresh one appends.
+         */
+        var corners: CornerSlots = CornerSlots.NONE
+
         /** The roundings that **stand** — what the element list shows and what the user can take off. */
         val standing: List<DressEntry> get() = entries.filter { !it.absent }
     }
@@ -14093,11 +14107,84 @@ class Document {
      * corner). What is new is only that the pair is now *seen* in one pass rather than in two levels.
      */
     private fun rebuildDressing(d: Dressing) {
+        restampDressing(d)
+        recordSlots(d)
+    }
+
+    /** The re-stamp itself: [d]'s entries built into one body and the view re-pointed onto it (OP-30). */
+    private fun restampDressing(d: Dressing) {
         @Suppress("UNCHECKED_CAST")
         val from = d.base.ref as SolidRef
-        val tip = cx.blendAll(from, planeOfSpace(d.base.space), d.entries.map { runOf(it) })
+        val tip = cx.blendAll(from, planeOfSpace(d.base.space), d.entries.map { runOf(it) }, d.corners)
         (d.body.ref.node as IndirectNode).boundTo = tip.node
     }
+
+    /**
+     * **Record the shared slots [d]'s body now has** (OP-31, slice 5g) — the corner curves and patches at the
+     * indices they stand at, so that a corner a *later* edit makes or unmakes cannot move them.
+     *
+     * Called after every edit of a dressing, and there only: the record is *build-time* structure, decided by
+     * the gesture that states the corner and never by the numbers (OP-21). A **replay** records nothing at
+     * all — the file's own record is the authority, and re-deriving it mid-replay would let a parameter that
+     * is set by a later step write a corner into the record that the finished drawing does not have, so a
+     * load-and-save would not be the file it read. The one exception is the migration, which is a load that
+     * has no record to be authoritative ([recordSlotsOfEveryDressing]).
+     *
+     * It only ever grows and the layout is idempotent — [Blend3.sharedSlots] returns the record extended by
+     * whatever appended after it — so the second re-stamp lays out exactly what the first did and is only
+     * needed because the record is an *input* of the body it describes.
+     */
+    private fun recordSlots(d: Dressing) {
+        if (replayingVersion != null) return
+        val was = d.corners
+        val now = slotsOf(d) ?: return
+        if (now == was) return
+        d.corners = now
+        restampDressing(d)
+    }
+
+    /** The shared slots [d]'s body states as it stands, or null where it has no body to read (OP-31). */
+    private fun slotsOf(d: Dressing): CornerSlots? {
+        val f = (Evaluator().valueOf(d.body.ref) as? SolidValue)?.solid?.feature as? Feature3.Blend ?: return null
+        return Blend3.sharedSlots(f)
+    }
+
+    /**
+     * **Every dressing's record completed, at the end of a load** (OP-31, slice 5g) — which is a *migration*
+     * for a file older than [DocumentFormat.CORNER_SLOT_VERSION] and a **no-op** for one at it.
+     *
+     * A replay records nothing as it goes ([recordSlots]), so this is where a loaded drawing gets the record
+     * a live one keeps by itself, and it must happen for **every** version: the record is what a later
+     * gesture builds on, so a dressing that came out of a file with none would let the very next rounding
+     * re-pack the corner curves that stood before it — the defect, one load along. A file at this version
+     * already states its record and this changes nothing in it (the layout is idempotent), so the file it
+     * writes is the file it read.
+     *
+     * [say] is what makes it a migration the user is told about, once: the record is taken from the body as
+     * an **older** file draws it, which reproduces the very layout that file was written against, so not one
+     * address moves — and OP-18 asks that a load which changes what a file means says so rather than being
+     * silently right.
+     */
+    internal fun recordSlotsOfEveryDressing(say: Boolean) {
+        var said = false
+        for (d in dressings) {
+            val now = slotsOf(d) ?: continue
+            if (now == d.corners || now.isEmpty) continue
+            d.corners = now
+            restampDressing(d)
+            // …**once for the drawing**, not once per body: it is a fact about the file's version, and a
+            // note that fires per dressing would bury the one about the drawing it was migrated from (OP-18)
+            if (say && !said) noteLoad(Msgs.noteOneDressedBodyCornerSlotsRecorded())
+            said = true
+        }
+    }
+
+    /** The record the step [step] writes, or null where it does not make a dressing's body (OP-31, slice 5g). */
+    internal fun dressingSlotsOf(step: Step): CornerSlots? =
+        dressings.firstOrNull { d -> step.creates.any { it === d.body } }?.corners?.takeIf { !it.isEmpty }
+
+    /** Set while a rounding step that carries `slots=` is replaying — see [Dressing.corners]. */
+    internal var dressingSlots: CornerSlots = CornerSlots.NONE
 
     /**
      * One entry of a dressing as the run [Construction.blendAll] rounds it by (OP-30).
@@ -14133,7 +14220,8 @@ class Document {
         targets: List<Int>,
         choices: List<BlendChoice>,
         absentBands: Int = -1,
-    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands)))
+        corners: CornerSlots = CornerSlots.NONE,
+    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands)), corners)
 
     /**
      * Take the entry [el] off its dressing **in place** (OP-30): the journal loses its step, the entry list
@@ -14528,10 +14616,20 @@ class Document {
             // …and the **first** rounding's tombstone is still the step that makes the body: it makes it
             // undressed, and the entries after it dress it (see [tombstoneStep])
             if (baseEl !== tipEl) return null
-            val made = passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, removedBands)
+            // **the record the file states rides with the very first pass** (OP-31, slice 5g): a dressing's
+            // shared slots are laid out from it, so a replay numbers them the same way from the first step
+            // on rather than growing into the numbering the finished drawing has
+            val slots0 = dressingSlots
+            val made = passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, removedBands, slots0)
             val body0 = add(cx.indirect(made), ElementKind.SOLID, Styles.SOLID)
             body0.space = baseEl.space
-            dressings.add(Dressing(body0, baseEl).also { it.entries.add(tomb) })
+            dressings.add(
+                Dressing(body0, baseEl).also {
+                    it.corners = slots0
+                    it.entries.add(tomb)
+                },
+            )
+            recordSlots(dressings.last())
             pendingTombstone = removedBands to entrySigns
             madeSolid(body0, Msgs.noteOneDressedBodyItsFirstRoundingRemovedSlot(name = nameOf(baseEl)))
             return body0
@@ -14560,9 +14658,12 @@ class Document {
         // call, unchanged: it is not a dressing, it resolves a whole-face pick at eval time as it always has,
         // and nothing about it may move (OP-18).
         val dressable = baseEl === tipEl
+        // …with the record the file states, for the reason a tombstoned first rounding carries it too
+        // (OP-31, slice 5g)
+        val slots0 = dressingSlots
         val made =
             if (dressable) {
-                passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices)
+                passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, -1, slots0)
             } else {
                 cx.blend(
                     tipEl.ref as SolidRef,
@@ -14589,9 +14690,11 @@ class Document {
             entryEl.space = baseEl.space
             dressings.add(
                 Dressing(el, baseEl).also {
+                    it.corners = slots0
                     it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
                 },
             )
+            recordSlots(dressings.last())
             registerSigns(entryEl, entrySigns)
             // …and an older file declares one name for this step, because it was written when a rounding made
             // a body and nothing else. The entry element is the migration's own extra (OP-18, and see
