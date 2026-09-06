@@ -12,11 +12,14 @@ import constructit.editor.ElementKind
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
+import constructit.geom.Curve3Element
+import constructit.geom.EdgeName
 import constructit.geom.Geom3
 import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Vec3
 import constructit.units.mm
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -62,56 +65,16 @@ class BlendMatrixTest {
      * closes it and the measurement that says what wrong looks like today.
      *
      * A residue entry is a *claim that a defect is still there*. Fix the defect and the cells it covers stop
-     * matching their inverse assertion, this test fails, and the entry is deleted with the fix.
+     * matching their inverse assertion, this test fails, and the entry is deleted with the fix. **The list
+     * is empty**, and has been since OP-31's item 3 (session 83): item 2 closed the mixed-sign pair and the
+     * incongruent inside corner, and item 3 closed the last two — a rail is now stated over its crease's own
+     * run with the corner curves beside it, and a stacking order no longer decides whether a body builds.
+     * The mechanism stays here because it is the honest way to name the next class that turns up.
      */
     enum class Residue(
         val item: String,
         val what: String,
-    ) {
-        /**
-         * **A rail is stated as one straight piece where the body's crease is a chain** — the reporter's
-         * script 2. Bevel two cap edges that meet at the plan's inside corner and bevel the upright between
-         * them: the body itself is right (its volume is the pivot-about-a-bevel figure to a part in 10⁵, which
-         * [everyTripleAtAVertexInEveryOrder] brackets), and the **edge list** is where it goes wrong. Each
-         * bevel's two rails are stated at the whole length of the edge they round, although the band they
-         * bound is set back by the bevel's own setback where it turns the pivot: with `c = 4 mm` the rails of
-         * edge 13's bevel are stated **32.75 mm** long where the crease runs **28.75 mm**, and the two that
-         * run along a side face are buried inside the fill over exactly those 4 mm. No mitre crease between
-         * the two bevels is listed at all — the dressed list is the base's eighteen and two rails per
-         * rounding, and nothing else.
-         *
-         * A fillet along such a rail therefore runs 4 mm past the crease: **39959.770 mm³**. The volume alone
-         * cannot tell the two apart — a band over the crease's own 28.75 mm brackets to
-         * **[39959.664, 39962.873] mm³**, which the chord margin makes wide enough to contain it — so the
-         * residue is asserted on the rail's stated **run**, and on the buried 4 mm, and not on a figure.
-         */
-        RAIL_IS_NOT_A_CHAIN(
-            "(3) edges are chains — rail → corner curve → rail as one edge, and the mitre crease named",
-            "a rail is stated at the whole length of its edge though its band is set back at a pivot",
-        ),
-
-        /**
-         * **The gesture order decides whether the body builds at all** — for two of the L-block's thirty-six
-         * pairs, in the **stacked** route only, and in one of the two orders only.
-         *
-         * A rounding of edge 6 and a rounding of edge 11 (the two bottom-cap edges at plan corner 0) build in
-         * one dressing, and build stacked as 11-then-6; stacked as **6-then-11** the second pass folds the
-         * surface back on itself — `MeshCanon.flap` catches it and the body is refused by name, *"boundary
-         * edge #6 of the bottom face: a zero-thickness flap …"*, at a point beside plan corner **1**, which is
-         * the far end of edge 6 and not the corner the two roundings share at all. Edges 0 and 12 at the same
-         * corner are the same case the other way up, and so are the two triples at those two vertices.
-         *
-         * That is a legitimate state by the matrix's own rule — refused by name, not built and wrong — so it
-         * is not what fails a cell. It is named here because *"which gesture arrived last"* may not decide
-         * what a body is (OP-30's own sentence, and `BlendMixedVertexTest.theTwoOrdersBuildTheSameBody`
-         * asserts it for the mixed vertex), and because it is the shape of the reporter's *"works fine in
-         * some cases but creates nonsense in others"*.
-         */
-        ORDER_DECIDES_THE_BODY(
-            "(3) edges are chains — the stacked pass rebuilds the chain, and the rebuild is where the flap appears",
-            "one stacking order refuses a body that the other order and the one dressing both build",
-        ),
-    }
+    )
 
     // ---- the runner ----
 
@@ -356,8 +319,12 @@ class BlendMatrixTest {
      * and one kind, the one dressing and the two stacked orders must all reach the same body — the corner is a
      * fact about which bands meet where, not about which gesture arrived last (OP-30).
      *
-     * Two pairs still disagree, and they are [Residue.ORDER_DECIDES_THE_BODY]: named here rather than
-     * discovered, so that fixing them fails this test and retires the entry.
+     * **Every one of the seventy-two agrees**, since OP-31's item 3 (session 83). Two of them did not: a
+     * fillet on edges 6 and 11, and one on 0 and 12, built in one dressing and stacked one way round and
+     * were refused by name the other way, because the second pass re-cut the band the first had already
+     * taken off and the two coincident cylinders folded. A band already off the body now contributes its
+     * corner ring as a **cap** and no tube at all ([Blend3.toolMesh]), so there is nothing left to coincide
+     * and *which gesture arrived last* decides nothing (OP-30's own sentence).
      */
     @Test
     fun theGestureOrderDoesNotDecideTheBody() {
@@ -373,36 +340,19 @@ class BlendMatrixTest {
                         "stacked $b then $a" to L.run(listOf(two, one), Route.STACKED),
                     )
                 val volumes = routes.map { (what, r) -> what to r.first?.let { measure(it.last(), "$what of e$a/e$b") } }
-                val listed = setOf(a, b) in orderDecides && k == BlendKind.FILLET
                 val disagree = volumes.any { it.second == null } || volumes.any { kotlin.math.abs(it.second!! - volumes[0].second!!) > 1e-5 * L.baseVolume }
-                if (listed) {
-                    assertTrue(
-                        disagree,
-                        "RESIDUE ${Residue.ORDER_DECIDES_THE_BODY.name}: e$a and e$b now agree in every order — " +
-                            "delete the residue entry (${Residue.ORDER_DECIDES_THE_BODY.item})",
-                    )
-                    println("order(e$a,e$b,${tag(k)}) | RESIDUE ${Residue.ORDER_DECIDES_THE_BODY.name} | ${volumes.map { it.second }} |")
-                } else {
-                    assertTrue(
-                        !disagree,
-                        "the gesture order decided the body of e$a and e$b (${tag(k)}): $volumes — " +
-                            "if that is a class rather than a case, name it in the residue",
-                    )
-                    agreed++
-                    println("order(e$a,e$b,${tag(k)}) | built | ${volumes[0].second} | the same in all three routes")
-                }
+                assertTrue(
+                    !disagree,
+                    "the gesture order decided the body of e$a and e$b (${tag(k)}): $volumes — " +
+                        "if that is a class rather than a case, name it in the residue",
+                )
+                agreed++
+                println("order(e$a,e$b,${tag(k)}) | built | ${volumes[0].second} | the same in all three routes")
             }
         }
-        assertEquals(36 * 2 - orderDecides.size, agreed, "seventy-two pair-and-kind cells, two of them in the residue")
-        println("== gesture order: ${36 * 2} cells — $agreed agree in all three routes, ${orderDecides.size} in the residue")
+        assertEquals(36 * 2, agreed, "seventy-two pair-and-kind cells, every one of them the same body in all three routes")
+        println("== gesture order: ${36 * 2} cells — $agreed agree in all three routes, none in the residue")
     }
-
-    /**
-     * The pairs whose **stacked** order still decides whether the body builds — [Residue.ORDER_DECIDES_THE_BODY].
-     * An explicit list, because there is nothing structural about them: both are ordinary right-angled convex
-     * corners of the block, and their thirty-four siblings agree in every order.
-     */
-    private val orderDecides = setOf(setOf(6, 11), setOf(0, 12))
 
     // ---- 5. stacked roundings: a rounding on a rail ----
 
@@ -471,59 +421,44 @@ class BlendMatrixTest {
      * **The reporter's second script, as a class**: two cap edges that meet at the plan's inside corner and
      * the upright between them, all three bevelled, then a fillet on one bevel's rail.
      *
-     * The bevelled body is right — [everyTripleAtAVertexInEveryOrder] brackets it — and the rail is where it
-     * goes wrong, which is [Residue.RAIL_IS_NOT_A_CHAIN]: the rail is stated at the whole length of the edge
-     * it rounds, though the band it bounds is set back by the bevel's own setback at the pivot. Asserted as
-     * the inverse, so building the chain retires the entry.
+     * This was `RAIL_IS_NOT_A_CHAIN`, and since OP-31's item 3 (session 83) it is the class that closes it.
+     * Every rail is stated over the **crease's own run** — 28.75 mm where the edge is 32.75 and the pivot
+     * takes the last 4 — none of them begins inside material, and the corner's own curves are in the list
+     * beside them: the rail that carries a band's tangency round the pivot, leg by leg. A fillet along such
+     * a rail is then bracketed by the band figure at the rail's own 135° wedge over that run.
      */
     @Test
-    fun theRailOfABevelThatTurnsAPivotIsStatedTooLong() {
+    fun theRailOfABevelThatTurnsAPivotRunsTheCreaseAndCarriesOnRoundIt() {
         val c = 4.0
         val entries = listOf(2, 13, 14).map { Rounding(it, BlendKind.CHAMFER, c) }
         val (stages, why) = L.run(entries, Route.ONE_PASS)
         val dressed = Body(Evaluator().solid(assertNotNull(stages, why).last()))
-        assertEquals(L.block.count + 6, dressed.count, "eighteen base edges and two rails per rounding")
+        // eighteen base edges, two rails per rounding, and the pivot's own three legs of corner rail
+        assertEquals(L.block.count + 6 + 3, dressed.count, "the base's edges, the rails, and the corner's own curves")
+        val cornerRails = dressed.edges.indices.filter { dressed.edges[it].name is EdgeName.BlendCornerRail }
+        assertEquals(3, cornerRails.size, "a bevelled pivot walks turn, slide, turn: $cornerRails")
 
-        // the rails of the bevel on edge 13, which turns the pivot at the inside corner
-        val rails = (L.block.count until dressed.count).filter { dressed.straight(it) && dressed.length(it) > 30.0 && dressed.length(it) < 40.0 }
+        // **the rails of edge 13's bevel run the crease, not the edge**
+        val rails =
+            (L.block.count until dressed.count).filter {
+                dressed.edges[it].name.let { n -> n is EdgeName.BlendRail && n.edge == 13 }
+            }
         assertEquals(2, rails.size, "the two rails of edge 13's bevel: $rails")
         for (rail in rails) {
-            assertClose(
-                dressed.length(rail),
-                L.block.length(13),
-                1e-9,
-                "RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name}: rail $rail is stated at the whole ${L.block.length(13)} mm " +
-                    "of edge 13 — if it now runs the crease's own ${L.block.length(13) - c} mm, the chain is built and " +
-                    "the residue entry must go (${Residue.RAIL_IS_NOT_A_CHAIN.item})",
-            )
-        }
-        // …and the proof that the extra 4 mm is not there: a rail that runs along a **side** face runs, over
-        // exactly the bevel's own setback at its pivot end, through material the fill put there — a stated
-        // crease buried inside the solid. Asked of the body in every direction at once, so a point on any
-        // face of it is never "buried" and only a run through the inside can say yes.
-        val buried = (L.block.count until dressed.count).filter { dressed.straight(it) && buriedEndOf(dressed, it) != null }
-        assertEquals(
-            2,
-            buried.size,
-            "RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name}: two of the six rails run into the fill at the pivot — $buried do. " +
-                "If none does, the rails are the crease's own run and the residue entry must go",
-        )
-        for (rail in buried) {
-            val (at, along) = buriedEndOf(dressed, rail)!!
-            assertTrue(deepInside(dressed, at + along * (c - 0.1)), "rail $rail is buried right up to the setback")
-            assertTrue(!deepInside(dressed, at + along * (c + 0.1)), "…and no further: the buried run is the bevel's own $c mm")
+            assertClose(dressed.length(rail), L.block.length(13) - c, 1e-9, "rail $rail runs the crease's own ${L.block.length(13) - c} mm")
         }
 
-        // and the fillet on such a rail runs past the crease: it builds, and it builds the *stated* run
+        // **and nothing is buried**: no stated crease of this body begins inside material
+        val buried = (L.block.count until dressed.count).filter { dressed.straight(it) && buriedEndOf(dressed, it) != null }
+        assertEquals(emptyList(), buried, "a stated crease that begins inside the solid is no crease of it")
+
+        // and a fillet along such a rail is the band over that run, at the rail's own wedge
         val on = Rounding(rails.first(), BlendKind.FILLET, c)
         val (out, whyOut) = L.run(entries + on, Route.STACKED)
         val v = measure(assertNotNull(out, whyOut).last(), "a fillet on the rail of a bevel that turns a pivot")
-        val stated = assertNotNull(predict(dressed, listOf(on)), "the band over the rail's stated run")
-        assertTrue(
-            v in stated,
-            "RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name}: the fillet no longer runs the rail's stated length — $v vs $stated",
-        )
-        println("script2 class | RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name} | $v | over the stated run $stated")
+        val bracket = assertNotNull(predict(dressed, listOf(on)), "the band over the rail's own run")
+        assertTrue(v in bracket, "the fillet on rail ${rails.first()} built $v, outside $bracket")
+        println("script2 class | built | $v | $bracket over the crease's own ${L.block.length(13) - c} mm")
     }
 
     // ---- 6. the reporter's three scripts, verbatim ----
@@ -698,22 +633,34 @@ param "r" = 5mm
 
     /**
      * **Script 2, the reporter's own file.** Three bevels making a pivot corner, then a fillet on one bevel's
-     * rail. It builds and it is watertight; what is wrong is the rail's own run, which
-     * [theRailOfABevelThatTurnsAPivotIsStatedTooLong] states as [Residue.RAIL_IS_NOT_A_CHAIN].
+     * rail. It builds, it is watertight, and since OP-31's item 3 the rail it rounds runs the crease's own
+     * 28.75 mm rather than the edge's 32.75 — which is what
+     * [theRailOfABevelThatTurnsAPivotRunsTheCreaseAndCarriesOnRoundIt] states as a class.
      */
     @Test
-    fun theReportersSecondScriptBuildsOverTheRailsStatedRun() {
+    fun theReportersSecondScriptBuildsOverTheCreasesOwnRun() {
         val v = measure(refOf(bodyOf(script2)), "script 2")
         val entries = listOf(2, 13, 14).map { Rounding(it, BlendKind.CHAMFER, 4.0) }
         val (stages, why) = L.run(entries, Route.ONE_PASS)
         val dressed = Body(Evaluator().solid(assertNotNull(stages, why).last()))
-        val rail = (L.block.count until dressed.count).first { dressed.straight(it) && dressed.convex(it) == true && dressed.length(it) > 30.0 && dressed.length(it) < 40.0 }
-        val bracket = assertNotNull(predict(dressed, listOf(Rounding(rail, BlendKind.FILLET, 4.0))), "the band over the rail's stated run")
-        assertTrue(
-            v in bracket,
-            "RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name}: script 2 no longer builds the band over the rail's stated run — $v vs $bracket",
-        )
-        println("script 2 | RESIDUE ${Residue.RAIL_IS_NOT_A_CHAIN.name} | $v | over the stated run $bracket")
+        val rail =
+            (L.block.count until dressed.count).first {
+                dressed.edges[it].name.let { n -> n is EdgeName.BlendRail && n.edge == 13 } && dressed.convex(it) == true
+            }
+        // **the pick takes the whole ribbon** (OP-31, item 3): rail → the pivot's own three legs of corner
+        // rail → the next band's rail, one tangent-continuous chain, exactly as one pick has taken a
+        // tangent-continuous rim since GitHub #29. So the figure is the band's own wedge at the rail's
+        // 135° dihedral carried along the **chain's** total run, and the ribbon being tangent throughout is
+        // what says there is no corner term to add: a constant section swept along a smooth path.
+        val run = assertNotNull(Blend3.targets(dressed.solid.feature, false, rail, Blend3.chainRun()).first, "the chain through rail $rail")
+        assertTrue(run.size > 1, "a bevel's rail carries on round the pivot: $run")
+        val total = run.sumOf { runLength(dressed, it) }
+        val band = Figures.wedgeArea(4.0, BlendKind.FILLET, 3.0 * PI / 4.0) * total
+        val surplus = Figures.chordSurplus(4.0, total)
+        val noise = 1e-5 * dressed.volume
+        val bracket = Bracket(dressed.volume - band - surplus - noise, dressed.volume - band + noise)
+        assertTrue(v in bracket, "script 2 built $v, outside the band over the ribbon's own $total mm $bracket")
+        println("script 2 | built | $v | $bracket over the ribbon's ${run.size} pieces, $total mm")
     }
 
     /**
@@ -813,11 +760,21 @@ param "r" = 5mm
             } ?: 0.0
     }
 
-    /**
-     * The end of rail [i] whose run starts **inside** the body, with the direction it runs in — or null where
-     * neither end does. What it proves: a stated crease that begins buried in material is not a crease of this
-     * body at all, which is [Residue.RAIL_IS_NOT_A_CHAIN] said about the geometry rather than about a number.
-     */
+    /** How long edge [i] of [b] runs, whichever curve it is — the chain's pieces are arcs as often as not. */
+    private fun runLength(
+        b: Body,
+        i: Int,
+    ): Double {
+        val path = Blend3.edgePath(b.edges[i]).first ?: return 0.0
+        return path.elements.sumOf { e ->
+            when (e) {
+                is Curve3Element.Seg3 -> (e.end - e.start).length()
+                is Curve3Element.Arc3 -> e.radius * abs(e.sweepAngle)
+                else -> 0.0
+            }
+        }
+    }
+
     private fun buriedEndOf(
         b: Body,
         i: Int,

@@ -86,7 +86,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertTrue(abs(six - theirs) < 1e-6 * theirs, "removing an entry is the file without it: $six vs $theirs")
         // and the file is a fixed point at the new version
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("constructit 6"), once.lines().first())
+        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}"), once.lines().first())
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)))
         assertTrue(DocumentFormat.load(once).loadNotes.isEmpty(), "a current file says nothing on load")
     }

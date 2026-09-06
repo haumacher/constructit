@@ -14,6 +14,7 @@ import constructit.editor.Viewport3
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
+import constructit.geom.EdgeName
 import constructit.geom.FaceName
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
@@ -469,7 +470,18 @@ class BlendMixedVertexTest {
         )
         val g14 = assertNotNull(Section3.edges(e14).first, "e14 names its edges")
         val g15 = assertNotNull(Section3.edges(e15).first, "e15 names its edges")
-        assertEquals(g14.map { it.name }, g15.take(g14.size).map { it.name }, "every edge of e14 keeps its index in e15")
+        // …and the same exception, for the same reason: since OP-31's item 3 a dressed edge list ends with
+        // the **corner curves** — the mitre where two bands cross, the rail that carries a band's own round
+        // the corner — and those stand after all the rails, so one more rounding pushes them along exactly
+        // as it pushes the corner patches. Every base edge and every rail keeps its index, which is what a
+        // `signs=` address ever holds (OP-17), and a pick of a corner curve is a dressing of its own
+        // (`Document.addressesBase`) for that very reason.
+        val addressable = g14.filter { it.name !is EdgeName.BlendMitre && it.name !is EdgeName.BlendCornerRail }
+        assertEquals(addressable.map { it.name }, g15.take(addressable.size).map { it.name }, "every base edge and every rail of e14 keeps its index in e15")
+        assertTrue(
+            g14.any { it.name is EdgeName.BlendCornerRail || it.name is EdgeName.BlendMitre },
+            "…and e14 does carry a corner curve, so the exception above is a real one and not a vacuous claim",
+        )
 
         // **e14's own pivot is the horn torus** about the sharp upright — the corner the cap chain makes on
         // its own — and it is a real surface there

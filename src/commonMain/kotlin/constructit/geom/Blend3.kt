@@ -311,6 +311,9 @@ object Blend3 {
         if (feature !is Feature3.Blend) return false
         val below = Section3.edges(feature.base).first ?: return false
         if (index < below.size) return smoothRail(feature.base, index)
+        // …and a **corner curve** is no rail at all: it stands after every rail (OP-31 item 3), and whether
+        // it is a crease is said on the entry itself ([SolidEdge.reason]) rather than here
+        if (index >= below.size + 2 * feature.targets.size) return false
         // …of **that rail's own rounding**, since one pass may run several sections (OP-30's next step): the
         // rails append two per target in the feature's order, so the target is the pair's index
         val k = (index - below.size) / 2
@@ -441,8 +444,18 @@ object Blend3 {
             is EdgeGeom.OnPlane -> {
                 when (g.piece) {
                     is ProfileElement.EllipseE, is ProfileElement.EllipticArcE ->
+                        // …and where that ellipse is a **mitre**, the refusal says which ellipse it is and
+                        // what does work (OP-31, item 3, Tier B item 5): two equal rounds crossing meet in a
+                        // plane ellipse, exactly and by construction, and a rounding carried along it would
+                        // have a section that changes from one end of the arc to the other — which this
+                        // drawing states for no edge. Two equal *bevels* meet in a straight crease, and that
+                        // one rounds with the machinery already here.
                         null to
-                            Msgs.refusalBlendIsEllipseWhichThisDrawing(name = edge.name.label)
+                            if (edge.name is EdgeName.BlendMitre) {
+                                Msgs.refusalBlendMitreSectionChanges(name = edge.name.label)
+                            } else {
+                                Msgs.refusalBlendIsEllipseWhichThisDrawing(name = edge.name.label)
+                            }
                     is ProfileElement.BezierE ->
                         null to
                             Msgs.refusalBlendIsSplineWhoseNormalSection(name = edge.name.label)
@@ -1105,8 +1118,15 @@ object Blend3 {
         val backAtStart: Double,
         val backAtEnd: Double,
     ) {
-        /** How long the run is — asked only where [seg] is there. */
-        val length: Double get() = seg!!.let { (it.end - it.start).length() }
+        /**
+         * How long this piece's own run is — the segment's length where the crease is one straight run, and
+         * the **crease's own** length where it is not.
+         *
+         * It used to be asked only where [seg] was there and read `seg!!`. Since a rounding can address a
+         * *chain* (OP-31, item 3) a pass routinely carries pieces whose crease is an arc — the leg of a
+         * pivot's own rail — and every reader of a band's extent meets one, so the answer has to be total.
+         */
+        val length: Double get() = seg?.let { (it.end - it.start).length() } ?: crease.length
     }
 
     /**
@@ -1502,6 +1522,72 @@ object Blend3 {
         /** The axis every turning leg is about, unit — the plane the walk runs in, read as its normal. */
         val walkNormal: Vec3?
 
+        /** The face the walk runs **in** — the one the travelling section keeps its tangency on. */
+        val walkFace: FacePatch
+
+        /** Where the walk's rings stand at walk parameter [t], legs numbered from zero. */
+        fun placeAt(t: Double): Placement? {
+            val n = walkNormal ?: return null
+            val k = min(walkLegs.size - 1, max(0, t.toInt()))
+            val u = (t - k).coerceIn(0.0, 1.0)
+            val leg = walkLegs[k]
+            val from = leg.rings.first()
+            val pivot = leg.pivot ?: return Placement(from.origin + (leg.rings.last().origin - from.origin) * u, from.cx, from.cy)
+            return turnedPlacement(from, pivot, n, leg.dir, (from.origin - pivot).dot(leg.dir), leg.turn * u)
+        }
+
+        /** Where the travelling section's tangency on [walkFace] stands at walk parameter [t]. */
+        fun tangencyAt(
+            pieces: List<Piece>,
+            t: Double,
+        ): Vec3? {
+            val piece = pieces[travelling]
+            val q = if (walkFace.name == piece.crease.face1.name) piece.wedge.t1 else piece.wedge.t2
+            return placeAt(t)?.at(q)
+        }
+
+        /**
+         * The corner's own correction of the face the walk runs in: the section's **tangency curve** on it,
+         * from the walk's start to [tEnd].
+         *
+         * Exact, piece for piece, and for the reason the walk's surface is: the tangency lies in that face's
+         * plane, the pivot lies in it too and the axis stands square to it — so a turning leg carries the
+         * tangency round the pivot on a **circle** of that plane and a sliding one along a straight run.
+         * Below the corner the face's boundary is the band's straight setback; from the corner on it is this
+         * curve, which is why a level section through the corner closes instead of leaving a gap as wide as
+         * the corner is deep.
+         *
+         * Stated on the **walk** rather than on the one-ended pivot (OP-31, item 3): a two-ended [Turn]
+         * leaves exactly the same curve on the face it runs in, and until the corner's own rails were edges
+         * of the body nobody had to ask. Now they are, and the strip a rounding of one takes off that face
+         * has to come off the curve the body actually has there.
+         */
+        fun sharedChain(
+            pieces: List<Piece>,
+            tEnd: Double,
+        ): List<ProfileElement>? {
+            val plane = walkFace.plane ?: return null
+            val out = ArrayList<ProfileElement>()
+            for (k in walkLegs.indices) {
+                val lo = k.toDouble()
+                val hi = min((k + 1).toDouble(), tEnd)
+                if (hi - lo <= 1e-12) continue
+                val p0 = plane.toLocal(tangencyAt(pieces, lo) ?: return null)
+                val p1 = plane.toLocal(tangencyAt(pieces, hi) ?: return null)
+                val leg = walkLegs[k]
+                val pivot = leg.pivot
+                if (pivot == null || abs(leg.turn) <= TANGENT_TOL) {
+                    if ((p1 - p0).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(p0, p1)))
+                    continue
+                }
+                val c = plane.toLocal(pivot)
+                val r = (p0 - c).length()
+                if (r <= Geom3.WELD_TOL || (p1 - p0).length() <= Geom3.WELD_TOL) continue
+                out.add(ProfileElement.ArcE(Arc(c, r, (p0 - c).angle(), (p1 - c).angle(), leg.turn >= 0.0)))
+            }
+            return out.ifEmpty { null }
+        }
+
         /** Every ring of the walk in order, a join between two legs counted once. */
         val rings: List<Placement> get() = walkRings(walkLegs)
 
@@ -1667,6 +1753,8 @@ object Blend3 {
 
         override val walkNormal: Vec3? get() = shared.plane?.normal?.normalized()
 
+        override val walkFace: FacePatch get() = shared
+
         override val rings: List<Placement> = walkRings(legs)
 
         override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart, b to bAtStart)
@@ -1787,6 +1875,8 @@ object Blend3 {
 
         override val walkNormal: Vec3? get() = shared.plane?.normal?.normalized()
 
+        override val walkFace: FacePatch get() = shared
+
         override val rings: List<Placement> = walkRings(legs)
 
         override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart)
@@ -1893,34 +1983,6 @@ object Blend3 {
             )
 
         /**
-         * The placement at walk parameter [t] — the **ideal** one, with no chord anywhere in it: leg `k` runs
-         * over `[k, k+1]`, a turning leg carried about its own pivot and a sliding one along its own run.
-         *
-         * The tool's rings step on the upright band's own chords ([chordPath]) because a tool has to fit the
-         * mesh it cuts. What the *drawing* states is the surface itself, so this is where the drawing reads
-         * the walk (OP-15: the surface exact, only its triangles chorded).
-         */
-        fun placeAt(t: Double): Placement? {
-            val n = walkNormal ?: return null
-            val k = min(legs.size - 1, max(0, t.toInt()))
-            val u = (t - k).coerceIn(0.0, 1.0)
-            val leg = legs[k]
-            val from = leg.rings.first()
-            val pivot = leg.pivot ?: return Placement(from.origin + (leg.rings.last().origin - from.origin) * u, from.cx, from.cy)
-            return turnedPlacement(from, pivot, n, leg.dir, (from.origin - pivot).dot(leg.dir), leg.turn * u)
-        }
-
-        /** Where the travelling section's tangency on [shared] stands at walk parameter [t]. */
-        fun tangencyAt(
-            pieces: List<Piece>,
-            t: Double,
-        ): Vec3? {
-            val piece = pieces[a]
-            val q = if (shared.name == piece.crease.face1.name) piece.wedge.t1 else piece.wedge.t2
-            return placeAt(t)?.at(q)
-        }
-
-        /**
          * Where the **cap's own boundary** stands at walk parameter [t] — the point at which the third
          * face's plane crosses the travelling section's blend curve — or null while the walk is still wholly
          * on the material side of it.
@@ -1959,43 +2021,6 @@ object Blend3 {
                 if (capAt(pieces, mid) == null) lo = mid else top = mid
             }
             return top
-        }
-
-        /**
-         * The corner's own correction of the face the walk runs in: the section's **tangency curve** on it,
-         * from the walk's start to [tEnd].
-         *
-         * Exact, piece for piece, and for the same reason the pivot's surface is: the tangency lies in that
-         * face's plane, the pivot lies in it too and the axis stands square to it — so a turning leg carries
-         * the tangency round the pivot on a **circle** of that plane and a sliding one along a straight run.
-         * Below the corner the face's boundary is the band's straight setback; from the corner up it is this
-         * curve, which is why the level section through the pivot closes instead of leaving a gap as wide as
-         * the corner is deep.
-         */
-        fun sharedChain(
-            pieces: List<Piece>,
-            tEnd: Double,
-        ): List<ProfileElement>? {
-            val plane = shared.plane ?: return null
-            val out = ArrayList<ProfileElement>()
-            for (k in legs.indices) {
-                val lo = k.toDouble()
-                val hi = min((k + 1).toDouble(), tEnd)
-                if (hi - lo <= 1e-12) continue
-                val p0 = plane.toLocal(tangencyAt(pieces, lo) ?: return null)
-                val p1 = plane.toLocal(tangencyAt(pieces, hi) ?: return null)
-                val leg = legs[k]
-                val pivot = leg.pivot
-                if (pivot == null || abs(leg.turn) <= TANGENT_TOL) {
-                    if ((p1 - p0).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(p0, p1)))
-                    continue
-                }
-                val c = plane.toLocal(pivot)
-                val r = (p0 - c).length()
-                if (r <= Geom3.WELD_TOL || (p1 - p0).length() <= Geom3.WELD_TOL) continue
-                out.add(ProfileElement.ArcE(Arc(c, r, (p0 - c).angle(), (p1 - c).angle(), leg.turn >= 0.0)))
-            }
-            return out.ifEmpty { null }
         }
 
         /**
@@ -3568,6 +3593,50 @@ object Blend3 {
                 }
             val p0 = atStart ?: Placement(seg.start + u * back0, piece.crease.e1, piece.crease.ref.e2)
             val p1 = atEnd ?: Placement(seg.end - u * back1, piece.crease.e1, piece.crease.ref.e2)
+            // **a band that is already off the body contributes its corner ring as a cap and no tube at
+            // all** (OP-31, item 3; the matrix's own `ORDER_DECIDES_THE_BODY`).
+            //
+            // Session 79 put such a band in the tool so that the corner where a *fresh* one meets it is
+            // built by construction rather than looked for, and said of the tube itself that *"cutting a
+            // band that is already off costs nothing — a coincident-face no-op"*. It is not a no-op. The
+            // tube's whole surface **is** the body's own band surface there, which is the very contact
+            // session 81 wrote the step-off to abolish (*"a tool never shares a face with the body"*) — and
+            // the step-off only moves the two straight **legs** off their faces; the band's own arc is left
+            // standing exactly on the body's. Whether a boolean resolves a coincident cylindrical strip is a
+            // fraction of a float32: on the L-block two of the thirty-six pairs came out with the surface
+            // folded back on itself and `MeshCanon.flap` refused them by name, at the *far* end of the band
+            // that was rounded first and not at the corner the two share — and only in one of the two
+            // stacking orders, which is exactly the reporter's *"works fine in some cases but creates
+            // nonsense in others"*.
+            //
+            // The cure is to stop cutting it. What the tube would remove is already removed, so a tool that
+            // stops at the corner ring and closes there removes precisely the same material — the corner is
+            // still built, the volume cannot move, and the tool shares no surface with the body any more.
+            // The cap faces the way that band's own free-end cap would, so the shell closes round the fresh
+            // tube and the corner's own patch. It costs no boolean; the alternative considered and rejected
+            // was to rebuild the chain from its undressed root at every such level, which cures it too and
+            // puts back the `O(n)` booleans per level that OP-30's part 1 measured and removed.
+            // …and only where every corner that claims one of its ends is a **crossing with a fresh band**.
+            // A crossing's ring is a plane through both tubes and the tube beyond it is re-cutting and
+            // nothing else, so capping there is the whole of what it did. Two conditions narrow it, and
+            // each is a shape the cap cannot answer: a **walk**'s corner surface is generated from the
+            // travelling section and its ends do work besides cutting — a pivot ends the band it turns
+            // about, a butt keeps its micron of daylight — so a walk keeps the tube it always had; and a
+            // crossing between two bands that are **both** already off would leave a hole in the middle of
+            // a stitched run of tubes, with the two caps facing each other across it. The two cells the
+            // matrix's residue named are both a fresh band crossing a single existing one.
+            val crossingOnly =
+                corners.filter { c -> c.ends.any { it.first == at } }.let { mine ->
+                    mine.isNotEmpty() && mine.all { c -> c is Joint && c.ends.all { it.first == at || !pieces[it.first].existing } }
+                }
+            if (piece.existing && crossingOnly) {
+                // …wound **against** this band's own free-end cap: the cap is not closing this tube, which
+                // is not there any more, but the fresh one that ends on the same ring, so it faces the way
+                // the missing tube ran rather than away from it.
+                if (atStart != null) for (t in piece.caps) b.triangle(p0.at(t.a), p0.at(t.b), p0.at(t.c))
+                if (atEnd != null) for (t in piece.caps) b.triangle(p1.at(t.c), p1.at(t.b), p1.at(t.a))
+                continue
+            }
             // stepped off everywhere but on a pivot axis: a tool never shares a face with the body, and
             // never folds over itself at a turn either ([sectionOf], GitHub #33 and its probe)
             val s0 = if ((at to true) in pivots) piece.plain else piece.grown
@@ -4235,7 +4304,14 @@ object Blend3 {
                 continue
             }
             val (outline, why) = notchedOutline(patch, mine)
-            out.add(if (outline == null) patch.copy(reason = why) else patch.copy(outline = outline))
+            // **and the face says the boundary is fitted, where one of its notches was** (OP-31, Tier B):
+            // the widest tolerance any piece spliced into it was fitted to, and nothing at all where every
+            // piece is exact. *"Since roundings are essential for all kinds of objects, an approximation is
+            // better than nothing at all"* — which is a decision about what may be **built**, not a licence
+            // to keep quiet about it, so the number is carried at the value and said wherever it is read
+            // ([Section3.words]).
+            val fitted = mine.mapNotNull { it.fitted }.maxOrNull()
+            out.add(if (outline == null) patch.copy(reason = why) else patch.copy(outline = outline, fitted = fitted ?: patch.fitted))
         }
         return out to null
     }
@@ -4588,12 +4664,22 @@ object Blend3 {
         // …the roundings that **stand**: a tombstone rounded nothing away, so its base edge is a crease of
         // this body again (OP-30)
         val consumed = dressings.filterNotNull().associateBy { it.index }
+        // **the chain as it stands at this level** — the pieces every band is among and the corners they
+        // make, which is what says how far a band's crease actually runs ([spanOf]) and which corner curves
+        // this body has (OP-31 item 3). Read once for the whole list rather than per rail.
+        val pieces = piecesOf(f)
+        val corners = pieces?.let { cornersOf(it).list } ?: emptyList()
+        val superseded = supersedings(f)
         val out = ArrayList<SolidEdge>(baseEdges.size + 2 * dressings.size)
         for ((i, e) in baseEdges.withIndex()) {
             val d = consumed[i]
+            // a corner curve the **base** stated whose corner this level re-turned about a fresh upright is
+            // no curve of this body any more — it keeps its index and says so, exactly as the corner *face*
+            // it bounds does ([cornerSuperseded], OP-17)
+            val gone = (e.name as? EdgeName.BlendMitre)?.edges ?: (e.name as? EdgeName.BlendCornerRail)?.edges
             out.add(
                 if (d == null) {
-                    e
+                    if (gone != null && e.reason == null) superseded[gone]?.let { e.copy(reason = it) } ?: e else e
                 } else {
                     e.copy(
                         reason =
@@ -4618,10 +4704,12 @@ object Blend3 {
                 }
                 continue
             }
+            val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
+            val span = if (pieces != null && at >= 0) spanOf(pieces, at, corners) else null
             for (side in 0..1) {
                 val face = if (side == 0) d.crease.face1 else d.crease.face2
                 val t = if (side == 0) d.wedge.t1 else d.wedge.t2
-                val (geom, why) = railGeom(d, t)
+                val (geom, why) = railGeom(d, t, span)
                 out.add(
                     SolidEdge(
                         EdgeName.BlendRail(d.index, side),
@@ -4632,8 +4720,268 @@ object Blend3 {
                 )
             }
         }
+        if (pieces != null) out.addAll(cornerEdgesOf(f, pieces, corners))
         return out to null
     }
+
+    // ---- the corner curves: a dressed body's edge list states what the body has (OP-31, item 3) ----
+
+    /**
+     * **The curves a corner puts on the body**, appended after every band's rails and in the corners' own
+     * order — the third and last thing a dressed edge list has to say (OP-31, item 3).
+     *
+     * *Why appended, and not woven in beside the band they belong to.* Every index in this list is an
+     * address a `signs=` in some file already holds (OP-17, OP-18). The base's own edges keep their indices,
+     * the rails keep theirs, and the corner curves go after all of them — so a file written before this
+     * session loads exactly the body it loaded before, and the only thing that ever moves is a corner
+     * *patch*'s address, which is the same exposure OP-30's own note already records.
+     *
+     * Two curves, and they are the two directions of one tube:
+     *
+     * - a **mitre** ([EdgeName.BlendMitre]) runs *across* the corner — the ring the two tubes are split on
+     *   at a crossing (a straight segment between two bevels, an ellipse arc between two rounds, exactly as
+     *   session 79 predicted and never built), the ring where a band hands over to a walk's surface, and
+     *   the ring between two legs of a walk;
+     * - a **corner rail** ([EdgeName.BlendCornerRail]) runs *along* it, in the face the walk runs in — the
+     *   band's own tangent rail carried on round the corner. It is what makes *rail → corner curve → rail*
+     *   one chain, which is the reporter's own ask ([chainRun]).
+     *
+     * **A round's corner curves are stated and marked as no crease**, in the same breath and for the same
+     * reason [SolidEdge.reason] exists at all: a ball rolling off a straight run onto a pivot is tangent to
+     * its own band along the whole hand-over ring — both surfaces envelop the *same* ball there — so there
+     * is nothing to round, and saying so by name beats leaving the curve out of a list that claims to state
+     * what the body has. A **bevel**'s are ordinary creases: its band is a plane and the walk's leg is a
+     * cone, and they meet at an angle. That is [smoothRail]'s own rule, read for a corner.
+     */
+    private fun cornerEdgesOf(
+        f: Feature3.Blend,
+        pieces: List<Piece>,
+        corners: List<Corner>,
+    ): List<SolidEdge> {
+        // …only the corners this level makes: the ones under it are already in the base's own list, at the
+        // indices they were appended at (the same freshness test [cornerFacesOf] uses, and deliberately so)
+        val fresh = f.standing.size
+        val out = ArrayList<SolidEdge>()
+        for (c in corners) {
+            if (c.ends.none { it.first < fresh } && c.extra.none { it < fresh }) continue
+            val edges = cornerEdges(pieces, c)
+            val faceAt = { k: Int -> FaceName.BlendCorner(edges, k) }
+            when (c) {
+                is Joint -> out.addAll(jointEdges(pieces, c, edges))
+                is Walk -> out.addAll(walkEdges(pieces, c, edges, faceAt))
+                // **the ball is this entry's one whole cut.** A *round* vertex states no crease at all —
+                // the ball and each of the three bands envelop the same sphere and are tangent along the
+                // band's own end circle — so there is nothing there for a list of creases to be missing. A
+                // **bevelled** one does have three: its three bevel planes meet pairwise in lines running
+                // to the apex, and those lines are the apex construction's rather than any ring's. They are
+                // not listed, and a rounding of them is therefore not offered (see the note under OP-31).
+                is Vertex -> Unit
+            }
+        }
+        return out
+    }
+
+    /** The one curve a **crossing** puts on the body: the mitre, one piece per piece of the section. */
+    private fun jointEdges(
+        pieces: List<Piece>,
+        c: Joint,
+        edges: List<Int>,
+    ): List<SolidEdge> {
+        val a = pieces[c.a]
+        val b = pieces[c.b]
+        return orientedSections(a).indices.map { j ->
+            val (geom, why) = ringCurve(a, c.placeA, j)
+            SolidEdge(
+                EdgeName.BlendMitre(edges, j),
+                geom ?: EdgeGeom.Straight(c.placeA.origin, c.placeA.origin),
+                FacePair(FaceName.BlendBand(a.index, j), FaceName.BlendBand(b.index, j)),
+                why,
+            )
+        }
+    }
+
+    /**
+     * The curves a **walk** puts on the body: its rails, one per leg — and *only* its rails.
+     *
+     * *What a walk's rings are, measured rather than assumed.* A walk is **one continuous motion of one
+     * section**: it starts on the band's own end ring and carries it round, so the ring where a band hands
+     * over to the walk, and the ring between two legs of it, are hand-overs and not creases. The mesh says
+     * so with no room for argument — on the reporter's own three bevels the dihedral across every one of
+     * those rings is **0.00°**, while the dihedral across a rail is 45° — and the count settles it a second
+     * time: a leg is chorded, so its rings are a *tessellation* fact and an edge list may not be one.
+     *
+     * So the walk contributes the **longitudinal** curve and nothing else: the tangency the travelling
+     * section keeps on the face the walk runs in, leg by leg — a circle about that leg's own pivot where it
+     * turns, a straight run where it slides. That is the band's own rail carried on round the corner, and
+     * it is what makes *rail → corner curve → rail* one chain ([chainRun]).
+     */
+    private fun walkEdges(
+        pieces: List<Piece>,
+        c: Walk,
+        edges: List<Int>,
+        faceAt: (Int) -> FaceName,
+    ): List<SolidEdge> {
+        val travelling = pieces[c.travelling]
+        val m = orientedSections(travelling).size
+        val shared = (c as? Turn)?.shared ?: (c as? Pivot)?.shared ?: return emptyList()
+        val onFace1 = shared.name == travelling.crease.face1.name
+        val q = if (onFace1) travelling.wedge.t1 else travelling.wedge.t2
+        val onPiece = if (onFace1) 0 else m - 1
+        return c.walkLegs.mapIndexed { k, leg ->
+            val name = EdgeName.BlendCornerRail(edges, k)
+            val (geom, why) = legRailCurve(leg, q, c.walkNormal)
+            SolidEdge(
+                name,
+                geom ?: EdgeGeom.Straight(leg.rings.first().at(q), leg.rings.first().at(q)),
+                FacePair(faceAt(k * m + onPiece), shared.name),
+                why ?: handOverReason(travelling, name),
+            )
+        }
+    }
+
+    /**
+     * Why a corner curve of [piece] is **no crease of the body** — or null where it is one.
+     *
+     * The structural rule, never a measurement (OP-21): a [BlendKind.FILLET]'s surface and the corner it
+     * hands over to are both tangent to the very same ball along their shared ring, so the hand-over is
+     * smooth by construction; a bevel's plane and a walk's cone are not, and a drawn profile's is read the
+     * same way its rails are — sharp, because whether a drawn section happens to leave tangentially is a
+     * property of the values it was drawn with.
+     */
+    private fun handOverReason(
+        piece: Piece,
+        name: EdgeName,
+    ): Msg? =
+        if (piece.sec.kind != BlendKind.FILLET) {
+            null
+        } else {
+            Msgs.refusalBlendCornerHandsOverSmoothly(name = name.label, name2 = Msgs.nameSolidRoundedBandAlongEdge(edge = piece.index + 1))
+        }
+
+    /**
+     * One ring of a corner as a **curve in the world**: piece [j] of [piece]'s own section carried through
+     * the ring's placement.
+     *
+     * A placement is affine in the section's `(x, y)` ([Placement]), so a straight leg stays straight and an
+     * arc stays a conic — and where the placement **stretches**, which is exactly what a mitre one does, a
+     * circle's arc becomes an **ellipse** arc and this states it as one (OP-24's conic vocabulary). That is
+     * session 79's own prediction, *"the ellipse arc in the mitre plane, the wedge's own blend curve
+     * stretched by 1/sin(θ/2)"*, made a value.
+     */
+    private fun ringCurve(
+        piece: Piece,
+        place: Placement,
+        j: Int,
+    ): Pair<EdgeGeom?, Msg?> {
+        val sec =
+            orientedSections(piece).getOrNull(j)
+                ?: return null to Msgs.refusalBlendSweepsPieceProfileThisDrawing(name = piece.crease.edge.name.label)
+        val n = place.cx.cross(place.cy)
+        if (n.length() <= Vec2.EPS || place.cx.length() <= Vec2.EPS) {
+            return EdgeGeom.Straight(place.origin, place.origin) to null
+        }
+        val u = place.cx.normalized()
+        val w = n.normalized().cross(u)
+        val map = Affine(place.cx.dot(u), place.cx.dot(w), place.cy.dot(u), place.cy.dot(w), 0.0, 0.0)
+        val mapped =
+            mappedExactly(sec, map)
+                ?: return null to Msgs.refusalBlendCornerCurveNotStated(name = piece.crease.edge.name.label)
+        return EdgeGeom.OnPlane(Plane3(place.origin, u, w), mapped) to null
+    }
+
+    /**
+     * The **tangency of one leg**, as the curve it is: a circle about the leg's own pivot where the leg
+     * turns, a straight run where it slides.
+     *
+     * Exact in both shapes and for the reason [Pivot.sharedChain] already states about the shared face — the
+     * whole leg is one rigid motion of the section, so any single point of that section travels a circle
+     * about the walk's axis or a straight line along it, and nothing between.
+     */
+    private fun legRailCurve(
+        leg: Leg,
+        q: Vec2,
+        axis: Vec3?,
+    ): Pair<EdgeGeom?, Msg?> {
+        val p0 = leg.rings.first().at(q)
+        val p1 = leg.rings.last().at(q)
+        val pivot = leg.pivot
+        if (pivot == null || abs(leg.turn) <= TANGENT_TOL || axis == null) {
+            return EdgeGeom.Straight(p0, p1) to null
+        }
+        val n = axis.normalized()
+        val centre = pivot + n * ((p0 - pivot).dot(n))
+        val rel = p0 - centre
+        val r = rel.length()
+        if (r <= Geom3.WELD_TOL) return EdgeGeom.Straight(p0, p1) to null
+        val u = rel.normalized()
+        val v = n.cross(u)
+        val ang = atan2((p1 - centre).dot(v), (p1 - centre).dot(u))
+        val ccw = leg.turn >= 0.0
+        var end = ang
+        if (ccw) {
+            while (end <= 0.0) end += 2.0 * PI
+        } else {
+            while (end >= 0.0) end -= 2.0 * PI
+        }
+        return EdgeGeom.OnPlane(Plane3(centre, u, v), ProfileElement.ArcE(Arc(Vec2(0.0, 0.0), r, 0.0, end, ccw))) to null
+    }
+
+    /**
+     * [e] carried through [map] **exactly**, whatever the map does to it — or null where this drawing has
+     * no exact word for the answer.
+     *
+     * [GeomMath.transform] is written for a *similarity* (it carries a radius through by `t.scale`), which
+     * is every map the blend had before corners had curves. A mitre placement is not one: it stretches the
+     * section along the bisector by `1/sin(θ/2)`, and an arc under it is an **ellipse** arc. So the
+     * similarity is tested rather than assumed, and the general case goes through [Conics], where the
+     * answer is exact rather than fitted.
+     */
+    private fun mappedExactly(
+        e: ProfileElement,
+        map: Affine,
+    ): ProfileElement? {
+        val ux = map.linear(Vec2(1.0, 0.0))
+        val uy = map.linear(Vec2(0.0, 1.0))
+        val similar = abs(ux.length() - uy.length()) <= 1e-9 * max(1.0, ux.length()) && abs(ux.dot(uy)) <= 1e-9 * max(1.0, ux.length() * uy.length())
+        if (similar) return GeomMath.transform(e, map)
+        return when (e) {
+            is ProfileElement.Seg, is ProfileElement.BezierE, is ProfileElement.EllipticArcE, is ProfileElement.EllipseE ->
+                GeomMath.transform(e, map)
+            is ProfileElement.ArcE -> {
+                val a = e.arc
+                val arc = EllipticArc(Ellipse(a.center, a.radius, a.radius, 0.0), a.startAngle, a.endAngle, a.ccw)
+                ProfileElement.EllipticArcE(Conics.transform(arc, map))
+            }
+            is ProfileElement.CircleE -> {
+                val c = e.circle
+                ProfileElement.EllipseE(Conics.transform(Ellipse(c.center, c.radius, c.radius, 0.0), map), if (map.det < 0) !e.ccw else e.ccw)
+            }
+            is ProfileElement.FuncE -> null
+        }
+    }
+
+    /**
+     * **When two edges of a dressed body are one chain** (OP-31, item 3) — the answer
+     * [Section3.edges]-side, and the third source [targets] takes a run from.
+     *
+     * *"I would expect that the fillets are 'smoothly' joined together"* was answered in 2D by the drawing's
+     * own joint registry (`Document.tangentRun`), which knows nothing about the curves a **corner** adds.
+     * This is the same question asked of the construction instead of of the sketch: a band's tangent rail
+     * and the corner curve that carries it on lie in the same face and meet end to end, and they are one
+     * chain **because the corner was built to continue the band** — the walk starts on the band's own end
+     * ring and carries its section on from there. Nothing is measured (OP-21): the rule is that one of the
+     * two is a corner rail, that they share a face by name, and that they meet.
+     *
+     * Two rails of two *bands* meeting at a crossing are deliberately **not** one chain: they meet at the
+     * plan's own corner angle, which is a crease and not a hand-over — the mitre between them is listed as
+     * its own edge and is the thing to round there.
+     */
+    fun chainRun(): (SolidEdge, SolidEdge) -> Boolean =
+        { a, b ->
+            val corner = a.name is EdgeName.BlendCornerRail || b.name is EdgeName.BlendCornerRail
+            val shares = listOf(a.between.a, a.between.b).any { b.between.has(it) }
+            corner && shares && sharedEnd(a, b) != null
+        }
 
     // ---- the band: the blend's own section curve, carried along the edge ----
 
@@ -4854,6 +5202,7 @@ object Blend3 {
     private fun railGeom(
         d: Dressing,
         t: Vec2,
+        span: ((Vec2) -> Pair<Double, Double>)? = null,
     ): Pair<EdgeGeom?, Msg?> {
         val el = soleElement(d.crease) ?: return null to Msgs.refusalBlendIsChainSeveralPiecesSo2(name = d.edge.name.label)
         return when (el) {
@@ -4864,7 +5213,19 @@ object Blend3 {
                     null to Msgs.refusalBlendHasNoLength(name = d.edge.name.label)
                 } else {
                     val u = v * (1.0 / len)
-                    EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, 0.0), worldOnStraight(d.crease, el.start, u, t, len)) to null
+                    // **the crease's own run, not the edge's** (OP-31, item 3): where a corner takes the
+                    // band over — a crossing, a pivot, a ball, a pivot with one end — the crease stops
+                    // there and the corner's own curve carries on. Stating the rail at the whole length of
+                    // the edge put a rounding of it 4 mm past the crease and, on a rail that lies in a side
+                    // face, buried it inside the fill; [spanOf] is the very reading the band's own *face*
+                    // outline has taken since session 81, asked here for the rail as well.
+                    val (s0, s1) = span?.invoke(t) ?: (0.0 to len)
+                    if (s1 - s0 <= Geom3.WELD_TOL) {
+                        EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, s0), worldOnStraight(d.crease, el.start, u, t, s0)) to
+                            Msgs.refusalBlendRailTakenByCorner(name = EdgeName.BlendRail(d.index, 0).label, name2 = d.name.label)
+                    } else {
+                        EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, s0), worldOnStraight(d.crease, el.start, u, t, s1)) to null
+                    }
                 }
             }
             is Curve3Element.Arc3 -> {
@@ -4953,6 +5314,14 @@ object Blend3 {
     ): (Vec2) -> Pair<Double, Double> {
         val piece = pieces[at]
         val len = piece.length
+        // **a piece that is not one straight run stands over the whole of it**, and that is provable rather
+        // than assumed: every corner in this catalogue is between **two straight edges** ([cornersOf]'s own
+        // first precondition — the surface equidistant from the two is a plane only then), an upright a walk
+        // turns about must be one too ([Walk.uprightEnd]), and a band can only run into another straight one
+        // ([endsRunInto]). So nothing can set such a band back, and asking would be asking for a station
+        // along a run that has none. This is the case a rounding along a **chain** makes ordinary: the legs
+        // of a pivot's own rail are arcs (OP-31, item 3).
+        if (piece.seg == null) return { _ -> 0.0 to len }
         val ends = HashMap<Boolean, Placement>()
         for (c in corners) {
             for (e in c.ends) if (e.first == at) ends[e.second] = c.ringAt(e)
@@ -5384,6 +5753,17 @@ object Blend3 {
          * the meeting is the end itself — and demanding the span would refuse the very extension it is.
          */
         val bulge: Boolean = false,
+        /**
+         * **The tolerance this chain was fitted to**, in millimetres — or null where every piece of it is
+         * exact (OP-31, Tier B).
+         *
+         * The one producer this drawing has of a fitted curve: the flat top a one-ended pivot's cap leaves
+         * on the third face, whose boundary is a torus met by a plane parallel to its own axis — a spiric of
+         * Perseus, a quartic, and no member of this vocabulary ([Pivot.capChain]). It travels with the notch
+         * so that the **face** it is spliced into can say so ([FacePatch.fitted]), which is the field item 2
+         * of the rounding algebra owed and could not add.
+         */
+        val fitted: Double? = null,
     )
 
     /**
@@ -5408,10 +5788,22 @@ object Blend3 {
         // the flat top the walk's cap leaves on it. The two hand over at one parameter — where the section
         // first reaches the third face — so the two curves meet at the very vertex the body has there.
         for (c in cornersOf(pieces).list) {
-            if (c !is Pivot) continue
-            val hand = c.capStart(pieces) ?: continue
-            c.sharedChain(pieces, hand)?.let { chain -> spliceInto(faces, trimmed, c.shared, c.at, pieces[c.a], chain)?.let { out.add(it) } }
-            c.capChain(pieces, hand)?.let { chain -> spliceInto(faces, trimmed, c.third, c.at, pieces[c.a], chain)?.let { out.add(it) } }
+            if (c !is Walk) continue
+            // …and a **two-ended** walk owes the first of the two, over its whole length (OP-31, item 3). A
+            // [Turn] leaves the very same tangency curve on the face it runs in as a [Pivot] does, and until
+            // that corner's own rails were edges of the body nobody had to ask: now a rounding can address
+            // one, so the strip it takes off that face has to come off the curve the body actually has
+            // there rather than off the sharp meeting of two setback lines that is not on it.
+            val hand = if (c is Pivot) c.capStart(pieces) ?: continue else c.walkLegs.size.toDouble()
+            val at = if (c is Pivot) c.at else (c as Turn).at
+            c.sharedChain(pieces, hand)?.let { chain ->
+                spliceInto(faces, trimmed, c.walkFace, at, pieces[c.travelling], chain)?.let { out.add(it) }
+            }
+            if (c is Pivot) {
+                c.capChain(pieces, hand)?.let { chain ->
+                    spliceInto(faces, trimmed, c.third, c.at, pieces[c.a], chain, Combine3.FIT_TOL_MM)?.let { out.add(it) }
+                }
+            }
         }
         for ((j, piece) in pieces.withIndex()) {
             // a **fill** adds material rather than taking it, so its cap closes a void and notches nothing;
@@ -5444,6 +5836,7 @@ object Blend3 {
         at: Vec3,
         piece: Piece,
         chain: List<ProfileElement>,
+        fitted: Double? = null,
     ): Notch? {
         val index = faces.indexOfFirst { it.name == face.name }
         if (index < 0) return null
@@ -5469,6 +5862,7 @@ object Blend3 {
             v,
             if (forwards) chain else chain.reversed().map { GeomMath.reverse(it) },
             bulge = true,
+            fitted = fitted,
         )
     }
 
@@ -5699,12 +6093,20 @@ object Blend3 {
         e: ProfileElement,
         edge: SolidEdge,
     ): Boolean {
-        val marks = ArrayList<Vec3>(3)
-        marks.add(plane.toWorld(GeomMath.startOf(e)))
-        marks.add(plane.toWorld(GeomMath.endOf(e)))
-        sectionPointAt(e, 0.5)?.let { marks.add(plane.toWorld(it)) }
+        val ours = marksOf(plane, e)
+        // …and **the same question asked the other way round** (OP-31, item 3). Session 81 relaxed *equal
+        // to* into *lies along*, because a dressed face's boundary piece gives up an end wherever a
+        // neighbour was rounded while the edge still ran the whole way. Since a rail is stated over its
+        // **crease's own run** the containment is as often the other way: the corner takes the last of the
+        // rail while the face's boundary piece runs on into the corner's own tangency chain. Neither side
+        // is "the longer one" as a rule, so the predicate is *the same carrier, and one run inside the
+        // other* — and the `hits.size != 1` guard in [correctedOutline] is still what keeps it honest, since
+        // two collinear pieces both overlapping one edge refuse rather than pick.
+        val theirs = edgeMarks(edge)
         return when (val g = edge.geom) {
-            is EdgeGeom.Straight -> e is ProfileElement.Seg && marks.all { alongSeg(g.a, g.b, it) }
+            is EdgeGeom.Straight ->
+                e is ProfileElement.Seg &&
+                    (ours.all { alongSeg(g.a, g.b, it) } || theirs.all { onPieceIn(plane, e, it) })
             is EdgeGeom.OnPlane -> {
                 val ca = centreAndRadius(plane, e)
                 val cb = centreAndRadius(g.plane, g.piece)
@@ -5714,10 +6116,30 @@ object Blend3 {
                         ca == null || cb == null -> false
                         else -> (ca.first - cb.first).length() <= SAME_CURVE_TOL && abs(ca.second - cb.second) <= SAME_CURVE_TOL
                     }
-                sameCarrier && marks.all { onPieceIn(g.plane, g.piece, it) }
+                sameCarrier &&
+                    (ours.all { onPieceIn(g.plane, g.piece, it) } || theirs.all { onPieceIn(plane, e, it) })
             }
         }
     }
+
+    /** The start, the middle and the end of boundary piece [e] of the face in [plane], in the world. */
+    private fun marksOf(
+        plane: Plane3,
+        e: ProfileElement,
+    ): List<Vec3> {
+        val out = ArrayList<Vec3>(3)
+        out.add(plane.toWorld(GeomMath.startOf(e)))
+        out.add(plane.toWorld(GeomMath.endOf(e)))
+        sectionPointAt(e, 0.5)?.let { out.add(plane.toWorld(it)) }
+        return out
+    }
+
+    /** The same three marks of an **edge**'s own curve. */
+    private fun edgeMarks(edge: SolidEdge): List<Vec3> =
+        when (val g = edge.geom) {
+            is EdgeGeom.Straight -> listOf(g.a, g.b, (g.a + g.b) * 0.5)
+            is EdgeGeom.OnPlane -> marksOf(g.plane, g.piece)
+        }
 
     /** Whether [p] stands on the run [piece] draws in [plane] — in the plane, on the carrier, within the span. */
     private fun onPieceIn(

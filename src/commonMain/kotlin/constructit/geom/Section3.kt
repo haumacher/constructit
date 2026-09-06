@@ -215,6 +215,41 @@ sealed interface EdgeName {
     }
 
     /**
+     * The **mitre crease of a rounded corner** (OP-31, item 3): where two of a dressed body's rounded
+     * surfaces meet *across* the corner they share — the transverse curve, as against [BlendRail]'s
+     * longitudinal one.
+     *
+     * One name for all three corners the catalogue builds, because they are one curve: at a **crossing**
+     * it is the ring the two bands are split on (a straight segment between two bevels, an ellipse arc
+     * between two rounds — two equal cylinders whose axes meet cut in a plane ellipse, OP-24's own
+     * vocabulary); at a **walk** it is the ring where a band hands over to the corner's surface, and the
+     * ring between two legs of the walk; at a **ball** it is the band's own end circle on the sphere.
+     *
+     * [edges] is the corner's own address — the base edges it stands between, exactly as
+     * [FaceName.BlendCorner] names them — and [piece] numbers the rings of that corner in the order the
+     * corner puts them down, so an address is a function of the drawing and not of the mesh (OP-17).
+     */
+    data class BlendMitre(val edges: List<Int>, val piece: Int) : EdgeName {
+        override val label: Msg
+            get() = Msgs.nameSolidBlendMitre(piece = piece + 1, edges = Msg.andList(edges.map { Msgs.nameSolidEdgeIndex(edge = it + 1) }))
+    }
+
+    /**
+     * The **rail of a rounded corner** (OP-31, item 3): where the corner's own surface runs tangent onto a
+     * face of the body — a [BlendRail] carried on round the corner, and the piece that makes a rail, a
+     * corner and the next rail **one chain**.
+     *
+     * Exact in both of the shapes a walk has: a leg that **turns** carries the section's own end point
+     * round the pivot on a circle (in the plane square to the walk's axis), and a leg that **slides**
+     * carries it along a straight run. [piece] numbers them leg by leg, two per leg — one for each end of
+     * the travelling section — in the walk's own order.
+     */
+    data class BlendCornerRail(val edges: List<Int>, val piece: Int) : EdgeName {
+        override val label: Msg
+            get() = Msgs.nameSolidBlendCornerRail(piece = piece + 1, edges = Msg.andList(edges.map { Msgs.nameSolidEdgeIndex(edge = it + 1) }))
+    }
+
+    /**
      * The **inner twin** of one edge of a shelled body (session 75): where the cavity's two faces behind
      * [edge] meet.
      *
@@ -343,6 +378,22 @@ data class FacePatch(
      * between two faces is a function of their surfaces, not of their triangles.
      */
     val surface: Surface3? = null,
+    /**
+     * **The tolerance this face's own boundary was fitted to**, in millimetres — or null where the outline
+     * is exact (OP-31, Tier B; the field item 2 of the rounding algebra owed and could not add).
+     *
+     * *"Since roundings are essential for all kinds of objects, an approximation is better than nothing at
+     * all"* (the user, GitHub #36). That decision admits a third state between exact and mesh: a boundary
+     * piece stated as a **chain of cubics through points that are every one of them exact on the surface**,
+     * within a stated distance of the true curve. [reason] says a face has no plane and [surface] says which
+     * family it belongs to; this says how far its *outline* may be from the truth, and it is carried at the
+     * value so that every reader of the face — a section, a panel readout, a refusal — says so in the same
+     * words rather than each deciding for itself (OP-15's honesty line, moved outward rather than crossed).
+     *
+     * Null is the ordinary case and means **exact**, not "unknown": a face whose outline this drawing states
+     * in its own vocabulary says nothing, and only a producer that fitted something fills this in.
+     */
+    val fitted: Double? = null,
 )
 
 /**
@@ -388,6 +439,15 @@ data class SolidEdge(
      * the curve; a reader that wants to *build on* the edge — a second blend — is refused in these words.
      */
     val reason: Msg? = null,
+    /**
+     * **The tolerance this edge's own curve was fitted to**, in millimetres — or null where [geom] is exact.
+     *
+     * The same third state [FacePatch.fitted] carries, said about a curve instead of about an outline: a
+     * corner curve that leaves this drawing's vocabulary is **stated** as a fitted chain rather than left
+     * out of the list, because an edge list that omits a crease the body has is the defect OP-31 item 3
+     * exists to close. Null means exact.
+     */
+    val fitted: Double? = null,
 )
 
 /**
@@ -1129,6 +1189,24 @@ object Section3 {
     // ---- the generic accessors the blend consumes ----
 
     /**
+     * **What a face is, in words** — its own name, and where its boundary was *fitted* rather than stated,
+     * the tolerance it was fitted to (OP-31, Tier B).
+     *
+     * The one place the third state is turned into a sentence, so every reader says it the same way: a
+     * panel readout, a status note and a refusal all ask this rather than each deciding for itself whether
+     * an approximation is worth mentioning. It always is — *"an approximation is better than nothing at
+     * all"* is a decision about what may be **built**, not a licence to keep quiet about it.
+     */
+    fun words(patch: FacePatch): Msg =
+        patch.fitted?.let { Msgs.nameSolidFittedOutline(name = patch.name.label, mm = Frames3.mm(it)) } ?: patch.name.label
+
+    /**
+     * The same sentence about an **edge**: its name, and the tolerance its curve was fitted to.
+     */
+    fun words(edge: SolidEdge): Msg =
+        edge.fitted?.let { Msgs.nameSolidFittedCurve(name = edge.name.label, mm = Frames3.mm(it)) } ?: edge.name.label
+
+    /**
      * The edges of [feature] that bound face [face], in the edge list's own order — *"the edges of face f"*,
      * the first of the two questions an edge blend asks (session 71).
      *
@@ -1136,6 +1214,7 @@ object Section3 {
      * which feature made them, so a feature that names its faces gets this for free and one that refuses
      * ([edges] returning a reason) refuses here too, by the same words.
      */
+
     fun edgesOfFace(
         feature: Feature3,
         face: FaceName,

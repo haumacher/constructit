@@ -16527,7 +16527,10 @@ edge-for-edge and volume-for-volume against the file itself — and demands of e
 states: **built** (valid, `assertManifold` on the fine mesh, volume inside the cell's own closed-form bracket)
 or **refused by name** (`EvalResult.Invalid` whose reason, rendered through the English bundle, names an edge
 or a face). The third state, built and silently wrong, fails the build. **1142 cells build inside their
-bracket, 41 are refused by name, 117 are in the named residue.**
+bracket, 41 are refused by name, 117 are in the named residue.** (Items 2, 3 and 4 of the same session emptied
+the residue and widened three classes; the matrix now runs **1394** cells — **1231** built inside their own
+bracket, **91** refused by name, **72** gesture-order comparisons that agree in all three routes, and **none**
+left over. The four residue classes below are kept as the record of what each item closed.)
 
 The classes, and what each covers: **36** single edges (eighteen edges, both kinds, 4 mm); **288** pairs that
 share a vertex in one dressing (thirty-six pairs, four kind pairings, both gesture orders); **288** the same
@@ -16549,7 +16552,8 @@ asserted to a part in 10⁵. Where two roundings are **incongruent** and no corn
 boolean trims is bracketed by *containment* — a round of the smaller size sits inside both tools, a bevel of the
 larger contains both — rather than by a fitted percentage. No bracket was ever widened to admit a body.
 
-**The residue, four classes, each asserted as its own inverse** so that fixing it fails this test and retires
+**The residue, four classes, each asserted as its own inverse — and every one of them closed by the end of the
+same session** so that fixing it fails this test and retires
 the entry (the seeded-defect discipline `TranslationReviewTest` runs over the translations, run here over the
 geometry). (1) **The mixed-sign pair** — 89 cells, and script 1 among them: `cornersOf` skips a pair whose
 members differ in sign, so a 4 mm fillet on edge 13 and one on the concave upright build **40566.658 mm³** (the
@@ -16577,7 +16581,8 @@ shape of the reporter's *"works fine in some cases but creates nonsense in other
 
 **What the matrix cannot see, said so it is not assumed away.** A bracket built on a body's own edge list
 inherits that list's errors: where a rail is stated too long the band over it is bracketed over the same wrong
-run, so class (3) had to be caught structurally rather than by a figure. And the corner figures above are
+run, so class (3) had to be caught structurally rather than by a figure (and still is: item 3 asserts that no
+stated crease of the body begins inside material). And the corner figures above are
 written at a **right-angled** wedge, which is every crease of the undressed block but not the 135° rail of a
 bevel — so a rounding of a rail is bracketed on its own, and two of them meeting at a vertex is a cell the
 algebra declines and the residue would have to name. Neither is a tolerance question; both are item (3)'s.
@@ -16832,6 +16837,178 @@ computes where it needs one. With the faces named it *could* be derived from the
 triangles — the outline of the union of the faces' projections — which would give every cross-axis boolean a
 plan without forcing a mesh. That is OP-22's decision to make and would change what every such body draws
 today; it is left, and recorded here so it is not looked for.
+
+#### Implementation status (as built — edges as chains and the mitre crease, item 3, session 83)
+
+**A dressed body's edge list now states what the body has, no more and no less.** Three things were wrong with
+it and each was a class: a rail was stated at the whole length of the edge it rounds although its crease stops
+where a corner takes over; two of the six rails of GitHub #36's script 2 therefore ran their last 4 mm through
+material the fill had put there — *a stated crease beginning inside the solid*; and no curve a **corner** puts
+on the body was listed at all, which is the reporter's own *"you can fillet a chamfer edge, but not an edge
+created by the joining of two chamfers"*.
+
+**The rail runs its crease, and it is the reading the band's own face has used since session 81.** `spanOf`
+already answers *where does this band stand along its run, at each point of its section* — it is what makes a
+level section through a corner close — and `railGeom` now asks it at the rail's own tangency instead of
+stating `0..length`. So edge 13's two rails run **28.75 mm** where the edge is 32.75, the concave upright's run
+**16 mm** where the upright is 20, and nothing is buried: `BlendChainEdgeTest` walks every stated crease of the
+body and asks the solid whether either end begins inside material, which is the structural form of the defect
+and the one a volume cannot see (a band over 28.75 mm and one over 32.75 mm both fall inside the chord margin
+the matrix allows). A rail a corner covers *entirely* keeps its slot and says so by name.
+
+**A corner curve is listed exactly where the corner makes a crease, and which those are was measured, not
+assumed.** The candidates are the curves bounding a corner's own surface: the ring *across* it and the rail
+*along* it. Measuring the dihedral the mesh actually shows at each of them, on the reporter's own three bevels,
+settles it: across a walk's rings it is **0.00°** and along its rails **45°**. That is not an accident of the
+figure — a walk is *one continuous motion of one section*, starting on the band's own end ring and carrying it
+round, so every ring inside it is a hand-over — and the count settles it a second time, since a leg is chorded
+and an edge list may not be a tessellation fact (the bevelled pivot puts down ten rings and three legs). So:
+
+- a **crossing** contributes its **mitre** (`EdgeName.BlendMitre`), one per piece of the section: the ring the
+  two tubes are split on, which is session 79's own unbuilt prediction made a value. Between two bevels it is a
+  straight `Seg`, and its two ends are exactly where the two bands' rails cross — asserted at
+  `(-9.5216, -28.375, 20)` and `(-5.5216, -32.375, 16)` on the L. Between two **rounds** it is an
+  `EllipticArcE`: two equal cylinders whose axes meet cut in a plane ellipse, and the ellipse comes out with
+  minor `r` and major `r/sin(θ/2)` to `1e-9`, which is the wedge's own blend curve stretched by the mitre map.
+  Nothing is fitted: `Blend3.mappedExactly` tests the placement for similarity and sends the general case
+  through `Conics` (OP-24), because `GeomMath.transform` carries a radius by `t.scale` and a mitre placement is
+  a stretch.
+- a **walk** contributes its **rails** (`EdgeName.BlendCornerRail`), one per leg, in the face the walk runs in:
+  a circle about that leg's own pivot where it turns, a straight run where it slides — the same exactness
+  `Pivot.sharedChain` already states about the face's boundary, and for the same reason (the whole leg is one
+  rigid motion, so any point of the section travels a circle about the axis or a line along it). A bevelled
+  upright walks turn–slide–turn and puts three of them on the body, and the first begins exactly where the
+  band's own rail stops.
+- a **round**'s corner curves are stated **and marked as no crease** (`SolidEdge.reason`), because a ball
+  rolling off a straight run onto a pivot is tangent to its own band along the whole hand-over — both surfaces
+  envelop the same ball there. That is `smoothRail`'s own structural rule read for a corner, and it is why the
+  *count* of corner edges does not move when a fillet is retyped as a chamfer.
+
+**The chain rule, and why it is structural.** A rail, the corner curve beside it and the next rail are **one
+edge in the sense the rim already is** (`BlendRunTangencyTest`'s precedent): `Blend3.chainRun` says two edges
+are one run when **one of them is a corner rail**, they **share a face by name**, and they meet end to end.
+Nothing is measured (OP-21) — the corner was *built* to carry the band on, the walk starting on the band's own
+end ring, and that statement is the construction's. Two rails of two *bands* meeting at a crossing are
+deliberately **not** one chain: they meet at the plan's own corner angle, which is a crease, and the mitre
+between them is the listed edge to round there. The predicate joins `Document.tangentRun`'s 2D joint registry
+rather than replacing it — two different facts, neither implying the other, so the run is their union
+(`Document.oneRun`).
+
+*The alternative rejected.* The design asked whether the list should carry **one `SolidEdge` per chain** with a
+multi-piece `EdgeGeom`. It should not, and index stability is the argument: a chain's membership is a fact
+about which *corners* exist, so a chain-per-entry list would renumber every rail the moment a neighbouring
+rounding is added or removed, and every `signs=` address after it would mean something else. One entry per
+piece with the chain read at pick time keeps every index a file already holds.
+
+**What did move, and the version that says so.** No index moved: the corner curves are appended **after** every
+rail, so a base edge is where it was and a rail is where it was. What changed is what a stored address
+*builds* — the reporter's own last step addresses rail 20, and rail 20 now carries on round the pivot into edge
+14's rail, so the fillet runs the ribbon's 104 mm instead of one straight 32.75. That is a different body from
+the same literal, which OP-18 forbids doing **silently**, so `DocumentFormat.VERSION` rises to **7**
+(`CHAINED_RAIL_VERSION`) and a file written before it is told once, on load, that its rounding now runs along
+every edge of its run — the very sentence GitHub #29's own tangent-run migration says, widened to cover the
+second thing a run can grow by. Nothing is re-scored: the recorded choice still belongs to the edge the click
+named and the run's other edges are scored once and written on the next save. The one address class that does
+move is a **corner curve**'s, which slides when a rounding is added to the same dressing — exactly the exposure
+OP-30's own note records for a corner *patch*, and for the same reason; a pick of one is a dressing of its own
+(`Document.addressesBase`) because its index is past the base's, so nothing holds such an address across an
+edit.
+
+**The fitted carrier, owed since item 2 and now paid.** `FacePatch.fitted` and `SolidEdge.fitted` are one
+`Double?` each: *the tolerance this boundary (or this curve) was fitted to*, null meaning **exact** and not
+"unknown". The one producer this drawing has fills it — the one-ended pivot's cap, whose boundary on the third
+face is a torus met by a plane parallel to its own axis, a spiric of Perseus and a quartic — carried from
+`Pivot.capChain` through `Blend3.Notch.fitted` onto the face it is spliced into. `Section3.words` is the one
+place it becomes a sentence, and the two readers that speak about a face or an edge outside a refusal ask it:
+the 3D face readout and the blend pick's own note. The user's decision is quoted because it is what admits the
+state at all: *"Since roundings are essential for all kinds of objects, an approximation is better than nothing
+at all."* It is a decision about what may be **built**, not a licence to keep quiet about it, which is why the
+number is carried at the value rather than left to whoever formats it.
+
+**The flap, cause and cure — the matrix's `ORDER_DECIDES_THE_BODY`, closed.** Rounding the L's edges 6 and 11
+built in one dressing and stacked one way round, and stacked the *other* way round `MeshCanon.flap` refused by
+name at a point beside the **far** end of edge 6. The tool was not at fault: dumped in both orders it is the
+same 36 vertices and 68 triangles with no fold in it. The cause is the **coincident re-cut**. Session 79 put a
+band that is already off the body into the tool so the corner beside it is built by construction, and said of
+the tube itself that *"cutting a band that is already off costs nothing — a coincident-face no-op"*. It is not
+a no-op: that tube's whole surface **is** the body's own band surface, which is the very contact session 81
+wrote the step-off to abolish (*"a tool never shares a face with the body"*) — and the step-off only moves the
+two straight **legs** off their faces, leaving the band's own arc standing exactly on the body's. Whether a
+boolean resolves a coincident cylindrical strip is a fraction of a float32, and on two of the L's thirty-six
+pairs it came up tails.
+
+The cure is to **stop cutting it**: a band already off the body contributes its corner ring as a **cap** and no
+tube at all, wound against its own free-end cap so that it closes the fresh tube that ends on the same ring.
+What the tube would remove is already removed, so the material is identical — the four routes now agree with
+the one-pass body to `1e-13` — the corner is still built by construction, and it costs **no** boolean. Two
+conditions narrow it, each a shape the cap cannot answer: it applies only where every corner claiming an end of
+that band is a **crossing** (a walk's corner surface is generated from the travelling section and its ends do
+work besides cutting — a pivot ends the band it turns about, a butt keeps its micron of daylight), and only
+where the crossing's partner is **fresh** (two already-off bands crossing would leave a hole in the middle of a
+stitched run with two caps facing each other across it). The alternative considered and rejected was to rebuild
+the chain from its undressed root at every such level: it cures it too, and it puts back the `O(n)` booleans per
+level that OP-30's part 1 measured and removed.
+
+**The matrix's residue is empty.** `RAIL_IS_NOT_A_CHAIN` and `ORDER_DECIDES_THE_BODY` are deleted, their two
+tests inverted into positive ones — every rail runs its crease with the corner's curves beside it, and all
+**seventy-two** pair-and-kind cells reach the same body in the one dressing and in both stacking orders. The
+rail class is extended to a rail **at a pivot** (bracketed by the band figure at its own 135° wedge over the
+crease's run) and to the **mitre crease** between two bevels, which builds at the mitre's *measured* dihedral —
+the reporter's own ask. `BlendChainCostTest`'s counted derivations and booleans are unchanged.
+
+**Three corrections a probe found, and each is general.** (a) `Piece.length` read `seg!!` — *"asked only where
+[seg] is there"* — and a rounding along a **chain** carries pieces whose crease is an **arc** (the leg of a
+pivot's own rail), so the moment such a body was asked for its edges it threw, and every consumer went with it:
+a level section came back `Invalid("java.lang.NullPointerException")`, and a face space, a further pick and the
+panel's readout would have done the same. It is total now — the segment's length where the crease is one
+straight run, the crease's own where it is not — and `spanOf` says in one line why such a piece stands over the
+whole of it rather than asking for a station along a run that has none: **every corner in this catalogue is
+between two straight edges** (`cornersOf`'s own first precondition), so nothing can set such a band back.
+(b) `sameCurve` asked *is this boundary piece **inside** the edge* — session 81's own relaxation of *equal to*,
+written when a face's piece gave up an end while the edge still ran the whole way. With a rail stated over its
+crease's own run the containment is as often the other way round, so the trim answered *"matches 0 pieces"* and
+the top face lost its outline. The predicate is now **the same carrier and one run inside the other**, either
+way; `correctedOutline`'s `hits.size != 1` guard is still what keeps it honest. (c) A **two-ended** walk now
+splices its own tangency curve into the face it runs in, exactly as the one-ended pivot has since item 2:
+`placeAt`, `tangencyAt` and `sharedChain` moved from `Pivot` up to `Walk`, because a `Turn` leaves the very
+same curve there and nobody had to ask until that corner's rails became edges a rounding can address.
+
+**And one gap that is *not* this item's, measured so it is not laid at its door.** A level section **through** a
+bevelled pivot does not close — and the body that proves it is the plain three-bevel corner of GitHub #36's own
+script 2, built by session 82 and untouched here: it closes at `z = 15, 10, 5` and refuses by name at `17, 19,
+19.5`. The cause is session 79's cut (5) verbatim — *"the band's own face outline is still the full sweep"* —
+so the upright's band is **drawn** over its whole 20 mm although the corner ends it at 16, and above that the
+loop meets a piece the body does not have. Item 3 fixed the same error in the **edge** list (a rail now runs its
+crease) and did not fix it in the **face** list, which wants the band patch to take `spanOf` the way the rail
+now does. What is asserted here instead is the pair of claims that *are* this item's: the chained body is
+**stated** at every height rather than throwing, and it closes wherever its own base closes.
+
+**Cuts, each whole and none silent.** (1) **The ball's own curves are not listed.** At a *round* vertex there is
+nothing to list — the ball and each of the three bands envelop the same sphere and are tangent along the band's
+end circle, so the list of creases is complete. At a **bevelled** one the three bevel planes do meet pairwise in
+lines running to the apex, and those lines are the apex construction's rather than any ring's; they are not
+named, and a rounding of them is therefore not offered. (2) **A rounding along an elliptical mitre is refused by
+name**, with what does work: its section would change from one end of the arc to the other, and this drawing
+states a rounding of constant section only (Tier B's item 5). Two equal *chamfers* meet in a straight crease and
+that one rounds with the machinery already here. (3) **A walk contributes no mitre**, above — measured at
+0.00°, so this is a statement about the body and not a deferral. (4) **The corner figures are still written at a
+right angle**: `predict` brackets a *single* rounding at any measured wedge, which is what a rail-at-a-pivot and
+a mitre cell need, and still declines a cell where **two** roundings meet at a wedge that is not a right angle.
+That is the same limit the matrix's own note records and it is a figure-derivation job, not a tolerance one.
+
+Tests: `BlendChainEdgeTest` (12) — script 2 verbatim, its rails at their creases' runs and no stated crease
+beginning inside material; the mitre between two bevels as the straight crease the two rails cross at, with
+both its ends; the mitre between two rounds as an exact ellipse arc with `minor = r`, `major = r√2`, and a
+rounding along it refused by name; a pivot's three legs of rail as arc–straight–arc, each beginning where the
+band's rail stops; a round's corner curves stated and saying they are hand-overs; the whole ribbon rounded and
+bracketed by the band figure over the chain's own run, with the file a fixed point of save; the older file told
+once that its rounding now runs the chain; a fillet on the mitre between two bevels at the measured dihedral;
+and the fitted face saying so with its tolerance while every exact face says nothing extra; the chained body
+naming every face and every edge with no fault standing where a reason should; a level section through it
+stated at six heights and closing wherever its base closes; and a second rounding on it built inside the band's
+own bracket. `BlendChainEdgeProbeTest` (3) is the orchestrator's own probe, kept: the migration note on files
+of both shapes, a 2 mm rounding along the chain with its sections, and the mitre fillet whose bevel is then
+taken away. `BlendMatrixTest` keeps its 1300 cells with an **empty** residue.
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -21417,8 +21594,10 @@ for. The format's version rose to 5 as the marker that lets an older file be tol
 test, with its named residue~~ — *retired in session 83, see below*; ~~(2) the mixed-sign pair as a one-ended pivot about a band~~ — *retired in
 session 83: the fill travels and the band is pivoted about, the walk capped by the third face; the matrix's
 incongruent inside corner is refused by name with it, and the Tier B fitted chain is taken for the first time
-on the cap's own quartic; see the as-built note under OP-31*; (3) edges as chains and
-the mitre crease named; ~~(4) face provenance through the general boolean, so a fused part has faces and creases
+on the cap's own quartic; see the as-built note under OP-31*; ~~(3) edges as chains and
+the mitre crease named~~ — *retired in session 83: a rail is stated over its crease's own run, the corner's own
+curves are edges beside it, one pick takes the whole ribbon, and the fitted carrier item (2) owed is a field on
+the value; the matrix's last two residue classes go with it; see the as-built note under OP-31*; ~~(4) face provenance through the general boolean, so a fused part has faces and creases
 to round~~ — *retired in session 83, see below*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
 against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
@@ -21430,9 +21609,10 @@ written against. See the OP-31 entry's implementation status.
 ~~(4) face provenance through the general boolean~~ — **done in session 83**: a general boolean of two bodies
 whose faces are planes keeps every one of them, with exact carriers and exact creases, so GitHub #36's script 3
 is dressed like an extrusion. A curved operand face is the named residue and refuses by name; the fitted
-carrier is Tier B's to introduce. See the OP-31 implementation note. **Parked by (2), for (c) or for the tier itself:** `FacePatch` has no way to *say* a
+carrier is Tier B's to introduce. See the OP-31 implementation note. ~~**Parked by (2), for (c) or for the tier itself:** `FacePatch` has no way to *say* a
 boundary is fitted — one field beside `reason` and `surface` in `Section3.kt` — so the top face's cap curve is
-correct to `1e-4 mm` and does not state that it is.
+correct to `1e-4 mm` and does not state that it is.~~ — **paid in session 83 by (3)**: `FacePatch.fitted` and
+`SolidEdge.fitted` carry the tolerance, and `Section3.words` is the one place that turns it into a sentence.
 
 
 #### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)

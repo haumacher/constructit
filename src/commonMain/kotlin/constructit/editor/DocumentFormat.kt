@@ -119,7 +119,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 6
+    const val VERSION = 7
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -196,6 +196,26 @@ object DocumentFormat {
      * so. The one element-count allowance the reading needs is named at [Document.migrationExtras].
      */
     const val DRESSED_BODY_VERSION = 6
+
+    /**
+     * The first version in which **a rounding of a rail runs the whole chain** — rail → corner curve → rail
+     * as one ribbon (OP-31, item 3, session 83).
+     *
+     * A dressed body's rail used to stop where the edge it rounds ended, and the corner curves beside it were
+     * in no list at all. So a `filletedge` addressing a bevel's rail rounded that one straight piece, ran
+     * past the crease's real end and notched a face the body does not have — GitHub #36's *"you can fillet a
+     * chamfer edge, but not an edge created by the joining of two chamfers"*. A rail is now stated over its
+     * crease's own run, the corner's own rails are edges beside it, and one pick takes the whole
+     * tangent-continuous ribbon exactly as one pick has taken a tangent-continuous rim since GitHub #29
+     * ([Blend3.chainRun]).
+     *
+     * That changes what a **stored** address builds, which is precisely what OP-18 forbids doing silently.
+     * So the version rises and a file written before it says once, on load, that the rounding now runs along
+     * every edge of its run — the same note GitHub #29's own migration says, for the same reason
+     * (`Document.blendSolid`). Nothing is re-scored and no address moves: the corner curves are appended
+     * after every rail, so every index a file already holds means what it meant.
+     */
+    const val CHAINED_RAIL_VERSION = 7
 
     const val HEADER = "constructit $VERSION"
 

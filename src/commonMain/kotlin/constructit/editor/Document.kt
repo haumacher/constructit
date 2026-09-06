@@ -2789,7 +2789,10 @@ class Document {
         ev: Evaluator = Evaluator(),
     ): Msg? {
         val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return null
-        return Section3.facePatchOfFootprintPiece(feature, piece).first?.name?.label
+        // …and where that face's own boundary was **fitted** rather than stated exactly, the readout says so
+        // and says to what (OP-31, Tier B): the decision that admits an approximation is not a licence to
+        // keep quiet about one ([Section3.words]).
+        return Section3.facePatchOfFootprintPiece(feature, piece).first?.let { Section3.words(it) }
     }
 
     /**
@@ -14422,7 +14425,7 @@ class Document {
                     return null
                 }
             }
-        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, tangentRun(baseEl, ev))
+        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, oneRun(baseEl, ev))
         if (targets == null) {
             noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = whyTargets ?: Msg.EMPTY)
             return null
@@ -14466,9 +14469,12 @@ class Document {
                 // **A recorded choice is never re-decided** (OP-18). A file written before one pick ran along
                 // the tangent run (GitHub #29) carries exactly one choice, and it belongs to the edge the
                 // click named — the run's *other* edges have none, so they are scored here, once, and the
-                // next save records all of them. The load says so by name rather than quietly.
+                // next save records all of them. The load says so by name rather than quietly, and since
+                // OP-31's item 3 the same sentence covers the second thing a run can grow by: a rail now
+                // carries on into the corner curve beside it and into the next rail
+                // ([DocumentFormat.CHAINED_RAIL_VERSION]).
                 if (stored.size == 1 && targets.size > 1) {
-                    if ((replayingVersion ?: 0) in 1 until DocumentFormat.SUPERSEDING_FILLET_VERSION) {
+                    if ((replayingVersion ?: 0) in 1 until DocumentFormat.CHAINED_RAIL_VERSION) {
                         noteLoad(
                             Msgs.noteOneDressedBodyNowRunsAlongAllEdges(name = nameOf(on), word = kind.word, count = targets.size),
                         )
@@ -14482,7 +14488,7 @@ class Document {
             if (whole) {
                 Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: Msgs.noteDressAFace()
             } else {
-                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: Msgs.noteOneDressedBodyEdge()
+                Section3.edges(body.feature).first?.getOrNull(address)?.let { Section3.words(it) } ?: Msgs.noteOneDressedBodyEdge()
             }
         val entrySigns = listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() }
         // **One dressing per part** (OP-30): where this gesture rounds an edge or a face of the *base* of a
@@ -14656,6 +14662,7 @@ class Document {
      * part of its boundary, so a superseded leg cannot lend its tangency to the rim over the segment that
      * replaced it — the replacement has to have **inherited** it (see [inheritTangency]).
      */
+
     private fun tangentRun(
         baseEl: Element,
         ev: Evaluator,
@@ -14679,6 +14686,27 @@ class Document {
                     handovers.any { (plane.toLocal(w) - it).length() <= GeomMath.JOIN_TOL }
                 } == true
         }
+    }
+
+    /**
+     * **The two things that make a run one run**, in one predicate (OP-31, item 3).
+     *
+     * The drawing's own tangent joints ([tangentRun]) say when two *base* edges carry on smoothly through a
+     * vertex — GitHub #29's *"as if I rounded all the edges with a rasp"*. The **construction** says when a
+     * band's tangent rail carries on into the curve a corner puts beside it ([Blend3.chainRun]) — OP-31's
+     * *"edges are chains"*, so that a rounding of the rail of a bevel follows the whole ribbon round the
+     * corner instead of stopping at it and notching a face that is not there.
+     *
+     * They are two different facts and neither implies the other, so the run is the union: an edge joins
+     * when *either* says it does.
+     */
+    private fun oneRun(
+        baseEl: Element,
+        ev: Evaluator,
+    ): (SolidEdge, SolidEdge) -> Boolean {
+        val tangent = tangentRun(baseEl, ev)
+        val chain = Blend3.chainRun()
+        return { a, b -> chain(a, b) || (tangent?.invoke(a, b) ?: false) }
     }
 
     /**
