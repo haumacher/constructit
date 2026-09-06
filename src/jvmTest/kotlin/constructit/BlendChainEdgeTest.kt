@@ -249,6 +249,7 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
                 when (val g = b.edges[i].geom) {
                     is EdgeGeom.Straight -> "straight"
                     is EdgeGeom.OnPlane -> if (g.piece is ProfileElement.ArcE) "arc" else g.piece::class.simpleName!!
+                    is EdgeGeom.InSpace -> "fitted"
                 }
             }
         assertEquals(listOf("arc", "straight", "arc"), kinds, "a bevelled upright is a turn, a slide and a turn")
@@ -470,10 +471,15 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
         val faces = assertNotNull(Section3.faces(solid.feature).first, "it names its faces")
         val fitted = faces.filter { it.fitted != null }
         assertEquals(1, fitted.size, "exactly one face's boundary is fitted: ${faces.map { it.name.label.render() to it.fitted }}")
-        assertClose(fitted.first().fitted!!, constructit.geom.Combine3.FIT_TOL_MM, 1e-15, "…to the tolerance it was fitted to")
+        // …and to the tolerance the fit **reached**, which is the one a reader can act on: since OP-31's
+        // slice 5a the number is measured off the chain rather than restated from what was asked for, so it
+        // is at most the drawing's own and usually better (a kink can hold it above, and then it says so)
+        val tol = fitted.first().fitted!!
+        assertTrue(tol > 0.0 && tol <= constructit.geom.Combine3.FIT_TOL_MM, "…to the tolerance it was fitted to: $tol")
         val said = Section3.words(fitted.first()).render()
         assertTrue("fitted" in said, "a reader of the face is told: '$said'")
-        assertTrue(constructit.geom.Frames3.mm(constructit.geom.Combine3.FIT_TOL_MM) in said, "…and to what: '$said'")
+        assertTrue(constructit.geom.Frames3.mmFine(tol) in said, "…and to what: '$said'")
+        assertTrue("0 mm" !in said, "…said with the digits a tolerance needs: '$said'")
         for (f in faces.filter { it.fitted == null }) {
             assertEquals(f.name.label.render(), Section3.words(f).render(), "an exact face says nothing extra")
         }

@@ -17163,6 +17163,116 @@ as a tool.
 Each slice extends the matrix with the fixture that exercises it, and the matrix's rule is unchanged: built
 inside a derived bracket, or refused by name.
 
+#### Implementation status (as built — incongruent corners, slice 5a, session 83)
+
+**The twenty-four cells build, and nothing about the corner is fitted.** Two roundings of unlike size or kind
+where the face they share turns an **inside** corner were, since item 2, refused by name; they are bodies now,
+and the same pair at a **convex** corner — which always built — gains the one thing the drawing still owed it,
+the *name* of the crease the boolean's trim leaves between the two bands. The matrix moves 24 cells from
+*refused* to *built inside a derived bracket*: **1394 cells, 1303 built, 67 refused by name, none in a
+residue** (the 36 that are a rounding of a *round's* rail and the 31 of script 3's mesh-only creases, both of
+which are the answer rather than a gap).
+
+**The walk, argued from the rolling ball rather than chosen.** A rolling-ball blend removes the material no
+ball *of the family* can be kept out of, so the corner between two unlike roundings is the **union of the two
+balls' pivots** about the upright — each of them session 80's own turn, carrying its own section. Where one
+section **contains** the other that union *is* the containing one's pivot: the contained ball sweeps nothing
+the other has not already swept, at every depth and through the whole turn. So the **deeper** section travels
+and the shallower one does not, and building only the pivot that shows is what keeps the face list honest —
+a corner face wholly inside another rounding's removal is a face the body does not have. Containment is a
+**structural** table and not a measurement (`Blend3.sectionContains`): two sections of the same kind nest by
+their setback, and a **bevel** contains a round of no larger a setback because the bevel of that setback *is*
+the round's own chord and the arc bulges toward the corner from it. Both statements hold at any dihedral, and
+the geometry is checked besides — the two must land on the **same two legs**, which is what says the
+containment the sizes claim is a containment in space.
+
+**How far the ball walks, and why the straight continuation is not owed.** The brief this slice was written
+against sketched a continuation: after its quarter turn the travelling ball would run on *along the other
+band's rail*, tangent to the shared face and to that band's surface. It was worth checking and it is not
+there. A ball of radius `r` tangent to the shared face from inside the material and tangent to the neighbour's
+cylinder of radius `R` **from the material side** is internally tangent, and the two conditions put its centre
+at exactly `R` from the neighbour's own edge — standing *on* the rail, where the plane and the cylinder are
+already tangent to each other. It touches a C¹ surface at one point and rolls along it removing **nothing**;
+the *external* tangency the sketch names (`r + R` from the axis) puts the ball either in the air the
+neighbour's own band already took away, or under the shared face far from the corner where it would gouge a
+groove that no rounding asked for. And the other reading of a continuation — the travelling ball simply
+rolling on along the neighbour's edge at its own size — removes only material the neighbour's own removal
+already contains, by the very containment that chose it. So the walk is **exactly the corner's exterior
+angle** and not a degree more, and the least is also the most: nothing is owed past the landing.
+
+**The ledge.** The walk ends where its section stands in the shallower band's **own end plane**, which is the
+plane that band's tube ends on. The two sections there stand at the same corner on the same two legs and are
+nested but not equal, so a piece of that plane is left standing between them: a **ledge**, as wide as the two
+roundings differ, and a face of the body with its own outline (`FaceName.BlendCorner`'s last piece). It is not
+an approximation of anything and it is the price of the pair: no ball of either radius reaches the material it
+keeps. It is also **exact**, which is the slice's own surprise — a plane through a horn torus' own axis cuts
+it in a *circle*, and through a cone in a straight line, so the ledge's four boundary pieces (or two, where a
+bevel meets a round of its own setback and the ledge is a lune) are arcs and segments and nothing is fitted.
+Its area is the two wedges' difference to the last digit, which is what `BlendIncongruentCornerTest` asserts
+the walk's landing by.
+
+**One shell, and the two slivers that close it.** The corner names **both** band ends, so the pair is one
+group, one stitched tool and one boolean — which is what makes both gesture orders and both routes build the
+same tool from the same rings (all four agree to `1e-11`), and what keeps `BlendChainCostTest`'s counts
+unmoved. Stitching it took one thing that had to be got right: the two sections meet at the wedge's own corner
+*and overlap along a segment of each leg*, so filling only the crescent between the two tangencies leaves the
+outer ring's leg edge running past the inner ring's vertex — a T-junction, which is not a shell and which the
+tool refuses by name (that refusal is how this was found). The ledge is therefore stitched as an **annulus
+between the two whole rings**, merged by the angle each vertex stands at about the corner — monotone along
+both, a wedge being star-shaped from its own corner, so no quad of the strip can cross another — and the two
+collinear triangles it puts on the legs have zero area and carry the connectivity. A micron of daylight
+between the rings was tried first and is worse: it un-collapses the pivot's own pole, where every ring of a
+turn about a sharp upright shares one point, and the tool then folds on itself there.
+
+**The figure, and the bracket.** The corner **adds** `w·φ·δ̄` — Pappus over the *deeper* section's own wedge,
+turned through the exterior angle about the sharp upright, `Figures.pivotTakes(size, kind, φ, 0)` — and takes
+nothing else: both bands run their whole edges and the ledge removes nothing at all. So the bracket is the
+naive figure less that pivot, with the same chord margin every corner gets, and it is **tight** rather than a
+containment bound: `predict` states the closed form and `deepest` is the same structural table the engine
+uses. The reporter's own two cells: a 4 mm fillet on edge 13 beside a 3 mm one on edge 14 builds
+**40357.224 mm³** in all four routes (bracket `[40353.938, 40367.090]`, and the naive body's own
+`[40361.438, 40369.229]` no longer contains it); a 4 mm fillet beside a 4 mm **bevel** builds **39940.534**
+(bracket `[39937.234, 39946.152]`, naive `[39956.670, 39960.226]`) — the bevel travels there, because its
+chord stands further from the corner than the round's arc, and the corner's surface says so by being a
+**cone**. Session 80's congruent pair is untouched to the last bit: `40254.536658410776` before and after.
+
+**Where the fitted tier is actually spent: the convex crossing.** The inside corner came out exact, so the
+tolerance-carrying machinery is put where it is genuinely owed — the pair that always built. Two bands of
+unlike size crossing at a **convex** corner are trimmed against each other by the boolean, session 81 gave
+each of them its own extent (`endsRunInto`, `runsInto`) and the planar one its own outline, and the **crease**
+between them was in no list at all. It is now: `runInEdges` states one `EdgeName.BlendMitre` per pair, over
+the part of the travelling section whose ruling reaches the neighbour's wedge at all (found by scanning and
+halving, since the deeper section runs on past the neighbour and is ended by its own cap instead). Two bevels
+meet in a **straight line** and it is stated as one, exactly. Everything else — and above all two cylinders of
+unlike radius whose axes are **skew**, a quartic in no plane — is a chain of cubics through points that are
+every one of them exact on both surfaces: `EdgeGeom.InSpace`, the third carrier, with `SolidEdge.fitted`
+saying how far the spans between may be. On the L-block's own 4 mm/3 mm pair the chain is 8 cubics and every
+point of it stands within `1.3e-5 mm` of **both** exact cylinders, which the test measures against the
+cylinders rather than against the fit.
+
+**And a fitted value now says the tolerance it *reached*.** `fittedChain` used to hand back the number it was
+*asked* for. It is not always the number it got: a curve with a kink in it — the station where a band's trim
+hands over from the neighbour's arc to that neighbour's own leg — cannot be met to any tolerance by a chain of
+smooth cubics, and the L-block's bevel band was claiming `1e-4 mm` while standing `5e-3` off its own crease at
+one span. The measured worst is now what `FacePatch.fitted` and `SolidEdge.fitted` carry, so a face that is
+worse than asked says so and one that is better says that. `Frames3.mmFine` goes with it: `Frames3.mm` rounds
+to thousandths, so every fitted value in the drawing was being read out as *"fitted to within 0 mm"*, which
+says the opposite of what the field exists to say.
+
+**The cuts, each whole and each refused by name.** (1) **Neither section contains the other** — a bevel
+narrower than the round beside it, whose chord and whose arc cross twice: the union of the two pivots is then
+two surfaces meeting in a quartic and two ledges rather than one, and the pair is refused with the sentence
+item 2 gave it. It is not in the matrix's 24, and it is what `BlendMixedPairTest` now pins. (2) A **round wide
+enough contains a bevel** (at a right angle, from `r ≥ (2 + √2)c/2`) and the table deliberately does not say
+so: the same condition at a general dihedral is a different expression, and half a rule is worse than a
+refusal. (3) The **upright is itself a band** — the walk would follow that band's own curve and two unlike
+sections cannot both stand on it (session 81's pivot); refused, and already in the parked inventory. (4) A
+**drawn profile** on either side: containment of two drawn sections is not a structural statement, so the pair
+is refused rather than measured. (5) The crease of a **plane against a cylinder** is an exact conic and is
+stated as a fitted chain all the same, because the band outline beside it already is one and two answers for
+one curve is worse than one. (6) A crease between two **multi-piece** sections is stated one curve per piece of
+the travelling one, which is the right count only where the two sections have the same number of pieces.
+
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -21756,7 +21866,11 @@ to round~~ — *retired in session 83, see below*; ~~(3b) **the band's face outl
 `spanOf` at every corner kind, the walk's own frame is read at the leg it stands on rather than at the frame its
 crease was drawn in, and a level section through a bevelled pivot closes at every height; see the as-built note
 under OP-31*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
-against the matrix's remaining residue — **designed in session 83** against the matrix's refusal inventory, in five slices (5a) incongruent corners, (5b) the ball along a curved crease, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+against the matrix's remaining residue — **designed in session 83** against the matrix's refusal inventory, in five slices ~~(5a) incongruent corners~~ — *retired in session 83: the deeper of two unlike sections pivots
+about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
+matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
+owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, (5b) the ball along a curved crease, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41

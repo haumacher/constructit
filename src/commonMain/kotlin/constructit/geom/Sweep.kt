@@ -1453,6 +1453,23 @@ object Frames3 {
         return if (x < 0 && scaled != 0L) "-$s" else s
     }
 
+    /**
+     * A **tolerance** in millimetres — [mm]'s own form for a figure smaller than the thousandth it rounds to.
+     *
+     * A fitted value's whole point is that it *says* how far it may be from the truth (OP-31, Tier B), and
+     * `0.0001 mm` said to three decimals is *"0 mm"*, which says the opposite. So a figure below a thousandth
+     * of a millimetre is stated to six decimals instead; everything a user typed or a drawing measures still
+     * goes through [mm] and is unmoved.
+     */
+    internal fun mmFine(x: Double): String {
+        if (abs(x) >= 0.001) return mm(x)
+        val scaled = round(abs(x) * 1e6).toLong()
+        val i = scaled / 1000000
+        val f = (scaled % 1000000).toString().padStart(6, '0').trimEnd('0')
+        val out = if (f.isEmpty()) "$i" else "$i.$f"
+        return if (x < 0 && scaled != 0L) "-$out" else out
+    }
+
     /** A degree figure for a refusal, from an angle in radians. */
     internal fun deg(rad: Double): String = mm(rad * 180.0 / PI)
 }

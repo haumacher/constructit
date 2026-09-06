@@ -135,6 +135,7 @@ class EdgeAdjacencyTest {
                 is EdgeGeom.Straight -> listOf(g.a, g.b)
                 is EdgeGeom.OnPlane ->
                     listOf(g.plane.toWorld(GeomMath.startOf(g.piece)), g.plane.toWorld(GeomMath.endOf(g.piece)))
+                is EdgeGeom.InSpace -> listOf(g.chain.first().start, g.chain.last().end)
             }
         return pts.map { "${round6(it.x)},${round6(it.y)},${round6(it.z)}" }.toSet()
     }

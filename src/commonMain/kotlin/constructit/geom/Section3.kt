@@ -413,6 +413,18 @@ sealed interface EdgeGeom {
     data class Straight(val a: Vec3, val b: Vec3) : EdgeGeom
 
     data class OnPlane(val plane: Plane3, val piece: ProfileElement) : EdgeGeom
+
+    /**
+     * A curve **in space** — a chain of pieces that lies in no one plane (OP-31, Tier B).
+     *
+     * The third carrier, and the one the fitted tier needed: where two rounded bands of unlike size cross,
+     * the crease between them is two cylinders met at an angle — a quartic, in no plane and in none of this
+     * drawing's closed forms. It is stated as a chain of cubics through points that are every one of them
+     * exact on both surfaces, with [SolidEdge.fitted] carrying how far the pieces between may be from the
+     * truth. A chain that turns out to be one straight run is stated as [Straight] instead and says nothing
+     * about tolerance, because there is nothing to say.
+     */
+    data class InSpace(val chain: List<Curve3Element>) : EdgeGeom
 }
 
 /**
@@ -1198,13 +1210,13 @@ object Section3 {
      * all"* is a decision about what may be **built**, not a licence to keep quiet about it.
      */
     fun words(patch: FacePatch): Msg =
-        patch.fitted?.let { Msgs.nameSolidFittedOutline(name = patch.name.label, mm = Frames3.mm(it)) } ?: patch.name.label
+        patch.fitted?.let { Msgs.nameSolidFittedOutline(name = patch.name.label, mm = Frames3.mmFine(it)) } ?: patch.name.label
 
     /**
      * The same sentence about an **edge**: its name, and the tolerance its curve was fitted to.
      */
     fun words(edge: SolidEdge): Msg =
-        edge.fitted?.let { Msgs.nameSolidFittedCurve(name = edge.name.label, mm = Frames3.mm(it)) } ?: edge.name.label
+        edge.fitted?.let { Msgs.nameSolidFittedCurve(name = edge.name.label, mm = Frames3.mmFine(it)) } ?: edge.name.label
 
     /**
      * The edges of [feature] that bound face [face], in the edge list's own order — *"the edges of face f"*,
@@ -2603,6 +2615,28 @@ object Section3 {
                         1 -> cut.toLocal(geom.plane.toWorld(hits[0])) to null
                         else -> null to Msgs.refusalSectionPlaneCrossesThatEdgeTimes(count = hits.size)
                     }
+                }
+            }
+            // **a curve in space is crossed on its own chain**, and the corner it gives is as good as the
+            // chain is: the edge itself carries [SolidEdge.fitted] and every reader of it says so, which is
+            // OP-31's Tier B decision taken once at the value rather than restated at each use.
+            is EdgeGeom.InSpace -> {
+                val pts = geom.chain.flatMap { Curves3.sample(it) }
+                val hits = ArrayList<Vec2>()
+                for (k in 0 until pts.size - 1) {
+                    val d0 = cut.distanceTo(pts[k])
+                    val d1 = cut.distanceTo(pts[k + 1])
+                    if (abs(d0) <= ON_PLANE_TOL && (k == 0 || abs(cut.distanceTo(pts[k - 1])) > ON_PLANE_TOL)) {
+                        hits.add(cut.toLocal(pts[k]))
+                    } else if (d0 * d1 < 0.0) {
+                        hits.add(cut.toLocal(pts[k] + (pts[k + 1] - pts[k]) * (d0 / (d0 - d1))))
+                    }
+                }
+                if (pts.isNotEmpty() && abs(cut.distanceTo(pts.last())) <= ON_PLANE_TOL && hits.isEmpty()) hits.add(cut.toLocal(pts.last()))
+                when (hits.size) {
+                    0 -> null to Msgs.refusalSectionPlaneDoesNotCrossThat()
+                    1 -> hits[0] to null
+                    else -> null to Msgs.refusalSectionPlaneCrossesThatEdgeTimes(count = hits.size)
                 }
             }
         }

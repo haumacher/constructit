@@ -598,11 +598,15 @@ fun predict(
                         cornerHi -= Figures.crossingTakes(here.minOf { it.size }, BlendKind.FILLET, theta)
                     }
                 } else {
-                    // an inside corner of the shared face, the third edge left sharp: the ball pivots about
-                    // it through the corner's exterior angle. An **incongruent** pair makes no such corner
-                    // and is refused by name (session 83), so it never reaches here.
-                    if (!congruent) return null
-                    val take = Figures.pivotTakes(size, kind, theta - PI, 0.0)
+                    // An inside corner of the shared face, the third edge left sharp: the ball pivots about
+                    // it through the corner's exterior angle. Where the two are **incongruent** the ball
+                    // that pivots is the one whose section contains the other's, and the contained one
+                    // sweeps nothing the container has not already swept — so the figure is that section's
+                    // own pivot and the ledge between them takes nothing at all, both bands running to
+                    // their own end planes (OP-31, slice 5a). Where neither section contains the other the
+                    // pair is refused by name and never reaches here.
+                    val deep = deepest(here) ?: return null
+                    val take = Figures.pivotTakes(deep.size, deep.kind, theta - PI, 0.0)
                     cornerLo += take - slack
                     cornerHi += take + slack
                 }
@@ -678,6 +682,33 @@ fun predict(
     // the general boolean's own float32 noise, which even an all-planar figure gets
     val noise = b.volume * 1e-5
     return Bracket(b.volume - (hi + noise), b.volume - (lo - noise))
+}
+
+/**
+ * **Which of a pair of roundings contains the other**, or null where neither does — the engine's own
+ * structural table ([Blend3]'s `sectionContains`), stated here so the figure is derived and not read off
+ * the body: two sections of the same kind nest by their size, and a **bevel** contains a round of no larger
+ * a setback because that bevel *is* the round's own chord. A round wide enough contains a bevel too, and
+ * that pair is deliberately left out of both the engine and this table (see the note under OP-31's fitted
+ * tier), so it is a refusal and states no figure.
+ */
+fun deepest(here: List<Rounding>): Rounding? {
+    if (here.size != 2) return null
+
+    fun contains(
+        outer: Rounding,
+        inner: Rounding,
+    ): Boolean =
+        if (outer.kind == inner.kind) {
+            outer.size >= inner.size - 1e-9
+        } else {
+            outer.kind == BlendKind.CHAMFER && outer.size >= inner.size - 1e-9
+        }
+    return when {
+        contains(here[0], here[1]) -> here[0]
+        contains(here[1], here[0]) -> here[1]
+        else -> null
+    }
 }
 
 /**

@@ -415,39 +415,37 @@ class BlendMixedPairTest {
         assertClose(ends.maxOf { it.x }, -9.521648428788623 + (4.0 + 4.0) * cos(PI / 6.0), 1e-3, "…at the turn the third face caps")
     }
 
-    // ---- 7. the incongruent inside corner, refused by name ----
+    // ---- 7. the inside corner no ball's pivot covers, refused by name ----
 
     /**
-     * **Two roundings that are not congruent make no inside corner, and now say so** (OP-31's matrix).
+     * **An inside corner where *neither* section contains the other is still refused, and says so**
+     * (OP-31, slice 5a).
      *
-     * At a **convex** corner a non-congruent pair costs nothing: the two tools overlap and the boolean trims
-     * them exactly, which is session 79's own cut and stays. At an **inside** corner they never overlap at
-     * all, so leaving the pair alone leaves GitHub #31's spike standing between the two band ends — silently,
-     * whenever the two sizes or the two kinds differ. It is named here instead, and it heals.
+     * The two pairs this test used to name — a 4 mm fillet beside a 3 mm one, a fillet beside a bevel of its
+     * own size — are **built** now: the deeper of the two pivots about the sharp upright and lands on a
+     * ledge in the other's own end plane ([BlendIncongruentCornerTest]). What is still refused, and is the
+     * whole of what is, is the pair where neither section contains the other — a bevel narrower than the
+     * round beside it, whose chord and whose arc cross twice, so the union of the two balls' pivots is two
+     * surfaces meeting in a curve this drawing does not state. It is named, and it heals.
      */
     @Test
-    fun theIncongruentInsideCornerIsRefusedByNameAndHeals() {
-        val cases =
-            listOf(
-                Triple(4.0, BlendKind.FILLET, 3.0) to BlendKind.FILLET,
-                Triple(4.0, BlendKind.FILLET, 4.0) to BlendKind.CHAMFER,
+    fun theInsideCornerNoPivotCoversIsRefusedByNameAndHeals() {
+        val why =
+            assertNotNull(
+                refusalOf(chain(Triple(topAlongX, 4.0, BlendKind.FILLET), Triple(topAlongY, 3.0, BlendKind.CHAMFER))),
+                "a 4 mm fillet beside a 3 mm bevel at the inside corner",
             )
-        for ((first, secondKind) in cases) {
-            val why =
-                assertNotNull(
-                    refusalOf(chain(Triple(topAlongX, first.first, first.second), Triple(topAlongY, first.third, secondKind))),
-                    "a ${first.second} of ${first.first} beside a $secondKind of ${first.third} at the inside corner",
-                )
-            assertTrue("inside corner" in why, "the refusal names the corner: $why")
-            assertTrue("boundary edge #3 of the top face" in why && "boundary edge #2 of the top face" in why, "…and both edges: $why")
-            assertTrue("the top face" in why, "…and the face they meet on: $why")
-            assertTrue("same rounding" in why || "sharp" in why, "…and what to do instead: $why")
+        assertTrue("inside corner" in why, "the refusal names the corner: $why")
+        assertTrue("boundary edge #3 of the top face" in why && "boundary edge #2 of the top face" in why, "…and both edges: $why")
+        assertTrue("the top face" in why, "…and the face they meet on: $why")
+        assertTrue("same rounding" in why || "sharp" in why, "…and what to do instead: $why")
+        // …and every pair one of whose sections contains the other builds, which is what says the refusal is
+        // the containment and not the corner
+        for (second in listOf(3.0 to BlendKind.FILLET, 4.0 to BlendKind.CHAMFER, 4.0 to BlendKind.FILLET)) {
+            val ok = chain(Triple(topAlongX, 4.0, BlendKind.FILLET), Triple(topAlongY, second.first, second.second))
+            assertNull(refusalOf(ok), "a 4 mm fillet beside a ${second.first} mm ${second.second} is a body")
+            assertTrue(volumeOf(ok, "the inside corner of a 4 mm fillet and a ${second.first} mm ${second.second}") > 0.0)
         }
-        // …and the very same pair with one size and one kind builds, which is what says the refusal is the
-        // congruence and not the corner
-        val ok = chain(Triple(topAlongX, 4.0, BlendKind.FILLET), Triple(topAlongY, 4.0, BlendKind.FILLET))
-        assertNull(refusalOf(ok), "the congruent pair is a body")
-        assertTrue(volumeOf(ok, "the congruent inside corner") > 0.0)
     }
 
     // ---- 8. the entry is a row like any other ----
