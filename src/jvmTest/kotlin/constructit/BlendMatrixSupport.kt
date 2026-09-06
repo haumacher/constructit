@@ -19,6 +19,7 @@ import constructit.geom.Vec3
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.acos
+import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -94,6 +95,49 @@ object Figures {
         size: Double,
         kind: BlendKind,
     ): Double = (moment(size, kind) / 2.0) / wedgeArea(size, kind)
+
+    /**
+     * **How far the section's own centroid stands from the crease along one leg, at any dihedral** — the
+     * general form of [centroidReach], which is stated at a right angle only (OP-31, slice 5b).
+     *
+     * Derived rather than tabulated. The wedge is the **kite** between the two tangencies and the section's
+     * own centre, less the circular **sector** the arc cuts off it, and both have a centroid on the wedge's
+     * own bisector: the kite's at `(|OT|cos(θ/2) + |OC|)/3` from the corner, the sector's at
+     * `|OC| − (2r/3)·sin α / α` with `α = (π − θ)/2` its own half-angle. The difference of the two moments
+     * over the difference of the two areas is the wedge's, and its component along a leg is
+     * `ρ·cos(θ/2)`. A **bevel** is the kite alone — a triangle whose centroid is a third of the way out.
+     */
+    fun centroidReachAt(
+        size: Double,
+        kind: BlendKind,
+        theta: Double,
+    ): Double {
+        val half = theta / 2.0
+        // a bevel is the triangle between the two setbacks: its centroid is a third of the way out along
+        // each of them, so along one leg it stands `c(1 + cos θ)/3`
+        if (kind == BlendKind.CHAMFER) return size * (1.0 + cos(theta)) / 3.0
+        val setback = size / tan(half)
+        val reach = size / sin(half)
+        val kite = size * setback
+        val kiteX = (setback * cos(half) + reach) / 3.0
+        val alpha = (PI - theta) / 2.0
+        val sector = size * size * alpha
+        val sectorX = reach - (2.0 * size / 3.0) * sin(alpha) / alpha
+        val area = kite - sector
+        return (kite * kiteX - sector * sectorX) / area * cos(half)
+    }
+
+    /**
+     * **A revolution**: what a section revolved through [phi] about an axis its centroid stands [rho] from
+     * takes out — Pappus, and the exact figure of a rounding along a **circular** crease (OP-31, slice 5b).
+     */
+    fun revolutionTakes(
+        size: Double,
+        kind: BlendKind,
+        theta: Double,
+        phi: Double,
+        rho: Double,
+    ): Double = wedgeArea(size, kind, theta) * phi * rho
 
     /**
      * **A crossing**: what two congruent bands meeting at interior angle [rad] take off their own sum, since

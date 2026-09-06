@@ -193,8 +193,10 @@ class BlendFeatureTest {
         val dressed = Evaluator().solid(rounded).feature
         val edges = assertNotNull(Section3.edges(dressed).first)
 
-        assertEquals(baseEdges.size + 2, edges.size, "two tangent rails appended, nothing removed")
-        assertEquals(baseEdges.map { it.name }, edges.dropLast(2).map { it.name }, "no base edge renumbered")
+        // two tangent rails and the entry's own two free-end notch slots — one block per entry since
+        // OP-31's slice 5b, whose count is a function of the entry alone so that no address ever re-packs
+        assertEquals(baseEdges.size + 4, edges.size, "two tangent rails and two notch slots appended, nothing removed")
+        assertEquals(baseEdges.map { it.name }, edges.dropLast(4).map { it.name }, "no base edge renumbered")
         val gone = assertNotNull(edges[i].reason, "the blended edge is flagged rather than dropped")
         assertTrue("rounded away" in gone && "rounded band along edge #${i + 1}" in gone, "$gone")
         assertEquals(EdgeName.BlendRail(i, 0), edges[baseEdges.size].name)
@@ -269,7 +271,10 @@ class BlendFeatureTest {
         val consumed = dressed.corners[i]
         assertNull(consumed.at, "the rounded-away edge is not a corner of this body")
         assertTrue("rounded away" in assertNotNull(consumed.reason), "${consumed.reason!!}")
-        val rails = dressed.corners.takeLast(2).mapNotNull { it.at }
+        // the two rails, by name: since OP-31's slice 5b the list also ends with the band's own free-end
+        // notch curves, which are creases of this body too and no rails
+        val es = assertNotNull(Section3.edges(Evaluator().solid(bevelled).feature).first, "the dressed body names its edges")
+        val rails = es.indices.filter { es[it].name is EdgeName.BlendRail }.mapNotNull { dressed.corners[it].at }
         assertEquals(2, rails.size, "both tangent rails cross the plane")
         assertTrue(rails.any { (it - Vec2(4.0, 20.0)).length() <= 1e-9 } && rails.any { (it - Vec2(0.0, 16.0)).length() <= 1e-9 }, "$rails")
     }
@@ -422,7 +427,10 @@ class BlendFeatureTest {
         val edges2 = assertNotNull(Section3.edges(f2).first)
         assertEquals(faces1.size + 1, faces2.size, "one more band")
         assertEquals(faces1.map { it.name }, faces2.dropLast(1).map { it.name }, "and every index of the *dressed* list survives")
-        assertEquals(edges1.size + 2, edges2.size, "two more rails")
+        // two more rails — and, since OP-31's slice 5b, the two **notch curves** the band's free ends leave
+        // in the side faces their caps stand in, which are creases of this body and addresses of their own
+        assertEquals(edges1.size + 4, edges2.size, "two more rails and the band's two free-end notches")
+        assertEquals(2, edges2.count { it.name is EdgeName.BlendNotch && it !in edges1 }, "…the two notches")
         assertNotNull(edges2[j].reason, "the second blended edge is flagged in its turn")
         assertEquals(2, edges2.count { it.reason != null }, "both rounded-away edges are flagged, and only those")
 

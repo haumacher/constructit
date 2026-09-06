@@ -104,6 +104,31 @@ sealed interface FaceName {
     }
 
     /**
+     * **The flat end of a band that stops in mid-air** (OP-31, slice 5b) — the face a free end leaves where
+     * its cap stands in *no* face of the body.
+     *
+     * Session 81 answered the ordinary free end: a band along a straight edge closes on a plane square to
+     * that edge, and where the body already has a face in that plane the cap is coincident with it and the
+     * drawing states a **notch** of that face (`Blend3.Notch`) rather than a face of its own. Where it does
+     * not — a rounding along a **curved** crease, whose end plane is a meridian and no face of anything, and
+     * session 81's own cut (2) — the body genuinely gains a face, and until this slice the face list simply
+     * did not have it: *"a dressed part's faces are whole exactly when its base's are"* ([facesAreWholeBoundary])
+     * was false there, and a level section through the cap could not close its loop.
+     *
+     * It is a **plane** and its outline is the rounding's own wedge, exactly — the cap is the section, said
+     * where the section stands. [atStart] is which of the crease's two ends it closes.
+     *
+     * Its own boundary curves are deliberately **not** in the edge list: they are the wedge's section and
+     * its two legs, each of them already a curve of the band or of a face the band runs between, and a
+     * rounding of them is not offered (the same rule the bevelled vertex's apex lines live under — see the
+     * OP-31 note).
+     */
+    data class BlendCap(val edge: Int, val atStart: Boolean) : FaceName {
+        override val label: Msg
+            get() = Msgs.nameSolidBlendCap(edge = edge + 1, which = if (atStart) "start" else "far")
+    }
+
+    /**
      * The **inner twin** of one face of a shelled body (session 75): the cavity's own face standing behind
      * face [face] of the base, at the wall's thickness.
      *
@@ -275,6 +300,25 @@ sealed interface EdgeName {
      */
     data class BoolCrease(val a: Int, val b: Int, val run: Int = 0) : EdgeName {
         override val label: Msg get() = Msgs.nameSolidBoolCrease(a = a + 1, b = b + 1)
+    }
+
+    /**
+     * The **notch curve of a band's free end** (OP-31, slice 5b): where the band along base edge [edge]
+     * meets the third face its flat cap stands in — the face at the end of the edge, which is neither of
+     * the two the band runs between.
+     *
+     * It was in the drawing before this slice and only as a *boundary piece* of that face (`Blend3.Notch`,
+     * session 81), so *"round off the end of a rounded edge"* — an ordinary thing to want — had no address.
+     * It is a crease like any other: the band is a cylinder about the edge's own offset axis, the end face
+     * is the plane **square** to that axis, and the curve between them is a circular arc about it. So the
+     * rounding of it is that arc's own revolution ([Blend3.revolvedBand]), exact.
+     *
+     * [atStart] says which of the edge's two ends it stands at, and [piece] numbers the pieces of the
+     * band's own section — one notch curve per band face, exactly as [BlendRail] is one per side.
+     */
+    data class BlendNotch(val edge: Int, val atStart: Boolean, val piece: Int) : EdgeName {
+        override val label: Msg
+            get() = Msgs.nameSolidBlendNotch(piece = piece + 1, edge = edge + 1, which = if (atStart) "start" else "far")
     }
 }
 
@@ -1870,32 +1914,49 @@ object Section3 {
         val section = structuralSection(feature, fs, plane)
         if (section.isEmpty) return null to Msgs.refusalSectionPlaneDoesNotCutThis()
         val loops =
-            chainLoops(section.drawn) ?: return null to
+            chainLoops(section.pieces) ?: return null to
                 Msgs.refusalSectionPlaneSectionThisSolidDoes()
         return nest(loops) to null
     }
 
     /** [pieces] chained end to end into closed loops, or null when one of them does not close. */
-    private fun chainLoops(pieces: List<ProfileElement>): List<Loop>? {
-        val left = pieces.filter { (GeomMath.endOf(it) - GeomMath.startOf(it)).length() > Geom3.WELD_TOL }.toMutableList()
+    private fun chainLoops(pieces: List<DrawnPiece>): List<Loop>? {
+        val left = pieces.filter { (GeomMath.endOf(it.piece) - GeomMath.startOf(it.piece)).length() > Geom3.WELD_TOL }.toMutableList()
         val out = ArrayList<Loop>()
         while (left.isNotEmpty()) {
-            val run = arrayListOf(left.removeAt(0))
-            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > CHAIN_TOL) {
+            var tail = left.removeAt(0)
+            val run = arrayListOf(tail.piece)
+            val head = tail
+            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > tolBetween(head, tail)) {
                 val end = GeomMath.endOf(run.last())
+
+                fun reach(d: DrawnPiece): Double = min((GeomMath.startOf(d.piece) - end).length(), (GeomMath.endOf(d.piece) - end).length())
+                // **a chord meets an exact curve within a chord's own tolerance** (OP-15, OP-31 slice 5b).
+                // The two ends of a *sampled* run stand where a tessellated profile put them, so they are
+                // within [GeomMath.TESS_TOL_MM] of the truth and no nearer — a torus met by a plane
+                // parallel to its own axis, chained to the flat end of the very band it belongs to, missed
+                // by five microns and the whole section refused. An **exact** neighbour is still preferred
+                // wherever there is one, so nothing that chained before chains differently now.
                 val at =
-                    left.indexOfFirst {
-                        (GeomMath.startOf(it) - end).length() <= CHAIN_TOL || (GeomMath.endOf(it) - end).length() <= CHAIN_TOL
-                    }
-                if (at < 0) return null
+                    left.indexOfFirst { reach(it) <= CHAIN_TOL }
+                        .takeIf { it >= 0 }
+                        ?: left.indexOfFirst { reach(it) <= tolBetween(tail, it) }
+                if (at == null || at < 0) return null
                 val piece = left.removeAt(at)
-                run.add(if ((GeomMath.startOf(piece) - end).length() <= CHAIN_TOL) piece else GeomMath.reverse(piece))
+                tail = piece
+                run.add(if ((GeomMath.startOf(piece.piece) - end).length() <= (GeomMath.endOf(piece.piece) - end).length()) piece.piece else GeomMath.reverse(piece.piece))
             }
             if (run.size < 2) return null
             out.add(Loop(run))
         }
         return out.ifEmpty { null }
     }
+
+    /** How near two pieces must come to be one chain: exact against exact is exact, a chord is a chord. */
+    private fun tolBetween(
+        a: DrawnPiece,
+        b: DrawnPiece,
+    ): Double = if (a.approximated || b.approximated) GeomMath.TESS_TOL_MM else CHAIN_TOL
 
     /**
      * The loops sorted into areas: the ones no other contains are outers, the rest are their holes — and

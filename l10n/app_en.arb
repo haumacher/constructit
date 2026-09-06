@@ -19130,7 +19130,7 @@
       }
     }
   },
-  "refusal.section.boolFaceNotPlane": "this solid is a general boolean, and {name} of one of the two solids it was made from is not a plane \u2014 only bodies whose every face is a plane carry their faces through a general boolean so far, so this one's faces stay emergent and cannot be named",
+  "refusal.section.boolFaceNotPlane": "this solid is a general boolean, and {name} of one of the two solids it was made from is not a plane — only bodies whose every face is a plane carry their faces through a general boolean so far, so this one's faces stay emergent and cannot be named",
   "@refusal.section.boolFaceNotPlane": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean (a union, a difference or an intersection computed by the mesh engine) cannot name its own faces: one of the faces of one of the two solids that went into it is curved, and curved faces are not yet carried through. {name} is that face's own name and is itself a translated message.",
     "placeholders": {
@@ -19143,7 +19143,7 @@
   "@refusal.section.boolSurfaceOffCarrier": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean cannot name its own faces: a part of the result surface could not be matched to any face of either operand, so tracing it back would be a guess."
   },
-  "refusal.section.boolCornerNotDetermined": "this solid is a general boolean with a face corner that the planes meeting there do not determine, so its outline cannot be stated exactly \u2014 its faces are left unnamed rather than approximated",
+  "refusal.section.boolCornerNotDetermined": "this solid is a general boolean with a face corner that the planes meeting there do not determine, so its outline cannot be stated exactly — its faces are left unnamed rather than approximated",
   "@refusal.section.boolCornerNotDetermined": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean cannot name its own faces: one corner of one result face is not fixed by the planes that meet there, so an exact outline cannot be written down and the program refuses rather than rounding it off."
   },
@@ -19243,6 +19243,72 @@
       },
       "name2": {
         "type": "message"
+      }
+    }
+  },
+  "name.solid.blendNotch": "free-end notch #{piece} of the rounded band along edge #{edge}, {which, select, start{where the edge begins} other{where the edge ends}}",
+  "@name.solid.blendNotch": {
+    "description": "The name ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — gives one face or one edge of a solid. It is not an identifier but a description the user reads: it appears in the side panel, in the status line and inside refusal sentences (\"<name> is not a plane\"), so it has to read as a noun phrase that can stand inside a sentence. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "piece": {
+        "type": "int"
+      },
+      "edge": {
+        "type": "int"
+      },
+      "which": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.blend.freeEndNowCorner": "{name} is no crease of this body any more — the band's free end there is a corner now, and the corner's own curves are the edges to build on.",
+  "@refusal.blend.freeEndNowCorner": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.splicedStripNotStated": "the strip a rounding of {name2} takes off {name} cannot be stated: that curve is spliced into the face at its corner rather than being one of its boundary pieces, and its offset leaves this drawing's vocabulary. Round the band's own rails instead, or use a smaller size.",
+  "@refusal.blend.splicedStripNotStated": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      }
+    }
+  },
+  "name.solid.blendCap": "the flat end of the rounded band along edge #{edge}, {which, select, start{where the edge begins} other{where the edge ends}}",
+  "@name.solid.blendCap": {
+    "description": "The name ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — gives one face or one edge of a solid. It is not an identifier but a description the user reads: it appears in the side panel, in the status line and inside refusal sentences (\"<name> is not a plane\"), so it has to read as a noun phrase that can stand inside a sentence. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "edge": {
+        "type": "int"
+      },
+      "which": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.blend.noNotchAtThisEnd": "{name} is no crease of this body — the band's free end there leaves no notch in a face: a fill's cap closes a void rather than cutting one, and a cap that stands in no flat face of the body has none to cut.",
+  "@refusal.blend.noNotchAtThisEnd": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "note.oneDressedBody.slotsRegrouped": "{name}'s rails, free-end notches and corner curves are numbered one block per rounding now, so that adding a rounding to this dressing or taking one off can never make a stored address name a different curve. This file's addresses were written under the older numbering and have been mapped to it.",
+  "@note.oneDressedBody.slotsRegrouped": {
+    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
       }
     }
   }

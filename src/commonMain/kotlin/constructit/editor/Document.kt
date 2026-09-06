@@ -14416,7 +14416,7 @@ class Document {
         // how the click named its target, so the note can say it (see [BlendPick]); false on a replay, which
         // scores nothing at all
         var inView = false
-        val address =
+        val picked =
             signs.getOrNull(0) ?: run {
                 val pick = blendTarget(body, whole, at, view, ev)
                 inView = pick.inView
@@ -14424,6 +14424,20 @@ class Document {
                     noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = pick.why ?: Msg.EMPTY)
                     return null
                 }
+            }
+        // **a slot moved when the appended list became one block per entry** (OP-31, slice 5b;
+        // [DocumentFormat.GROUPED_SLOT_VERSION]). A dressed body's rails, notch curves and corner curves used
+        // to be three runs, so adding a rounding to the dressing or taking one off re-packed them and a
+        // stored address named a different curve. They are one block per entry now, which moves the indices a
+        // file written before this version holds: the load maps them by **name**, once, and says so (OP-18).
+        val address =
+            if (signs.isNotEmpty() && version != null && version < DocumentFormat.GROUPED_SLOT_VERSION) {
+                val moved =
+                    if (whole) Blend3.faceAddressBefore(body.feature, picked) else Blend3.addressBefore(body.feature, picked)
+                if (moved != picked) noteLoad(Msgs.noteOneDressedBodySlotsRegrouped(name = nameOf(on)))
+                moved
+            } else {
+                picked
             }
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, oneRun(baseEl, ev))
         if (targets == null) {

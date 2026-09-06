@@ -355,6 +355,16 @@ class BlendMatrixTest {
         println("== gesture order: ${36 * 2} cells — $agreed agree in all three routes, none in the residue")
     }
 
+    /**
+     * The **tangent rails** a dressing appended, by name — never *"everything after the base's own edges"*.
+     *
+     * Since OP-31's slice 5b that tail also holds the corner curves and every band's own free-end **notch**
+     * curve, which are creases of the body and addresses of their own; the two classes below are about the
+     * rails and say so.
+     */
+    private fun railsOf(dressed: Body): List<Int> =
+        (L.block.count until dressed.count).filter { dressed.edges[it].name is EdgeName.BlendRail }
+
     // ---- 5. stacked roundings: a rounding on a rail ----
 
     /**
@@ -371,7 +381,7 @@ class BlendMatrixTest {
             val bevel = Rounding(i, BlendKind.CHAMFER, 4.0)
             val (first, whyFirst) = L.run(listOf(bevel), Route.STACKED)
             val dressed = Body(Evaluator().solid(assertNotNull(first, whyFirst).last()))
-            for (rail in L.block.count until dressed.count) {
+            for (rail in railsOf(dressed)) {
                 for (size in listOf(1.0, 4.0)) {
                     val on = Rounding(rail, BlendKind.FILLET, size)
                     val name = "rail(e$i c4 -> e$rail f$size)"
@@ -404,7 +414,7 @@ class BlendMatrixTest {
             val round = Rounding(i, BlendKind.FILLET, 4.0)
             val (first, whyFirst) = L.run(listOf(round), Route.STACKED)
             val dressed = Body(Evaluator().solid(assertNotNull(first, whyFirst).last()))
-            for (rail in L.block.count until dressed.count) {
+            for (rail in railsOf(dressed)) {
                 val name = "rail(e$i f4 -> e$rail f1)"
                 val (stages, why) = L.run(listOf(round, Rounding(rail, BlendKind.FILLET, 1.0)), Route.STACKED)
                 cells++
@@ -435,7 +445,11 @@ class BlendMatrixTest {
         val (stages, why) = L.run(entries, Route.ONE_PASS)
         val dressed = Body(Evaluator().solid(assertNotNull(stages, why).last()))
         // eighteen base edges, two rails per rounding, and the pivot's own three legs of corner rail
-        assertEquals(L.block.count + 6 + 3, dressed.count, "the base's edges, the rails, and the corner's own curves")
+        // eighteen base edges; then one **block per entry** (OP-31, slice 5b): two rails and two free-end
+        // notch slots each, whose counts are a function of the entry alone so that no address re-packs when
+        // a rounding is added to the dressing or taken off it; then the pivot's three legs of corner rail,
+        // which two entries make together and which are therefore listed after every block
+        assertEquals(L.block.count + 3 * (2 + 2) + 3, dressed.count, "the base's edges, the three blocks, and the corner's own curves")
         val cornerRails = dressed.edges.indices.filter { dressed.edges[it].name is EdgeName.BlendCornerRail }
         assertEquals(3, cornerRails.size, "a bevelled pivot walks turn, slide, turn: $cornerRails")
 
@@ -460,6 +474,143 @@ class BlendMatrixTest {
         val bracket = assertNotNull(predict(dressed, listOf(on)), "the band over the rail's own run")
         assertTrue(v in bracket, "the fillet on rail ${rails.first()} built $v, outside $bracket")
         println("script2 class | built | $v | $bracket over the crease's own ${L.block.length(13) - c} mm")
+    }
+
+    // ---- 5c. the corner curves: every curve a corner puts on the body, rounded ----
+
+    /**
+     * **Every corner curve the matrix's own bodies list, rounded at 1 mm** (OP-31, slice 5b).
+     *
+     * Item 3 put the curves a corner adds into the edge list — the **mitre** across a crossing, the walk's
+     * **corner rail** along it — and slice 5b added the third, the **notch** a band's free end leaves in the
+     * face its cap stands in. All three are addresses a user can pick, so all three enter the matrix under
+     * its own rule: built inside a bracket the algebra derives, or refused by name. The third state, built
+     * and silently wrong, fails the build here exactly as it does everywhere else.
+     *
+     * *The figures, and each is structural rather than measured* (OP-21):
+     *
+     * - a **notch** curve stands at a right angle by construction — the cap plane is square to the crease and
+     *   the band's own surface runs along it — so `θ = π/2` whatever the band is;
+     * - a **corner rail** of a bevel stands in `3π/4`: the walk carries the bevel's own 45° slope round the
+     *   turn, and a bevel halves the right angle the block's creases are (a *round*'s corner rail is a
+     *   tangent hand-over and refuses, which is the answer rather than a gap);
+     * - a **mitre** lies between two faces the drawing states, so its dihedral is read off them.
+     *
+     * And the shape decides the figure: a straight run is the band over its own length, an arc is the section
+     * **revolved** — Pappus over the turn, bracketed by containment between the exact section at the nearest
+     * radius it reaches and the chorded one at the farthest.
+     *
+     * *Sampled, and it says so*: the pairs are taken at one size and one kind pairing each (both rounds and
+     * both bevels), the triples likewise, which is every **shape** of corner the L-block has without
+     * enumerating the sizes again — the sizes are the pair classes' own business above.
+     */
+    @Test
+    fun everyCornerCurveOfEveryBuiltPairAndTripleRoundsOrRefusesByName() {
+        var built = 0
+        var refused = 0
+        var cells = 0
+        val size = 1.0
+        val groups = ArrayList<List<Int>>()
+        for ((a, b, _) in L.block.pairs) groups.add(listOf(a, b))
+        for ((_, es) in L.block.vertices) groups.add(es.sorted())
+        for (group in groups) {
+            for (kind in listOf(BlendKind.FILLET, BlendKind.CHAMFER)) {
+                val entries = group.map { Rounding(it, kind, 4.0) }
+                val (stages, _) = L.run(entries, Route.ONE_PASS)
+                val on = stages?.lastOrNull() ?: continue
+                val dressed = Body(Evaluator().solid(on))
+                for (i in dressed.edges.indices) {
+                    val e = dressed.edges[i]
+                    if (e.reason != null) continue
+                    if (e.name !is EdgeName.BlendMitre && e.name !is EdgeName.BlendCornerRail && e.name !is EdgeName.BlendNotch) continue
+                    cells++
+                    val what = "curve(${group.joinToString("+") { "e$it" }} ${tag(kind)} -> e$i ${e.name::class.simpleName})"
+                    val (out, why) = stackedOn(on, i, size)
+                    if (out == null) {
+                        assertTrue(namesSomething(why ?: ""), "$what refused without naming anything: '$why'")
+                        refused++
+                        continue
+                    }
+                    val v = measure(out, what)
+                    val bracket = assertNotNull(cornerCurveBracket(dressed, i, size), "$what has no bracket")
+                    assertTrue(v in bracket, "$what built $v, outside its own bracket $bracket")
+                    built++
+                }
+            }
+        }
+        println("== corner curves: $cells cells — $built built inside their own bracket, $refused refused by name")
+        assertEquals(cells, built + refused, "every corner-curve cell is built inside a bracket or refused by name")
+        assertTrue(built > 0 && refused > 0, "both states are exercised: $built built, $refused refused")
+    }
+
+    /** One rounding of [address] standing on the body [on] already is — the chain, not another entry. */
+    private fun stackedOn(
+        on: SolidRef,
+        address: Int,
+        size: Double,
+    ): Pair<SolidRef?, String?> {
+        val body = Evaluator().solid(on)
+        val (choices, why) = Blend3.choicesFor(body, listOf(address), BlendSection(BlendKind.FILLET, size))
+        if (choices == null) return null to (why?.render() ?: "no choice")
+        val ref =
+            L.cx.blendAll(
+                on,
+                L.cx.planeXY(),
+                listOf(Construction.BlendRun(BlendKind.FILLET, L.cx.const(size.mm), null, listOf(address), choices)),
+            )
+        val r = Evaluator().eval(ref.node)
+        if (r is EvalResult.Invalid) return null to r.reason
+        return ref to null
+    }
+
+    /**
+     * The bracket a rounding along corner curve [at] of [dressed] is held to — or null where the algebra
+     * states none, which is a cell the class may not silently pass.
+     */
+    private fun cornerCurveBracket(
+        dressed: Body,
+        at: Int,
+        size: Double,
+    ): Bracket? {
+        val e = dressed.edges[at]
+        val theta =
+            when (e.name) {
+                is EdgeName.BlendNotch -> PI / 2.0
+                is EdgeName.BlendCornerRail -> 3.0 * PI / 4.0
+                is EdgeName.BlendMitre -> dressed.wedgeAngle(at) ?: return null
+                else -> return null
+            }
+        val kind = BlendKind.FILLET
+        val exact = Figures.wedgeArea(size, kind, theta)
+        val chorded = Figures.wedgeAreaByChords(size, kind, theta)
+        val noise = 1e-5 * dressed.volume
+        val el = Blend3.edgePath(e).first?.elements?.singleOrNull() ?: return null
+        val (lo, hi) =
+            when (el) {
+                is Curve3Element.Seg3 -> {
+                    val len = (el.end - el.start).length()
+                    if (len <= 1e-9) return null
+                    exact * len to chorded * len + Figures.chordSurplus(size, len)
+                }
+                is Curve3Element.Arc3 -> {
+                    val phi = abs(el.sweepAngle)
+                    if (phi <= 1e-9 || el.radius <= 1e-9) return null
+                    // the section reaches `setback` off the crease either way, so containment brackets the
+                    // centroid's own radius between the two — never fitted, never widened to admit a body
+                    val setback = size / tan(theta / 2.0)
+                    val near = max(1e-9, el.radius - setback)
+                    exact * phi * near to chorded * phi * (el.radius + setback)
+                }
+                else -> return null
+            }
+        // …and which **way** it moves the body is the crease's own sign, scored the way a gesture scores it:
+        // a corner curve at a reflex corner of the plan is concave, and a rounding of it is a **fill** that
+        // adds its wedge rather than taking it (the free end of a band that stands proud of the face it ends
+        // in, which is every notch at an inside corner of the block's own plan)
+        val sign = if (dressed.convex(at) == false) -1.0 else 1.0
+        val a = dressed.volume - sign * hi
+        val b = dressed.volume - sign * lo
+        return Bracket(kotlin.math.min(a, b) - noise, kotlin.math.max(a, b) + noise)
     }
 
     // ---- 5b. the face list: a level section through every corner the matrix builds ----

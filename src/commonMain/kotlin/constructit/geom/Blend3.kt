@@ -282,7 +282,14 @@ object Blend3 {
         // top and bottom leaves every side face carrying two consumed edges and two rails, and the gesture
         // refused in the consumed edge's own words rather than rounding the two uprights that are still
         // sharp — which is exactly the detour GitHub #32's reporter had to take.
-        val live = hits.filter { edges[it].reason == null && !smoothRail(feature, it) }
+        // …and **not a free end's own notch curve** (OP-31, slice 5b), though it is as much a crease of this
+        // face as any other. A whole-face gesture records one scored choice **per edge of the run**
+        // (`signs=`), so the length of that list is part of what the address means — and how many notch
+        // curves a face carries is a function of how many free ends the bands *below* it happen to have,
+        // which every later gesture may move. Sweeping them up would make a stored face address mean a
+        // different set of edges on a later build, which is the one thing OP-18 does not allow. The curve
+        // has its own address since this slice: it is rounded by picking it.
+        val live = hits.filter { edges[it].reason == null && !smoothRail(feature, it) && edges[it].name !is EdgeName.BlendNotch }
         if (live.isEmpty()) {
             return null to
                 Msgs.refusalBlendEveryEdgeHasAlreadyBeen(name = face.label)
@@ -311,13 +318,13 @@ object Blend3 {
         if (feature !is Feature3.Blend) return false
         val below = Section3.edges(feature.base).first ?: return false
         if (index < below.size) return smoothRail(feature.base, index)
-        // …and a **corner curve** is no rail at all: it stands after every rail (OP-31 item 3), and whether
-        // it is a crease is said on the entry itself ([SolidEdge.reason]) rather than here
-        if (index >= below.size + 2 * feature.targets.size) return false
-        // …of **that rail's own rounding**, since one pass may run several sections (OP-30's next step): the
-        // rails append two per target in the feature's order, so the target is the pair's index
-        val k = (index - below.size) / 2
-        if (feature.isAbsent(k)) return false
+        // **read off the entry's own name, never off arithmetic over the block** (OP-31, slice 5b). The
+        // appended list is grouped per entry now ([entryOwning]), so *"two per target, in the feature's
+        // order"* is no longer where a rail stands; what a slot is, is what it says it is. A **corner
+        // curve** or a **notch** is no rail at all, and whether *it* is a crease is said on the entry
+        // itself ([SolidEdge.reason]) rather than here.
+        val name = Section3.edges(feature).first?.getOrNull(index)?.name as? EdgeName.BlendRail ?: return false
+        val k = feature.targets.indices.firstOrNull { feature.targets[it] == name.edge && !feature.isAbsent(it) } ?: return false
         return feature.sections.getOrNull(k)?.kind == BlendKind.FILLET
     }
 
@@ -1583,9 +1590,18 @@ object Blend3 {
         fun sharedChain(
             pieces: List<Piece>,
             tEnd: Double,
-        ): List<ProfileElement>? {
+        ): List<ProfileElement>? = sharedChainByLeg(pieces, tEnd)?.map { it.second }
+
+        /**
+         * The same curve, **leg by leg** — which is what a rounding of one of the walk's own rails needs: a
+         * strip is taken off the tangency of the leg that carries it and off no other (OP-31, slice 5b).
+         */
+        fun sharedChainByLeg(
+            pieces: List<Piece>,
+            tEnd: Double,
+        ): List<Pair<Int, ProfileElement>>? {
             val plane = walkFace.plane ?: return null
-            val out = ArrayList<ProfileElement>()
+            val out = ArrayList<Pair<Int, ProfileElement>>()
             for (k in walkLegs.indices) {
                 val lo = k.toDouble()
                 val hi = min((k + 1).toDouble(), tEnd)
@@ -1595,13 +1611,13 @@ object Blend3 {
                 val leg = walkLegs[k]
                 val pivot = leg.pivot
                 if (pivot == null || abs(leg.turn) <= TANGENT_TOL) {
-                    if ((p1 - p0).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(p0, p1)))
+                    if ((p1 - p0).length() > Geom3.WELD_TOL) out.add(k to ProfileElement.Seg(Segment(p0, p1)))
                     continue
                 }
                 val c = plane.toLocal(pivot)
                 val r = (p0 - c).length()
                 if (r <= Geom3.WELD_TOL || (p1 - p0).length() <= Geom3.WELD_TOL) continue
-                out.add(ProfileElement.ArcE(Arc(c, r, (p0 - c).angle(), (p1 - c).angle(), leg.turn >= 0.0)))
+                out.add(k to ProfileElement.ArcE(Arc(c, r, (p0 - c).angle(), (p1 - c).angle(), leg.turn >= 0.0)))
             }
             return out.ifEmpty { null }
         }
@@ -4523,21 +4539,27 @@ object Blend3 {
         val at0 = arc.at(0.0)
         val outward = (at0 - arc.center).normalized()
         if (outward.length() <= Vec3.EPS) return null
-        // the section's own frame at the run's start: x along the crease's upright, y along the radius out of
-        // the axis — the very placement [Frame3.place] makes there, with the *exact* radial instead of a chord's
-        val plane = Plane3(at0, up, outward)
+        // **which way the crease's own second axis points, and it is not always outward** (OP-31, slice 5b).
+        // The section is stated in the crease's `(e1, e2)`, and `e2 = t × e1` at every station — which at
+        // the arc's start is `sign(sweep)·(e1·axis)` times the radial. Where that sign is negative the
+        // radial is the *opposite* of the frame the section was read in, and placing it on the radial
+        // mirrors the wedge: the near end's notch of a rounded rim took 0.0135 mm³ where the far end's took
+        // 1.3785, the tool having been turned inside out about the crease.
+        val sigma = (if (arc.sweepAngle >= 0.0) 1.0 else -1.0) * (if (along >= 0.0) 1.0 else -1.0)
+        // the section's own frame at the run's start: x along the crease's upright, y along the crease's own
+        // second axis — the very placement [Frame3.place] makes there, with the *exact* radial and not a chord's
+        val plane = Plane3(at0, up, outward * sigma)
         // …and the axis in that plane's coordinates: the line through the centre, along the upright
-        val axisOrigin = Vec2(0.0, -arc.radius)
+        val axisOrigin = Vec2(0.0, -sigma * arc.radius)
         val axisDir = Vec2(1.0, 0.0)
-        // which way the turn runs: the plane's own normal is `up × outward`, the tangent at the start for a
-        // right-handed arc, so a positive sweep about that normal is the arc's own direction and the sign of
-        // the arc's sweep against the upright is the whole of the correspondence
-        val sweep = if (along >= 0.0) arc.sweepAngle else -arc.sweepAngle
+        // which way the turn runs: in that frame the plane's own normal is the crease's own tangent at the
+        // start, so the turn is the arc's own sweep read positively and the two signs above carry the rest
+        val sweep = abs(arc.sweepAngle)
         // …and the one thing a revolve cannot do, said in the words the sweep says it in: a section that
         // reaches **past** the axis is a ball wider than the rim it runs along, and revolving it would fold
         // the shell through itself. Reaching *to* the axis is the degenerate case above and is legal — a
         // profile touching the axis is what a turned part's pole is made of ([Geom3.revolve]).
-        val into = -piece.grown.minOf { it.y }
+        val into = if (sigma > 0.0) -piece.grown.minOf { it.y } else piece.grown.maxOf { it.y }
         if (into > arc.radius + Geom3.WELD_TOL) {
             return null to
                 Msgs.refusalBlendProfileReachBendMmIs(mm = Frames3.mm(into), mm2 = Frames3.mm(arc.radius), mm3 = Frames3.mm(0.0))
@@ -4821,6 +4843,11 @@ object Blend3 {
                 out.add(patch)
                 continue
             }
+            val blocked = mine.firstNotNullOfOrNull { it.reason }
+            if (blocked != null) {
+                out.add(patch.copy(reason = blocked))
+                continue
+            }
             val (outline, why) = notchedOutline(patch, mine)
             // **and the face says the boundary is fitted, where one of its notches was** (OP-31, Tier B):
             // the widest tolerance any piece spliced into it was fitted to, and nothing at all where every
@@ -4988,25 +5015,133 @@ object Blend3 {
                 },
             )
         }
-        val baseEdges = Section3.edges(f.base).first
+        val baseEdges = Section3.edges(f.base).first ?: emptyList()
+        // **the appended faces, grouped by the entry that owns them** — the very rule the edge list states
+        // once at [entryOwning], read for faces: this entry's bands, its flat-end slots, and then the corner
+        // patches whose latest participating entry it is. So adding a rounding only appends, and removing
+        // one leaves every slot of its own block standing with a reason.
+        val sharedFaces = HashMap<Int, MutableList<FacePatch>>()
+        for ((who, p) in cornerFacesOf(f)) sharedFaces.getOrPut(who) { ArrayList() }.add(p)
         for ((k, d) in dressings.withIndex()) {
             // **a removed rounding keeps its band slots** — a reason and no surface, exactly what a consumed
             // edge already emits, so the bands of every entry after it keep their own numbers (OP-30)
             if (d == null) {
-                val why = tombstoneWords(f, k, baseEdges?.getOrNull(f.targets[k]))
+                val why = tombstoneWords(f, k, baseEdges.getOrNull(f.targets[k]))
                 for (piece in 0 until f.bandsAt(k)) out.add(FacePatch(FaceName.BlendBand(f.targets[k], piece), null, emptyList(), why))
+                for (slot in 0 until capSlotsAt(f, baseEdges, k)) {
+                    out.add(FacePatch(FaceName.BlendCap(f.targets[k], slot == 0), null, emptyList(), why))
+                }
                 continue
             }
             // …each of them **bounded by the corners at its ends** (OP-31, item 3b) before the level above
             // trims its own strips off it, so the two compose: this level says how far the band runs, the
             // next says what a rounding of its rail took off it.
             out.addAll(bandPatchesOf(d).map { bandToItsCorners(f, it) })
+            out.addAll(capFaces(f, baseEdges, k, d))
         }
-        // …and the corners this blend's own bands make, **appended last** ([FaceName.BlendCorner]): the ball
-        // at a convex vertex and the surface its pivot sweeps at an inside one are new surfaces, and a
-        // crossing and a bevelled vertex are not
-        for (patch in cornerFacesOf(f)) out.add(patch)
+        for (k in dressings.indices) sharedFaces[k]?.let { out.addAll(it) }
         return out to null
+    }
+
+    /**
+     * **The flat end of every band of this level that stops in mid-air** (OP-31, slice 5b).
+     *
+     * A free end whose cap stands **in a face of the body** is that face's own notch and no face of its own
+     * (session 81) — the cap is coincident with it and states nothing new. A free end whose cap stands in a
+     * plane the body has no face in *is* a new face, and the drawing had none: a rounding along a **curved**
+     * crease ends on a meridian plane, which is a face of nothing, and session 81's own cut (2) is the same
+     * hole one shape over. Without it [Section3.facesAreWholeBoundary]'s claim about a dressed part is
+     * false and a level section through the cap cannot close (`BlendCurvedCreaseTest`).
+     *
+     * The patch is exact and needs no derivation at all: the cap **is** the wedge, standing in the plane
+     * square to the crease at that end, so its outline is the section's own boundary carried through one
+     * rigid map. Its normal points back along the band, which at a free end is out of the material.
+     *
+     * **No cap is ever superseded**, and that is a fact about the catalogue rather than an omission: every
+     * corner it builds is between two **straight** creases ([cornersOf]'s own first precondition), so an end
+     * a cap closes can never be claimed by one and the tombstone rule a corner *patch* lives under
+     * ([cornerSuperseded]) has nothing to do here. The day a corner is built on a curved crease is the day
+     * this needs the same treatment.
+     */
+    private fun capFaces(
+        f: Feature3.Blend,
+        baseEdges: List<SolidEdge>,
+        k: Int,
+        d: Dressing,
+    ): List<FacePatch> {
+        val slots = capSlotsAt(f, baseEdges, k)
+        if (slots == 0) return emptyList()
+        val pieces = piecesOf(f)
+        val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
+        val piece = if (pieces != null && at >= 0) pieces[at] else null
+        val faces = undressedFacesOf(f)
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        if (pieces != null) for (c in cornersOf(pieces).list) claimed.addAll(c.ends)
+        val out = ArrayList<FacePatch>(slots)
+        for (slot in 0 until slots) {
+            val atStart = slot == 0
+            val name = FaceName.BlendCap(d.index, atStart)
+            val made =
+                if (piece == null || faces == null || (at to atStart) in claimed) {
+                    null
+                } else {
+                    capPatchAt(faces, piece, atStart, name)
+                }
+            out.add(made ?: FacePatch(name, null, emptyList(), Msgs.refusalBlendNoNotchAtThisEnd(name = name.label)))
+        }
+        return out
+    }
+
+    /** The cap of one free end, or null where the body already has a face in that plane (the notch owns it). */
+    private fun capPatchAt(
+        faces: List<FacePatch>,
+        piece: Piece,
+        atStart: Boolean,
+        name: FaceName,
+    ): FacePatch? {
+        val (at, away) = endFrameOf(piece, atStart) ?: return null
+        // where the body already has a face in that plane the **notch** owns the end, and a face of its own
+        // there would be a second statement of one surface
+        if (faces.any { it.plane?.let { p -> abs(p.normal.normalized().dot(away)) >= 1.0 - TANGENT_TOL && abs(p.distanceTo(at)) <= ON_BOUNDARY_TOL } == true }) return null
+        return capPatch(piece, atStart, at, away, name)
+    }
+
+    /** Where a piece's crease ends and which way it leaves there — the cap's own point and outward normal. */
+    private fun endFrameOf(
+        piece: Piece,
+        atStart: Boolean,
+    ): Pair<Vec3, Vec3>? {
+        val els = piece.crease.path.elements
+        if (els.isEmpty()) return null
+        val el = if (atStart) els.first() else els.last()
+        val t = Curves3.tangentAt(el, if (atStart) 0.0 else 1.0) ?: return null
+        val at = Frames3.pointAt(el, if (atStart) 0.0 else 1.0)
+        return at to (if (atStart) t * -1.0 else t).normalized()
+    }
+
+    /** The cap itself: the wedge's own boundary, in the plane square to the crease at that end. */
+    private fun capPatch(
+        piece: Piece,
+        atStart: Boolean,
+        at: Vec3,
+        away: Vec3,
+        name: FaceName,
+    ): FacePatch {
+        val e1 = piece.crease.e1
+        val e2 = away.cross(e1)
+        if (e2.length() <= Vec3.EPS) return FacePatch(name, null, emptyList(), Msgs.refusalBlendDoesNotStandSquareIts(name = piece.crease.edge.name.label))
+        // **the frame is stated rather than corrected afterwards.** A cap's own normal points *out of the
+        // material*, and at a free end the material lies beyond the cap while the groove lies behind it —
+        // so the normal runs **back along the band**, which is `−away` either way, and `−(away × e1)` is the
+        // second axis that says so.
+        val v = e2.normalized() * -1.0
+        val plane = Plane3(at, e1, v)
+        // the wedge stands in the crease's `(e1, e2)` at *this* end — the same shape at every station, which
+        // is what [creaseOf] proved before it swept anything — so the far end reads it mirrored, and a
+        // mirrored ring is wound the other way round
+        val ring = piece.wedge.region.outer.elements
+        val mapped = ring.map { GeomMath.transform(it, Affine(1.0, 0.0, 0.0, if (atStart) 1.0 else -1.0, 0.0, 0.0)) }
+        return FacePatch(name, plane, if (atStart) mapped else mapped.reversed().map { GeomMath.reverse(it) }, null)
     }
 
     /**
@@ -5233,16 +5368,17 @@ object Blend3 {
      * gestures ago, and the horn torus it replaces keeps its index in the base's list with a reason
      * ([cornerSuperseded]). Nothing renumbers either way.
      */
-    private fun cornerFacesOf(f: Feature3.Blend): List<FacePatch> {
+    private fun cornerFacesOf(f: Feature3.Blend): List<Pair<Int, FacePatch>> {
         val pieces = piecesOf(f) ?: return emptyList()
         // …counted over the roundings that **stand**, since [piecesOf] lists this level's own pieces first
         // and a tombstone contributes none (OP-30)
         val fresh = f.standing.size
-        val out = ArrayList<FacePatch>()
+        val out = ArrayList<Pair<Int, FacePatch>>()
         for (c in cornersOf(pieces).list) {
             if (c.ends.none { it.first < fresh } && c.extra.none { it < fresh }) continue
             val edges = cornerEdges(pieces, c)
-            out.addAll(c.faces(pieces) { k -> FaceName.BlendCorner(edges, k) })
+            val who = entryOwning(f, c.ends.map { it.first } + c.extra)
+            for (p in c.faces(pieces) { k -> FaceName.BlendCorner(edges, k) }) out.add(who to p)
         }
         return out
     }
@@ -5277,9 +5413,18 @@ object Blend3 {
         val pieces = piecesOf(f)
         val corners = pieces?.let { cornersOf(it).list } ?: emptyList()
         val superseded = supersedings(f)
+        // …and the free ends this level turns into **corners**: a notch curve is the crease between a band
+        // and the flat cap at its free end, and an end a corner claims has no cap and no such crease
+        val cornered = HashSet<Pair<Int, Boolean>>()
+        if (pieces != null) for (c in corners) for ((who, atStart) in c.ends) cornered.add(pieces[who].index to atStart)
         val out = ArrayList<SolidEdge>(baseEdges.size + 2 * dressings.size)
         for ((i, e) in baseEdges.withIndex()) {
             val d = consumed[i]
+            val notch = e.name as? EdgeName.BlendNotch
+            if (d == null && notch != null && e.reason == null && (notch.edge to notch.atStart) in cornered) {
+                out.add(e.copy(reason = Msgs.refusalBlendFreeEndNowCorner(name = e.name.label)))
+                continue
+            }
             // a corner curve the **base** stated whose corner this level re-turned about a fresh upright is
             // no curve of this body any more — it keeps its index and says so, exactly as the corner *face*
             // it bounds does ([cornerSuperseded], OP-17)
@@ -5295,6 +5440,13 @@ object Blend3 {
                 },
             )
         }
+        // **the curves two or more entries make together**, gathered by the entry that owns each — the
+        // latest one that takes part in it ([entryOwning], where the whole ordering rule is stated)
+        val shared = HashMap<Int, MutableList<SolidEdge>>()
+        if (pieces != null) {
+            for ((who, e) in cornerEdgesOf(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
+            for ((who, e) in runInEdges(f, pieces, corners)) shared.getOrPut(who) { ArrayList() }.add(e)
+        }
         for ((k, d) in dressings.withIndex()) {
             // **a removed rounding keeps its two rail slots too**, with the same reason and a degenerate
             // carrier: what a chained rounding addressed is still numbered where it was, and asking for it
@@ -5308,6 +5460,9 @@ object Blend3 {
                 for (side in 0..1) {
                     val face = if (side == 0) e?.between?.a else e?.between?.b
                     out.add(SolidEdge(EdgeName.BlendRail(target, side), EdgeGeom.Straight(at, at), FacePair(face ?: band, band), why))
+                }
+                for (slot in 0 until notchSlotsAt(f, baseEdges, k)) {
+                    out.add(SolidEdge(notchNameAt(f, k, slot), EdgeGeom.Straight(at, at), FacePair(band, band), why))
                 }
                 continue
             }
@@ -5326,10 +5481,248 @@ object Blend3 {
                     ),
                 )
             }
+            out.addAll(notchEdges(f, baseEdges, pieces, corners, k, d))
         }
-        if (pieces != null) out.addAll(cornerEdgesOf(f, pieces, corners))
-        if (pieces != null) out.addAll(runInEdges(f, pieces, corners))
+        // …and **after every entry's own block**, so that no block's size can ever depend on a corner: the
+        // shared curves, in the order of the latest entry that takes part in each
+        for (k in dressings.indices) shared[k]?.let { out.addAll(it) }
         return out to null
+    }
+
+    /**
+     * **A slot's address as a file older than [DocumentFormat.GROUPED_SLOT_VERSION] meant it** — the map a
+     * load runs over a stored `signs=` (OP-18, OP-31 slice 5b).
+     *
+     * The appended list used to be three runs — every entry's two rails, then every corner curve, then
+     * every run-in crease — and is one **block per entry** now ([entryOwning]). That is what stops a stored
+     * address naming a different curve when a rounding is added to the dressing or taken off it, and it
+     * moves the indices such a file already holds. So the old order is reproduced from the very producers
+     * the new one uses, the slot at [old] is found by **name**, and the name is looked up where it stands
+     * now. An address this cannot place is handed back unchanged rather than guessed at (OP-3).
+     */
+    fun addressBefore(
+        feature: Feature3,
+        old: Int,
+    ): Int {
+        val f = feature as? Feature3.Blend ?: return old
+        val edges = Section3.edges(feature).first ?: return old
+        val base = Section3.edges(f.base).first ?: return old
+        if (old < base.size) return old
+        val n = f.targets.size
+        if (old < base.size + 2 * n) {
+            val k = (old - base.size) / 2
+            val side = (old - base.size) % 2
+            val target = f.targets.getOrNull(k) ?: return old
+            return edges.indexOfFirst { it.name == EdgeName.BlendRail(target, side) }.takeIf { it >= 0 } ?: old
+        }
+        val pieces = piecesOf(f) ?: return old
+        val corners = cornersOf(pieces).list
+        val flat = cornerEdgesOf(f, pieces, corners).map { it.second } + runInEdges(f, pieces, corners).map { it.second }
+        val was = flat.getOrNull(old - base.size - 2 * n) ?: return old
+        return edges.indexOfFirst { it.name == was.name }.takeIf { it >= 0 } ?: old
+    }
+
+    /** The same map for a **face** address: the bands were one run and the corner patches came after them. */
+    fun faceAddressBefore(
+        feature: Feature3,
+        old: Int,
+    ): Int {
+        val f = feature as? Feature3.Blend ?: return old
+        val faces = Section3.faces(feature).first ?: return old
+        val base = Section3.faces(f.base).first ?: return old
+        if (old < base.size) return old
+        var j = old - base.size
+        for (k in f.targets.indices) {
+            val bands = bandSlotsAt(f, k)
+            if (j < bands) {
+                return faces.indexOfFirst { it.name == FaceName.BlendBand(f.targets[k], j) }.takeIf { it >= 0 } ?: old
+            }
+            j -= bands
+        }
+        val was = cornerFacesOf(f).map { it.second }.getOrNull(j) ?: return old
+        return faces.indexOfFirst { it.name == was.name }.takeIf { it >= 0 } ?: old
+    }
+
+    /**
+     * **Which entry of this dressing owns a curve two or more of them make** — the ordering rule OP-30's
+     * rail decision states for rails, read for every curve a dressed body appends (OP-31, slice 5b).
+     *
+     * *The rule, once, for the whole list.* A dressed body's edge list is the base's, then **one block per
+     * entry, in the entry's own order** — its two rails and its free-end notch slots — and then, **after
+     * every block**, the curves two or more entries make *together*: the corner curves and the run-in
+     * creases, each in the order of the **latest entry that takes part in it** and, within that, in the
+     * corner's own order. The face list is the same sentence one word over: the base's faces, then per entry
+     * its bands and its flat-end slots, then the corner patches by latest participant.
+     *
+     * *Why the fixed part comes first and the shared part last.* A slot only ever holds still if the number
+     * of slots **before** it does. Two rails is a fact about an entry; so is `2 × bands` notch slots where
+     * that entry's own base edge is a straight run (a curved one has no flat cap standing in a face, so it
+     * states no notch), and so is the mirror of it for the flat-end faces. Every one of those counts survives
+     * a **tombstone**, which records its band count ([Feature3.Blend.bandsAt]) and keeps its target — so a
+     * rounding removed from the dressing keeps every slot of its own block by name, and one **added** only
+     * ever appends after the last block. That is exactly what OP-30 demands of a rail (*"an entry addressing
+     * a rail would then silently round a different edge because some other rounding was deleted"*), owed to
+     * every curve the moment a *step* can hold one of their addresses — which slice 5b's notch curve made
+     * ordinary. Interleaving the shared curves **into** the blocks was tried first and is worse: how many
+     * curves a corner puts on the body is a fact about the corner's own *kind*, so a corner that goes with a
+     * removed entry then shortens its block and every later block re-packs — which is the very defect,
+     * moved one entry along (`DressedBodyTombstoneTest` is the fixture that says so).
+     *
+     * *What is still not held still, and it is one class.* The **shared** curves themselves: a corner made or
+     * unmade by an edit moves the ones listed after it. Closing that needs the count recorded on the feature
+     * at build time, the way [Feature3.Blend.absent] records a tombstone's bands — a stored field and its own
+     * migration. It is named in the OP-31 note and queued rather than half-done here.
+     */
+    private fun entryOwning(
+        f: Feature3.Blend,
+        who: List<Int>,
+    ): Int {
+        val standing = f.standing
+        var best = 0
+        for (p in who) if (p < standing.size) best = max(best, standing[p])
+        return best
+    }
+
+    /** How many free-end notch slots entry [k] owns: two per band, and none where its crease is not one run. */
+    private fun notchSlotsAt(
+        f: Feature3.Blend,
+        baseEdges: List<SolidEdge>,
+        k: Int,
+    ): Int = if (straightCrease(f, baseEdges, k)) 2 * bandSlotsAt(f, k) else 0
+
+    /**
+     * How many **flat end** face slots entry [k] owns: two where its crease is *not* one straight run, and
+     * none where it is (a straight band's cap stands in a face of the body and is that face's own notch).
+     */
+    private fun capSlotsAt(
+        f: Feature3.Blend,
+        baseEdges: List<SolidEdge>,
+        k: Int,
+    ): Int = if (straightCrease(f, baseEdges, k)) 0 else 2
+
+    /**
+     * Whether entry [k]'s own crease is **one straight run** — read off the *base* body, so a tombstone
+     * answers it as readily as a rounding that stands (its target is recorded either way).
+     */
+    private fun straightCrease(
+        f: Feature3.Blend,
+        baseEdges: List<SolidEdge>,
+        k: Int,
+    ): Boolean {
+        val target = f.targets.getOrNull(k) ?: return true
+        val el = baseEdges.getOrNull(target)?.let { edgePath(it).first?.elements?.singleOrNull() }
+        return el is Curve3Element.Seg3
+    }
+
+    /** How many band faces entry [k] owns — its own sections where it stands, its tombstone's record where not. */
+    private fun bandSlotsAt(
+        f: Feature3.Blend,
+        k: Int,
+    ): Int {
+        if (f.isAbsent(k)) return f.bandsAt(k)
+        val sec = f.sections.getOrNull(k) ?: return 1
+        return if (sec.kind == BlendKind.PROFILE) max(1, sec.profile.size) else 1
+    }
+
+    /** The name of notch slot [slot] of entry [k] — end by end, then band by band, so the order is the count's. */
+    private fun notchNameAt(
+        f: Feature3.Blend,
+        k: Int,
+        slot: Int,
+    ): EdgeName.BlendNotch {
+        val bands = max(1, bandSlotsAt(f, k))
+        return EdgeName.BlendNotch(f.targets.getOrElse(k) { 0 }, slot < bands, slot % bands)
+    }
+
+    /**
+     * **The curve a band's free end leaves in the face its cap stands in** (OP-31, slice 5b) — the last of
+     * the four kinds of edge a dressed body has, and the one that made *"round off the end of a rounded
+     * edge"* an ordinary ask with no address.
+     *
+     * Session 81 stated it as a **boundary piece** of that third face and nothing more ([Notch]): the face
+     * outline showed the quarter arc, the level section closed on it, and no entry of the edge list said the
+     * body had a crease there. It has one — the band is a cylinder about the edge's own offset axis and the
+     * end face is the plane **square** to that axis, so the two meet in a circular arc about it — and a
+     * crease this drawing can name is a crease a rounding may be addressed by. Its own rounding is then that
+     * arc's **revolution** ([revolvedBand]), exact, with the [Revolve3] vocabulary naming the torus it makes.
+     *
+     * **Two slots per band, always** ([notchSlotsAt]) — one per end per piece of the entry's own section,
+     * in the entry's own block ([entryOwning]) and never re-packed. A slot with no crease at it says so: an
+     * end a corner claims is no free end, a **fill**'s cap closes a void and cuts nothing out of a face, and
+     * a cap standing in no plane face of the body has no face to notch. That the *count* is a function of
+     * the entry alone is what makes the address survive both edits — a rounding removed from the dressing
+     * keeps its slots by name, and one added never moves another's.
+     *
+     * Only this level's **own** bands emit one, exactly as [cornerEdgesOf] lists only this level's corners:
+     * a band from the chain below already stated its notch curve at the index the base's list gave it. And a
+     * free end a later gesture turns into a **corner** is no free end any more, so the entry the base put
+     * there keeps its index and says so — the same tombstone rule a consumed edge and a re-turned corner
+     * curve both live under.
+     */
+    private fun notchEdges(
+        f: Feature3.Blend,
+        baseEdges: List<SolidEdge>,
+        pieces: List<Piece>?,
+        corners: List<Corner>,
+        k: Int,
+        d: Dressing,
+    ): List<SolidEdge> {
+        val slots = notchSlotsAt(f, baseEdges, k)
+        if (slots == 0) return emptyList()
+        val bands = max(1, bandSlotsAt(f, k))
+        val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
+        val piece = if (pieces != null && at >= 0) pieces[at] else null
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        for (c in corners) claimed.addAll(c.ends)
+        val faces = undressedFacesOf(f)
+        val out = ArrayList<SolidEdge>(slots)
+        for (slot in 0 until slots) {
+            val atStart = slot < bands
+            val j = slot % bands
+            val name = EdgeName.BlendNotch(d.index, atStart, j)
+            val made =
+                if (piece == null || faces == null || (at to atStart) in claimed || !piece.choice.convex) {
+                    null
+                } else {
+                    notchEdgeAt(faces, piece, atStart, j, name)
+                }
+            out.add(
+                made ?: SolidEdge(
+                    name,
+                    EdgeGeom.Straight(d.crease.ref.at, d.crease.ref.at),
+                    FacePair(d.name, d.name),
+                    if ((at to atStart) in claimed) {
+                        Msgs.refusalBlendFreeEndNowCorner(name = name.label)
+                    } else {
+                        Msgs.refusalBlendNoNotchAtThisEnd(name = name.label)
+                    },
+                ),
+            )
+        }
+        return out
+    }
+
+    /** The notch curve of one free end and one piece of the band's own section, or null where there is none. */
+    private fun notchEdgeAt(
+        faces: List<FacePatch>,
+        piece: Piece,
+        atStart: Boolean,
+        j: Int,
+        name: EdgeName.BlendNotch,
+    ): SolidEdge? {
+        val seg = piece.seg ?: return null
+        val at = if (atStart) seg.start else seg.end
+        val away = if (atStart) seg.start - seg.end else seg.end - seg.start
+        if (away.length() <= Geom3.WELD_TOL) return null
+        val (index, map) = notchFrame(faces, piece, at, away.normalized()) ?: return null
+        val face = faces[index]
+        val plane = face.plane ?: return null
+        val sec = piece.wedge.pieces.getOrNull(j) ?: return null
+        return SolidEdge(
+            name,
+            EdgeGeom.OnPlane(plane, GeomMath.transform(sec, map)),
+            FacePair(FaceName.BlendBand(piece.index, j), face.name),
+        )
     }
 
     /**
@@ -5354,15 +5747,16 @@ object Blend3 {
         f: Feature3.Blend,
         pieces: List<Piece>,
         corners: List<Corner>,
-    ): List<SolidEdge> {
+    ): List<Pair<Int, SolidEdge>> {
         val fresh = f.standing.size
-        val out = ArrayList<SolidEdge>()
+        val out = ArrayList<Pair<Int, SolidEdge>>()
         val seen = HashSet<List<Int>>()
         for (at in pieces.indices) {
             for ((atStart, other) in endsRunInto(pieces, at, corners)) {
                 if (at >= fresh && other >= fresh) continue
                 if (!seen.add(listOf(at, other).sorted())) continue
-                out.addAll(runInCrease(pieces, at, other, atStart))
+                val who = entryOwning(f, listOf(at, other))
+                for (e in runInCrease(pieces, at, other, atStart)) out.add(who to e)
             }
         }
         return out
@@ -5453,14 +5847,16 @@ object Blend3 {
     // ---- the corner curves: a dressed body's edge list states what the body has (OP-31, item 3) ----
 
     /**
-     * **The curves a corner puts on the body**, appended after every band's rails and in the corners' own
-     * order — the third and last thing a dressed edge list has to say (OP-31, item 3).
+     * **The curves a corner puts on the body**, each tagged with the entry that owns it (OP-31, item 3, and
+     * its ordering settled by slice 5b).
      *
-     * *Why appended, and not woven in beside the band they belong to.* Every index in this list is an
-     * address a `signs=` in some file already holds (OP-17, OP-18). The base's own edges keep their indices,
-     * the rails keep theirs, and the corner curves go after all of them — so a file written before this
-     * session loads exactly the body it loaded before, and the only thing that ever moves is a corner
-     * *patch*'s address, which is the same exposure OP-30's own note already records.
+     * *Why they come after every entry's own block, and not woven into it.* Every index in this list is an
+     * address a `signs=` in some file already holds (OP-17, OP-18), and a slot only holds still if the
+     * number of slots **before** it does. A corner's own curve count is a fact about the corner's *kind*,
+     * not about the entries, so a block that held one would shrink when the corner went — and every later
+     * block with it. They are therefore listed after all the blocks, in the order of the **latest entry that
+     * takes part in them** ([entryOwning]), which is what keeps every rail and every notch slot where it is
+     * through both edits and leaves exactly one class exposed rather than all of them.
      *
      * Two curves, and they are the two directions of one tube:
      *
@@ -5483,15 +5879,17 @@ object Blend3 {
         f: Feature3.Blend,
         pieces: List<Piece>,
         corners: List<Corner>,
-    ): List<SolidEdge> {
+    ): List<Pair<Int, SolidEdge>> {
         // …only the corners this level makes: the ones under it are already in the base's own list, at the
         // indices they were appended at (the same freshness test [cornerFacesOf] uses, and deliberately so)
         val fresh = f.standing.size
-        val out = ArrayList<SolidEdge>()
+        val made = ArrayList<Pair<Int, SolidEdge>>()
         for (c in corners) {
             if (c.ends.none { it.first < fresh } && c.extra.none { it < fresh }) continue
             val edges = cornerEdges(pieces, c)
             val faceAt = { k: Int -> FaceName.BlendCorner(edges, k) }
+            val who = entryOwning(f, c.ends.map { it.first } + c.extra)
+            val out = ArrayList<SolidEdge>()
             when (c) {
                 is Joint -> out.addAll(jointEdges(pieces, c, edges))
                 is Walk -> {
@@ -5506,8 +5904,9 @@ object Blend3 {
                 // not listed, and a rounding of them is therefore not offered (see the note under OP-31).
                 is Vertex -> Unit
             }
+            for (e in out) made.add(who to e)
         }
-        return out
+        return made
     }
 
     /** The one curve a **crossing** puts on the body: the mitre, one piece per piece of the section. */
@@ -6109,6 +6508,11 @@ object Blend3 {
         // sizes that are not congruent, so the pair lands on no common ring (session 79's cut (2)) — the
         // boolean trims the two against each other, and the drawing has to say where (session 81)
         val met = endsRunInto(pieces, at, corners)
+        // …and where a rounding runs along this band's own **free-end notch** (OP-31, slice 5b), which ends
+        // it as surely as a corner does and is not one: the notch curve is the band's end circle, so the
+        // band that rounds it stands square to this band's run and its tangency *is* the setback along it.
+        val notched = notchSetbacks(pieces, at)
+        val sections = orientedSections(piece)
         return { p ->
             var from = lo?.let { stationOf(piece, it.at(p)) } ?: 0.0
             var to = hi?.let { stationOf(piece, it.at(p)) } ?: len
@@ -6116,8 +6520,42 @@ object Blend3 {
                 val s = runsInto(piece, pieces[other], p, atStart) ?: continue
                 if (atStart) from = max(from, s) else to = min(to, s)
             }
+            for ((where, back) in notched) {
+                val (atStart, k) = where
+                val on = sections.getOrNull(k)
+                if (sections.size > 1 && (on == null || !onSpanOf(on, p))) continue
+                if (atStart) from = max(from, back) else to = min(to, len - back)
+            }
             from to to
         }
+    }
+
+    /**
+     * **What a rounding of this band's own free-end notch takes off its run** — one entry per end and per
+     * piece of its section, and nothing where no such rounding stands (OP-31, slice 5b).
+     *
+     * Structural, never measured (OP-21): the band that rounds a notch names that notch as its crease, so
+     * the pairing is by name, and the width is that band's own tangency on the face it takes the strip off.
+     */
+    private fun notchSetbacks(
+        pieces: List<Piece>,
+        at: Int,
+    ): List<Pair<Pair<Boolean, Int>, Double>> {
+        val edge = pieces[at].index
+        val out = ArrayList<Pair<Pair<Boolean, Int>, Double>>()
+        for (q in pieces) {
+            val n = q.crease.edge.name as? EdgeName.BlendNotch ?: continue
+            if (n.edge != edge) continue
+            val face = FaceName.BlendBand(edge, n.piece)
+            val t =
+                when (face) {
+                    q.crease.face1.name -> q.wedge.t1
+                    q.crease.face2.name -> q.wedge.t2
+                    else -> continue
+                }
+            out.add((n.atStart to n.piece) to t.length())
+        }
+        return out
     }
 
     /**
@@ -6420,6 +6858,12 @@ object Blend3 {
                     Msgs.refusalBlendIsNotPlaneSoStrip(name = patch.name.label)
         val offsets = HashMap<Int, Double>()
         for ((edge, d) in trims) {
+            // **a strip off a curve a corner splices in is taken at the tip, with the splice** (OP-31,
+            // slice 5b). A trim composes down the chain and a notch does not, so the free end's notch arc
+            // and a corner's tangent rail are no pieces of this list at all — they replace a *corner* of it,
+            // once, at the tip ([notchesOf]). Looking for one here found nothing and refused a face that is
+            // perfectly statable; the strip is [insetChain]'s.
+            if (edge.name is EdgeName.BlendNotch || edge.name is EdgeName.BlendCornerRail) continue
             val hits = patch.outline.indices.filter { sameCurve(plane, patch.outline[it], edge) }
             if (hits.size != 1) {
                 return null to
@@ -6538,6 +6982,16 @@ object Blend3 {
          * of the rounding algebra owed and could not add.
          */
         val fitted: Double? = null,
+        /**
+         * Why this correction **cannot be stated**, or null where it can (OP-31, slice 5b).
+         *
+         * The one producer: a rounding that runs **along** a curve this splice puts into the face — the
+         * free end's own notch arc, a corner's rail — takes a strip off that curve, and the strip is taken
+         * here rather than by [correctedOutline] because *a trim composes down the chain and a notch does
+         * not*. Where the inset of a spliced chain has no answer in this vocabulary the face says so and
+         * keeps no boundary that is not there (OP-3, OP-15's honesty line).
+         */
+        val reason: Msg? = null,
     )
 
     /**
@@ -6570,8 +7024,18 @@ object Blend3 {
             // there rather than off the sharp meeting of two setback lines that is not on it.
             val hand = if (c is Pivot) c.capStart(pieces) ?: continue else c.walkLegs.size.toDouble()
             val at = c.walkAt
-            c.sharedChain(pieces, hand)?.let { chain ->
-                spliceInto(faces, trimmed, c.walkFace, at, pieces[c.travelling], chain)?.let { out.add(it) }
+            // **and the strip a rounding of one of this walk's own rails took off the face it runs in**
+            // (OP-31, slice 5b): the rail is spliced into that face at its corner rather than being one of
+            // its boundary pieces, so the strip is taken here, leg by leg, with the splice.
+            val mine = cornerEdges(pieces, c)
+            c.sharedChainByLeg(pieces, hand)?.let { byLeg ->
+                val widths =
+                    byLeg.map { (leg, _) ->
+                        insetWidths(pieces, c.walkFace, 1) { n ->
+                            if (n is EdgeName.BlendCornerRail && n.edges == mine && n.piece == leg) 0 else null
+                        }[0]
+                    }
+                spliceInto(faces, trimmed, c.walkFace, at, pieces[c.travelling], byLeg.map { it.second }, widths = widths)?.let { out.add(it) }
             }
             if (c is Pivot) {
                 c.capChain(pieces, hand)?.let { (chain, tol) ->
@@ -6589,7 +7053,7 @@ object Blend3 {
                 val at = if (atStart) seg.start else seg.end
                 val away = (if (atStart) seg.start - seg.end else seg.end - seg.start)
                 if (away.length() <= Geom3.WELD_TOL) continue
-                out.add(notchAt(faces, piece, at, away.normalized()) ?: continue)
+                out.add(notchAt(faces, piece, at, away.normalized(), atStart, pieces) ?: continue)
             }
         }
         return out
@@ -6609,8 +7073,9 @@ object Blend3 {
         face: FacePatch,
         at: Vec3,
         piece: Piece,
-        chain: List<ProfileElement>,
+        plainChain: List<ProfileElement>,
         fitted: Double? = null,
+        widths: List<Double>? = null,
     ): Notch? {
         val index = faces.indexOfFirst { it.name == face.name }
         if (index < 0) return null
@@ -6618,6 +7083,22 @@ object Blend3 {
         val plane = patch.plane ?: return null
         if (patch.reason != null) return null
         val v = plane.toLocal(at)
+        val chain =
+            if (widths == null || widths.all { it <= Geom3.WELD_TOL }) {
+                plainChain
+            } else {
+                insetChain(plainChain, v, widths)
+                    ?: return Notch(
+                        piece.crease.edge,
+                        piece.sec,
+                        index,
+                        0,
+                        0,
+                        v,
+                        plainChain,
+                        reason = Msgs.refusalBlendSplicedStripNotStated(name = patch.name.label, name2 = piece.crease.edge.name.label),
+                    )
+            }
         val before = patch.outline.indices.filter { (GeomMath.endOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
         val after = patch.outline.indices.filter { (GeomMath.startOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
         if (before.size != 1 || after.size != 1 || before[0] == after[0]) return null
@@ -6641,17 +7122,126 @@ object Blend3 {
     }
 
     /**
-     * The notch one free end takes, or null where this drawing does not state one: the face the cap stands
-     * in has to be a **plane** of the body that is not one of the band's own two, standing square to the
-     * edge with the end point on it, and there has to be exactly one such face — two coplanar candidates is
-     * a body whose end the drawing cannot name, and it keeps what it kept (OP-3).
+     * **A chain a corner or a free end splices into a face, with the strip a rounding of it took**
+     * (OP-31, slice 5b) — the one place such a strip can be taken, and why it is here.
+     *
+     * A trim is a strip of constant width off a boundary **piece**, so two of them compose into one and
+     * [correctedOutline] takes each level's own off the level below's answer. The curve a corner splices in
+     * is not a piece of that answer at all: it replaces a *corner* of it, at the tip, over the whole chain
+     * ([notchesOf]'s own rule, session 81). So a rounding that runs along such a curve — the free end's
+     * notch arc, a corner's tangent rail — has its strip taken **here**, with the splice, and
+     * [correctedOutline] leaves it alone rather than looking for a piece the trimmed list does not have.
+     *
+     * The arithmetic is the ordinary exact offset, twice over. Each piece steps onto its own offset carrier
+     * ([GeomMath.offsetCarrier]) **away from the corner** — which is where the material is, the corner being
+     * the very thing the splice cut off — and where two neighbours are stepped by the *same* width they meet
+     * on their carriers exactly as a ring's corners do ([GeomMath.carrierJunction]). Where they are stepped
+     * by different widths, or at the two open ends of the chain, the boundary genuinely **steps**: that is
+     * the band's own flat end cap standing in the face, square to the crease, so it is stated as the
+     * straight run it is and nothing is fitted anywhere.
+     *
+     * Null where a piece has no offset carrier in this vocabulary or two of them do not meet — and the
+     * caller then says so on the face rather than drawing a boundary the body does not have.
      */
-    private fun notchAt(
+    private fun insetChain(
+        chain: List<ProfileElement>,
+        corner: Vec2,
+        widths: List<Double>,
+    ): List<ProfileElement>? {
+        if (widths.all { it <= Geom3.WELD_TOL }) return chain
+        val signed = ArrayList<Double>(chain.size)
+        for ((k, e) in chain.withIndex()) {
+            val (mid, dir) = midOf(e) ?: return null
+            val n = dir.perp()
+            if (n.length() <= Vec2.EPS) return null
+            val step = n.normalized() * (1e-6 * max(1.0, (mid - corner).length()))
+            signed.add(if ((mid + step - corner).length() >= (mid - step - corner).length()) widths[k] else -widths[k])
+        }
+        val carriers = chain.indices.map { GeomMath.offsetCarrier(chain[it], signed[it]) ?: return null }
+
+        fun foot(
+            carrier: Pair<Line?, Circle?>,
+            p: Vec2,
+        ): Vec2? {
+            carrier.second?.let { c ->
+                val v = p - c.center
+                return if (v.length() <= Vec2.EPS) null else c.center + v.normalized() * c.radius
+            }
+            val l = carrier.first ?: return null
+            return l.origin + l.dir * (p - l.origin).dot(l.dir)
+        }
+        // the chain's own stations: the two open ends stand square to the crease, and each junction is a
+        // meeting of carriers where the two widths agree and a step of the cap's own where they do not
+        val heads = ArrayList<Vec2>(chain.size)
+        val tails = ArrayList<Vec2>(chain.size)
+        for (k in chain.indices) {
+            heads.add(
+                if (k == 0 || abs(signed[k] - signed[k - 1]) > Geom3.WELD_TOL) {
+                    foot(carriers[k], GeomMath.startOf(chain[k])) ?: return null
+                } else {
+                    GeomMath.carrierJunction(carriers[k - 1], carriers[k], GeomMath.startOf(chain[k])) ?: return null
+                },
+            )
+            if (k > 0 && abs(signed[k] - signed[k - 1]) <= Geom3.WELD_TOL) tails[k - 1] = heads[k]
+            tails.add(foot(carriers[k], GeomMath.endOf(chain[k])) ?: return null)
+        }
+        val out = ArrayList<ProfileElement>(2 * chain.size + 1)
+        for (k in chain.indices) {
+            if ((heads[k] - (if (k == 0) GeomMath.startOf(chain[0]) else tails[k - 1])).length() > Geom3.WELD_TOL) {
+                out.add(ProfileElement.Seg(Segment(if (k == 0) GeomMath.startOf(chain[0]) else tails[k - 1], heads[k])))
+            }
+            out.add(GeomMath.onCarrier(chain[k], carriers[k], heads[k], tails[k]) ?: return null)
+        }
+        val last = GeomMath.endOf(chain.last())
+        if ((tails.last() - last).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(tails.last(), last)))
+        return out
+    }
+
+    /**
+     * **How wide a strip each piece of a spliced chain has lost** — the tangency, on [face], of every band
+     * in the chain whose own crease is the curve [named] identifies, and zero where there is none.
+     *
+     * Structural and not measured (OP-21): the band's crease *is* the spliced curve, by name, and the
+     * setback is the wedge's own tangency on that face. One width per piece of the chain, because a drawn
+     * section's notch is one curve per piece and each of them may be rounded on its own.
+     */
+    private fun insetWidths(
+        pieces: List<Piece>,
+        face: FacePatch,
+        count: Int,
+        named: (EdgeName) -> Int?,
+    ): List<Double> {
+        val out = MutableList(count) { 0.0 }
+        for (p in pieces) {
+            val k = named(p.crease.edge.name) ?: continue
+            if (k !in 0 until count) continue
+            val t =
+                when (face.name) {
+                    p.crease.face1.name -> p.wedge.t1
+                    p.crease.face2.name -> p.wedge.t2
+                    else -> continue
+                }
+            out[k] = max(out[k], t.length())
+        }
+        return out
+    }
+
+    /**
+     * The **face a free end's cap stands in** and the rigid map that carries the wedge's own section into
+     * it — the whole of what a notch and its [EdgeName.BlendNotch] curve are both read from.
+     *
+     * The face has to be a **plane** of the body that is not one of the band's own two, standing square to
+     * the edge with the end point on it, and there has to be exactly one such face — two coplanar
+     * candidates is a body whose end the drawing cannot name, and it keeps what it kept (OP-3). The map is
+     * rigid because the crease's `e1` and `e2` are both square to the edge and the face's normal **is** the
+     * edge, so both of them lie in that plane.
+     */
+    private fun notchFrame(
         faces: List<FacePatch>,
         piece: Piece,
         at: Vec3,
         away: Vec3,
-    ): Notch? {
+    ): Pair<Int, Affine>? {
         var index = -1
         for ((i, face) in faces.withIndex()) {
             if (face.name == piece.crease.face1.name || face.name == piece.crease.face2.name) continue
@@ -6665,20 +7255,54 @@ object Blend3 {
             index = i
         }
         if (index < 0) return null
-        val face = faces[index]
-        val plane = face.plane ?: return null
-        // the crease's own frame, planted at the free end: `e1` and `e2` are both square to the edge and the
-        // face's normal **is** the edge, so both lie in this plane and the map is a rigid one
+        val plane = faces[index].plane ?: return null
         val o = plane.toLocal(at)
         val ax = plane.toLocal(at + piece.crease.e1) - o
         val ay = plane.toLocal(at + piece.crease.ref.e2) - o
         if (abs(ax.x * ay.y - ax.y * ay.x) <= DIR_EPS) return null
-        val map = Affine(ax.x, ax.y, ay.x, ay.y, o.x, o.y)
+        return index to Affine(ax.x, ax.y, ay.x, ay.y, o.x, o.y)
+    }
+
+    /**
+     * The notch one free end takes, or null where this drawing does not state one: the face the cap stands
+     * in has to be a **plane** of the body that is not one of the band's own two, standing square to the
+     * edge with the end point on it, and there has to be exactly one such face — two coplanar candidates is
+     * a body whose end the drawing cannot name, and it keeps what it kept (OP-3).
+     */
+    private fun notchAt(
+        faces: List<FacePatch>,
+        piece: Piece,
+        at: Vec3,
+        away: Vec3,
+        atStart: Boolean,
+        pieces: List<Piece>,
+    ): Notch? {
+        val (index, map) = notchFrame(faces, piece, at, away) ?: return null
+        val face = faces[index]
+        val plane = face.plane ?: return null
         val v = plane.toLocal(at)
         val before = face.outline.indices.filter { (GeomMath.endOf(face.outline[it]) - v).length() <= SAME_CURVE_TOL }
         val after = face.outline.indices.filter { (GeomMath.startOf(face.outline[it]) - v).length() <= SAME_CURVE_TOL }
         if (before.size != 1 || after.size != 1 || before[0] == after[0]) return null
-        val chain = piece.wedge.pieces.map { GeomMath.transform(it, map) }
+        val plain = piece.wedge.pieces.map { GeomMath.transform(it, map) }
+        // **and the strip a rounding of this very notch curve took off the face** (OP-31, slice 5b): the
+        // curve is not a piece of the trimmed list, so the strip is taken here, with the splice
+        val widths =
+            insetWidths(pieces, face, plain.size) { n ->
+                if (n is EdgeName.BlendNotch && n.edge == piece.index && n.atStart == atStart) n.piece else null
+            }
+        val chain =
+            insetChain(plain, v, widths)
+                ?: return Notch(
+                    piece.crease.edge,
+                    piece.sec,
+                    index,
+                    before[0],
+                    after[0],
+                    v,
+                    plain,
+                    reason = Msgs.refusalBlendSplicedStripNotStated(name = face.name.label, name2 = piece.crease.edge.name.label),
+                )
         // the section runs from the tangency on `face1` to the one on `face2`; which of the two ring pieces
         // each of those lies on is read off the pieces themselves, so no face-name bookkeeping decides it
         val head = GeomMath.startOf(chain.first())
@@ -6787,16 +7411,47 @@ object Blend3 {
         val s1 = meetOnSpan(outline[n.before], head, GeomMath.startOf(head), n.bulge) ?: return null
         val s2 = meetOnSpan(outline[n.after], tail, GeomMath.endOf(tail), n.bulge) ?: return null
         val cut = pieces.toMutableList()
-        // …and a chain that already **ends** where it meets its neighbour is left alone: there is nothing to
-        // trim, and a fitted cubic has no offset carrier to be trimmed on (OP-31's cap curve)
-        if ((s1 - GeomMath.startOf(cut[0])).length() > SAME_CURVE_TOL) {
-            cut[0] = GeomMath.onCarrier(cut[0], GeomMath.offsetCarrier(cut[0], 0.0) ?: return null, s1, GeomMath.endOf(cut[0])) ?: return null
-        }
-        val last = cut.size - 1
-        if ((s2 - GeomMath.endOf(cut[last])).length() > SAME_CURVE_TOL) {
-            cut[last] = GeomMath.onCarrier(cut[last], GeomMath.offsetCarrier(cut[last], 0.0) ?: return null, GeomMath.startOf(cut[last]), s2) ?: return null
-        }
+        if (!trimEnd(cut, s1, atHead = true) || !trimEnd(cut, s2, atHead = false)) return null
         return Triple(s1, s2, cut)
+    }
+
+    /**
+     * [chain]'s own end trimmed back to [at] — and where the trim **consumes** that piece entirely, the
+     * piece dropped and the next one tried (OP-31, slice 5b).
+     *
+     * A chain that already ends where it meets its neighbour is left alone: there is nothing to trim, and a
+     * fitted cubic has no offset carrier to be trimmed on (OP-31's cap curve). What is new is the middle
+     * case, and it is the ordinary one the moment a spliced chain carries the **step** a band's flat end
+     * leaves ([insetChain]): where the neighbouring ring piece has moved in by exactly the width that step
+     * is, the step trims to nothing — and a piece the trim consumes is a piece the boundary does not have,
+     * not a boundary this drawing cannot state. Dropping it is what lets a rounding of a *whole ribbon*
+     * close on one continuous curve while a rounding of the turn **alone** keeps its two steps.
+     */
+    private fun trimEnd(
+        chain: MutableList<ProfileElement>,
+        at: Vec2,
+        atHead: Boolean,
+    ): Boolean {
+        while (chain.isNotEmpty()) {
+            val k = if (atHead) 0 else chain.size - 1
+            val e = chain[k]
+            val own = if (atHead) GeomMath.startOf(e) else GeomMath.endOf(e)
+            if ((at - own).length() <= SAME_CURVE_TOL) return true
+            val carrier = GeomMath.offsetCarrier(e, 0.0) ?: return false
+            val cut =
+                if (atHead) {
+                    GeomMath.onCarrier(e, carrier, at, GeomMath.endOf(e))
+                } else {
+                    GeomMath.onCarrier(e, carrier, GeomMath.startOf(e), at)
+                }
+            if (cut != null) {
+                chain[k] = cut
+                return true
+            }
+            if (chain.size == 1) return false
+            chain.removeAt(k)
+        }
+        return false
     }
 
     /** Where the ring piece [ring] and the section's end piece [end] meet — see [notchedOutline]. */

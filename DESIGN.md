@@ -17149,8 +17149,13 @@ as a tool.
 - **(5a) Incongruent corners** — inside corners of unlike size or kind built as two removals with the fitted
   crease named; convex incongruent corners keep the boolean's trim and gain the crease's name; mixed kinds
   included. The 24 refused cells become built cells with a bracket by containment.
-- **(5b) The ball along a curved crease** — a rounding of a walk's rails and of a bevel pair's cone rails as a
-  revolution; a rounding along an elliptical mitre as a swept sphere. Corner-curve cells enter the matrix.
+- ~~**(5b) The ball along a curved crease**~~ — **delivered in session 83, and one half of it is a stated
+  cut**: a rounding along a **circular** crease is the revolution it is, exact from the tool to the rails to
+  the section, and the three things that kept the rule from having anything to work on are built — the free
+  end's own notch curve as an edge, its flat end as a face, and the strip a rounding takes off a curve a
+  corner *splices* into a face. The **elliptical** mitre's swept sphere is not built: its spine is exact and
+  this session states it, but the section it carries changes along the run, so it is refused by name and
+  queued as (5f). Corner-curve cells are in the matrix — 292 of them. See the as-built note below.
 - **(5c) Curved faces through the boolean** — item 4 extended to cylinders, cones, spheres and tori from
   extruded arcs, revolutions and bands: the result face keeps its carrier, a plane∩cylinder crease is the conic
   it is, cylinder∩cylinder is fitted. Script 3 with a bored hole becomes a fixture.
@@ -17159,6 +17164,20 @@ as a tool.
 - **(5e) Session 79's two cuts** — the corner between a curved and a straight edge (a medial surface, fitted
   spine) and two wedges that are not congruent (a loft's inside corner, a revolve's cap), which also unparks
   session 81's slanted and ring uprights.
+- **(5f) The ball along an elliptical crease** — slice 5b's own cut, and its design is written: the spine is
+  the mitre's own ellipse scaled by `(R + r)/R` about the point the two axes cross, in the mitre's own plane,
+  and it is exact; what it carries is a section that changes along the run, so the tool is a variable-section
+  loft and the band a **canal** surface. It needs three structural things, each of them the size of a slice: a
+  `Dressing` whose section is not rigid, a fourth carrier in the face list for a canal band, and a **sampled**
+  reader for its cut in `Section3` (a `RuledStrip` is a family of straight rulings and a canal band has none).
+  The concave twin — two fills crossing — is the same case one sign over.
+- **(5g) A corner curve's slot count, recorded** — the last address a dressed body does not hold still: the
+  curves two or more entries make together are ordered by their latest participant and come after every
+  entry's own block, so they never disturb a rail or a notch, but a corner *made or unmade* by an edit still
+  moves the ones after it. The fix is the one a tombstone's band count already is — the count decided at build
+  time and recorded on the feature (`Feature3.Blend`), which is a stored field, a format version and a
+  migration. See the OP-31 as-built note for slice 5b.
+
 
 Each slice extends the matrix with the fixture that exercises it, and the matrix's rule is unchanged: built
 inside a derived bracket, or refused by name.
@@ -17272,6 +17291,164 @@ is refused rather than measured. (5) The crease of a **plane against a cylinder*
 stated as a fitted chain all the same, because the band outline beside it already is one and two answers for
 one curve is worse than one. (6) A crease between two **multi-piece** sections is stated one curve per piece of
 the travelling one, which is the right count only where the two sections have the same number of pieces.
+
+
+#### Implementation status (as built — the ball along a curved crease, slice 5b, session 83)
+
+**The rule, and it turned out to be already half-built.** *Where a crease is a circular arc and the two faces
+it lies between are each a plane, a cylinder, a cone or a torus **about the same axis**, the rounding of it is
+that section **revolved** about that axis through the arc's own angle.* Session 82 wrote that construction for
+the one producer it then had — a band along a turned part's rim — and this slice found that it answers the
+whole class: `creaseOf` already proves the section rigid there (a coaxial plane cuts a ruling, a coaxial
+cylinder its own ruling, a coaxial cone its slant, a sphere a circle), `revolvedBand` already builds the tool
+as a `Geom3.revolve`, `bandCarrier` already names the torus or the cone by `Revolve3`'s vocabulary,
+`railGeom` already states its rails as the rings they are, and `bandCut` already cuts it through the whole of
+`Revolve3`'s table. **Nothing about the rule had to be written.** What had to be written is everything that
+kept the rule from having anything to work on, and there were four such things.
+
+**(1) The free end's notch curve was in no list, so an ordinary ask had no address.** A band that ends without
+a corner closes on a flat cap standing in a third face, and the crease between the band's cylinder and that
+face — the plane **square to the cylinder's own axis** — is a quarter circle. Session 81 stated it as a
+*boundary piece* of that face (`Blend3.Notch`) and nothing more, so *"round off the end of a rounded edge"*
+could not be said at all. It is `EdgeName.BlendNotch` now, one per piece of the band's own section per free
+end, **appended after every rail, every corner curve and every run-in crease** so that no index a stored
+`signs=` holds ever moves. Its two faces are the band and the face the cap stands in; its rounding is the
+revolution above, and the band it makes is a **torus** with two circular rails. On a 60 × 40 × 20 plate whose
+rim is rounded at 4 mm, rounding either of the two notch curves at 1 mm takes **1.3785 mm³** — the same body
+at both ends to a part in a million — against Pappus' own `A·φ·ρ = 1.2730` and its chorded bracket
+`[1.0113, 1.4741]`.
+
+**(2) A free end of a curved crease leaves a face the drawing did not have.** A straight band's cap stands
+*in* a face of the body and is that face's own notch; a band along a **curved** crease ends on a **meridian**
+plane, which is a face of nothing. So `Section3.facesAreWholeBoundary`'s claim about a dressed part —
+*"nothing leaves the shell and nothing is added outside it"* — was false there, and a level section through
+the cap could not close its loop (`z > 19` on the plate above, where the boundary is the cap's own straight
+step). It is `FaceName.BlendCap` now: a **plane**, whose outline is the rounding's own wedge carried through
+one rigid map, whose normal runs back along the band because that is where the material is not. Deliberately
+**only** for a curved crease: a straight band's free end either stands in a face (the notch owns it) or is one
+the boolean trims against a neighbour it merely runs into, and a flat face stated over the whole cap would
+then be a face the body does not have — session 81's cut (2) stays a cut, and stays for its own reason.
+
+**(3) A strip taken off a curve a corner splices in could not be stated at all.** *A trim composes down the
+chain and a notch does not* (session 81): a trim is a strip of constant width off a boundary **piece**, so two
+of them are one; a notch replaces a **corner** of the boundary, once, at the tip. So a rounding that runs
+along such a curve — the notch arc, a walk's tangent rail — had its strip looked for among the trimmed list's
+own pieces, found none, and `correctedOutline` refused a face that is perfectly statable (*"matches 0 pieces
+of the top face's own boundary"*, which is what a rounding of a corner rail met since item 3). The strip is
+taken **at the tip, with the splice** (`Blend3.insetChain`), and it is exact: each piece steps onto its own
+offset carrier **away from the corner** — the corner being the very thing the splice cut off, so the face's
+material is on the far side of it, which is inward about a free end's notch arc and *outward* about the
+tangency arc of a walk that turns a reflex vertex, one rule for both — neighbours stepped by the same width
+meet on their carriers as a ring's corners do, and where the width **changes** the boundary genuinely steps,
+which is the band's own flat end standing in the face and is stated as the straight run it is. On the L's two
+bevels at its inside corner, rounding the cone rail alone steps the top face's tangency arc from radius 4 to
+`4 + cot(3π/8) = 4.4142` and puts a 0.414 mm step at each end; rounding the **whole ribbon** steps the two
+rails by the same setback, the two steps trim to nothing, and the face closes on seven pieces exactly as it
+did before — which is what `trimEnd` was written for: *a piece the trim consumes is a piece the boundary does
+not have, not a boundary this drawing cannot state.*
+
+**(4) And a rounding of the band's own free-end notch ends the band.** `spanOf` knew two ways a band can be
+cut short — a corner at its end, and another band it runs into — and a rounding of its **own notch curve** is
+a third: the notch is the band's end circle, so the band that rounds it stands square to the run and its
+tangency *is* the setback along it. Structural, by name, never measured.
+
+**One bug came out of it, and it was not a small one.** `revolvedBand` placed the section on the arc's
+**radial** direction, where the crease's own second axis is `sign(sweep)·(e1·axis)` times that radial — so
+wherever those disagree the wedge was placed **mirrored about the crease** and the tool was turned inside out.
+It had never shown because session 82's one producer always agreed; the plate's two notch curves are the same
+construction at both signs, and the near end took `0.0135 mm³` where the far end took `1.3785`. The sign is
+derived now and the sweep is read positively, which is what says the frame is right rather than lucky.
+
+**And an appended slot has to hold still, which it did not.** A dressed body's edge list was three runs —
+every entry's two rails, then every corner curve, then every run-in crease — and its face list two: every
+band, then every corner patch. Only the **rails** were slot-stable, because a tombstone keeps them
+([Feature3.Blend.absent]). Everything else re-packed the moment a rounding was added to the dressing or taken
+off it, so a stored `signs=` named a *different* curve — which is precisely what OP-30's own note forbids of a
+rail (*"an entry addressing a rail would then silently round a different edge because some other rounding was
+deleted"*), and which item 3 recorded as an accepted exposure for a corner curve. It stopped being acceptable
+the moment a **step** could hold one of those addresses, which is what this slice's notch curve made ordinary:
+a plate with two rounded rims, the first rim's notch rounded and the first rim's entry deleted, kept building
+— silently rounding the *other* rim's notch curve, which had slid into the freed slot.
+
+**The rule, stated in one place** (`Blend3.entryOwning`) **and asserted in another**
+(`DressedAddressStabilityTest`): the base's list, then **one block per entry in the entry's own order** — two
+rails and `2 × bands` free-end notch slots for the edges, its bands and two flat-end slots for the faces — and
+then, *after every block*, the curves two or more entries make **together**: the corner curves and the run-in
+creases, each in the order of the **latest entry that takes part in it**. Every count in a block is a function
+of that entry alone — two rails is; `2 × bands` notch slots where the entry's base edge is a straight run is,
+because the band count is what a tombstone records and the straightness is read off the base — so a removed
+entry keeps every slot of its own block, tombstoned and speaking, and an added one only ever appends after the
+last block. Putting the shared curves **inside** the blocks was tried first and is worse: how many curves a
+corner puts on the body is a fact about the corner's own *kind*, so a corner that goes with a removed entry
+then shortens its block and every later block re-packs — the same defect moved one entry along, and
+`DressedBodyTombstoneTest` is the fixture that caught it.
+
+**The indices move, so the version does** ([DocumentFormat.GROUPED_SLOT_VERSION] = 8). A file written before
+it has its appended addresses mapped **by name** — the old order is reproduced from the very producers the new
+one uses, the slot is found in it, and its name is looked up where it stands now (`Blend3.addressBefore`,
+`faceAddressBefore`) — and the load says so once. GitHub #36's script 2 is the fixture: its last step addresses
+rail `20`, which under the block rule is rail `22`, and the reporter's body is the same body either way.
+
+**What is still not held still, and it is one class.** The **shared** curves themselves: a corner made or
+unmade by an edit moves the ones listed after it. Closing that needs the corner's own slot count recorded on
+the feature at build time, the way a tombstone's band count already is — a stored field and its own migration,
+queued rather than half-done here.
+
+**And one thing about a stored address.** A **whole-face** gesture records one scored choice *per edge of its
+run*, so the length of that list is part of what a stored face address means — and how many notch curves a
+face carries is a function of how many free ends the bands *below* it happen to have, which every later
+gesture may move. Sweeping them up would have made `filletfaceedges els=… signs=7;…` name a different set of
+edges on this build than on the one that wrote it, which OP-18 does not allow (GitHub #32's own script is the
+fixture that caught it). So a face gesture leaves the notch curve to its own pick, which is the address this
+slice adds. No format version moves: every new entry appends, and every address that meant something still
+means it.
+
+**The matrix gains a corner-curve class.** `everyCornerCurveOfEveryBuiltPairAndTripleRoundsOrRefusesByName`
+takes every pair and every triple of the L-block at 4 mm in both kinds, and rounds **every curve a corner puts
+on the body** at 1 mm — mitres, corner rails and notch curves alike — under the matrix's own rule: built
+inside a bracket the algebra derives, or refused by name. **292 cells: 246 built inside their own bracket, 46
+refused by name, none left over.** The figures are structural rather than measured (OP-21): a notch curve
+stands at a right angle *by construction* (the cap plane is square to the crease and the band's surface runs
+along it), a bevel's corner rail in `3π/4` (the walk carries the bevel's own 45° round the turn), a mitre's
+dihedral is read off the two faces it lies between; a straight run is the band over its own length, an arc is
+Pappus over its turn bracketed by containment between the exact section at the nearest radius it reaches and
+the chorded one at the farthest; and **which way** the body moves is the crease's own scored sign, because a
+notch at a *reflex* corner of the plan is concave and its rounding is a **fill** that adds.
+
+**The cut, whole and refused by name: the ball along an *elliptical* crease.** Two equal rounds crossing meet
+in a plane ellipse (item 3's `EllipticArcE`), and a rounding along it is not built. The design is worked out
+and the spine is **exact** — this session's own finding: the ball of radius `r` tangent to both cylinders from
+the air has its centre at `R + r` from **both** axes, which for two equal cylinders whose axes meet is again a
+plane ellipse, and it is the mitre's own ellipse scaled by `(R + r)/R` about the point the axes cross, lying
+in the mitre's own plane. What defeats it is not the spine but what it carries: the dihedral runs from `π` at
+each end of the mitre — where both bands are tangent to the face they share, so the ridge vanishes and the
+rounding tapers to nothing — to its least in the middle, so the section **changes along the run** and the tool
+is a canal surface. Three structural additions would be needed for it, each of them slice-sized: a `Dressing`
+whose section is not rigid, a fourth carrier in the face list for a canal band, and a sampled reader for its
+cut in `Section3` (a `RuledStrip` is a family of straight rulings and a canal band has none). So it is
+refused, in the sentence item 3 gave it — which names the ellipse, says the section would change, and says
+that two **bevels** meet in a straight crease that rounds. The **concave twin** is the same cut one sign over
+and is refused in the same words, which `BlendCurvedCreaseTest` asserts on two fills crossing in a room.
+
+**What moved, and what did not.** No golden. `Section3.chainLoops` gained one rule and it is OP-15's own: *a
+chord meets an exact curve within a chord's own tolerance*. The two ends of a **sampled** run — a torus met by
+a plane parallel to its own axis, which is what a level section through the notch's own band is — stand where
+a tessellated profile put them, and chaining one to the flat end of the very band it belongs to missed by five
+microns and refused the whole section. An **exact** neighbour is still preferred wherever there is one, so
+nothing that chained before chains differently now. Four test classes' **counts** moved because the lists they
+count genuinely grew, and each was re-stated by name rather than by number (`railsOf` in the matrix, the two
+rails by name in `BlendFeatureTest`). `BlendChainCostTest` is unmoved: 83.4 ms for the reporter's chain.
+
+**Cuts, each named and none silent.** (1) The **elliptical mitre**, above. (2) A **whole-face gesture** does
+not take the notch curves, above, and the reason is an address's own stability rather than the geometry. (3)
+A **straight** band's free end that stands in no face of the body still states no cap — session 81's cut (2),
+kept because such an end is as often one the boolean trims against a neighbour as one that is really free, and
+a face stated over the whole cap would then be a face the body does not have. (4) The **cone patch's own cut**
+is not narrowed by a rounding of its rail: the strip comes off the *shared* face's outline, exactly, and the
+corner patch is cut by `Revolve3` over its whole turn — which is right wherever the plane misses the strip and
+is the standing gap where it does not. (5) No **cap face is ever superseded**, because every corner the
+catalogue builds is between two straight creases and a cap only exists on a curved one; the day that changes
+it needs `cornerSuperseded`'s own treatment.
 
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
@@ -21870,7 +22047,7 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, (5b) the ball along a curved crease, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, (5g) a corner curve's slot count recorded, so the last appended address a dressed body does not hold still does; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41

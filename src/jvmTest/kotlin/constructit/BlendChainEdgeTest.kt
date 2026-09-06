@@ -308,7 +308,10 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
                 dressed.edges[it].name.let { n -> n is EdgeName.BlendRail && n.edge == 13 } &&
                     dressed.edges[it].between.has(FaceName.Cap(constructit.geom.SolidFace.TOP))
             }
-        assertEquals(20, rail, "the reporter's own address")
+        // the reporter's file says 20 and the load maps it: since OP-31's slice 5b the appended list is one
+        // block per entry — two rails and the free end's notch slots — so a rail of the second entry stands
+        // two slots further on ([DocumentFormat.GROUPED_SLOT_VERSION])
+        assertEquals(22, rail, "the reporter's own address, mapped to the block his rounding stands in")
         val run = assertNotNull(Blend3.targets(dressed.solid.feature, false, rail, Blend3.chainRun()).first, "the chain through rail $rail")
         assertEquals(5, run.size, "rail, three legs of the pivot, rail: $run")
         val total = run.sumOf { runLength(dressed, it) }

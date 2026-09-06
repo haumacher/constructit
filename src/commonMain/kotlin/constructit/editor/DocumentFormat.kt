@@ -119,7 +119,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 7
+    const val VERSION = 8
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -216,6 +216,24 @@ object DocumentFormat {
      * after every rail, so every index a file already holds means what it meant.
      */
     const val CHAINED_RAIL_VERSION = 7
+
+    /**
+     * The first version whose dressed body numbers its appended curves **one block per entry** (OP-31,
+     * slice 5b) — its two rails, its free-end notch slots, then the corner curves and run-in creases whose
+     * latest participating entry it is.
+     *
+     * Until it they were three runs — every rail, then every corner curve, then every run-in crease — so
+     * the moment a rounding was **added** to the dressing or **taken off** it, the curves after it re-packed
+     * and a stored `signs=` named a different one. OP-30 already forbids exactly that of a rail (*"an entry
+     * addressing a rail would then silently round a different edge because some other rounding was
+     * deleted"*), and slice 5b made it ordinary for the rest by giving a free end's notch curve an address
+     * of its own. The blocks are per entry now and a removed entry keeps every slot of its own, tombstoned.
+     *
+     * The indices therefore **move**, which is what a version is for: a file written before this one has its
+     * addresses mapped by name through [Blend3.addressBefore] and [Blend3.faceAddressBefore] and the load
+     * says so once, rather than building a different body in silence (OP-18).
+     */
+    const val GROUPED_SLOT_VERSION = 8
 
     const val HEADER = "constructit $VERSION"
 

@@ -87,13 +87,13 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
     fun anOldFileIsToldOnceOnlyWhereARailRoundingChangedMeaning() {
         val withRail = load(threeBevels + railFillet)
         assertTrue(withRail.doc.loadNotes.isNotEmpty(), "a version-6 file whose rounding addresses a rail is told its run grew")
-        assertTrue(DocumentFormat.save(withRail.doc).startsWith("constructit 7\n"), "and it is written at version 7")
+        assertTrue(DocumentFormat.save(withRail.doc).startsWith("constructit ${DocumentFormat.VERSION}\n"), "and it is written at the version this build writes")
         val bevelsOnly = load(threeBevels)
         assertTrue(bevelsOnly.doc.loadNotes.isEmpty(), "a version-6 file with base-edge roundings only has nothing to be told: ${bevelsOnly.doc.loadNotes}")
         val script1 = load(base + script1Roundings)
         assertTrue(script1.doc.loadNotes.isEmpty(), "script 1 (base edges only) has nothing to be told: ${script1.doc.loadNotes}")
         val reloaded = load(DocumentFormat.save(withRail.doc))
-        assertTrue(reloaded.doc.loadNotes.isEmpty(), "once written at version 7 nothing is said again")
+        assertTrue(reloaded.doc.loadNotes.isEmpty(), "once written at this build's own version nothing is said again")
     }
 
     @Test
