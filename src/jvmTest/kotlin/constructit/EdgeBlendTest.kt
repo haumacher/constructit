@@ -398,17 +398,18 @@ class EdgeBlendTest {
     }
 
     /**
-     * A body the mesh engine made from a **curved** operand has no named edges, so a blend on it declines in
-     * [Section3]'s own words.
+     * A body the mesh engine made from a **curved** operand names its edges too, and a blend runs along one.
      *
-     * *What moved under this test* (OP-31, item 4, session 83). A general boolean's result now keeps its
-     * faces and its creases wherever both operands' faces are **planes** — the reporter of GitHub #36 rounds
-     * an edge of one, and [BooleanProvenanceScriptTest] is that case. The bar here is *turned*, so one of its
-     * faces is a cylinder, and a curved carrier is the whole case this slice does not carry: the refusal
-     * stands and names the face rather than the route.
+     * *What moved under this test, twice* (OP-31, session 83). It first read *"a mesh-only body has no edges
+     * to blend"* — OP-9's sink rule whole. Item 4 kept a general boolean's faces wherever **both** operands'
+     * faces were planes, and this fixture was then the case that still refused, because the bar is *turned*
+     * and one of its faces is a cylinder. Slice 5c carries a curved operand face too — the cylinder is the
+     * cylinder, whoever swept it — so the fused body names every face and every crease, and a rounding along
+     * one of its creases is an ordinary rounding. The refusal that stands is asserted one test down: an
+     * operand that came out of a *file* has no carrier at all, and that is the sink OP-9 named.
      */
     @Test
-    fun aMeshOnlyBodyHasNoEdgesToBlend() {
+    fun aBooleanOverACurvedOperandNamesItsEdgesToo() {
         val cx = Construction()
         val plate = cx.extrude(cx.sketchOn(cx.planeXY(), cx.rect(0.0, 0.0, 40.0, 30.0, "p")), cx.const(20.mm))
         val bar = cx.turnedBar(90.0)
@@ -416,8 +417,43 @@ class EdgeBlendTest {
         val ev = Evaluator()
         val body = ev.solid(fused)
         assertManifold(body.mesh, "the fused body")
+        val (faces, whyFaces) = Section3.faces(body.feature)
+        assertNotNull(faces, "the fused body names its faces: ${whyFaces?.render()}")
+        assertTrue(faces.any { it.surface?.band is constructit.geom.Revolve3.Band.Cylinder }, "…the bar's own cylinder among them")
+        val (edges, whyEdges) = Section3.edges(body.feature)
+        assertNotNull(edges, "…and its creases: ${whyEdges?.render()}")
         val (targets, why) = Blend3.targets(body.feature, false, 0)
-        assertTrue(targets == null, "a boolean over a curved operand names no edges")
-        assertTrue(assertNotNull(why).contains("is not a plane"), "and names the face it is about: $why")
+        assertNotNull(targets, "a boolean over a curved operand names its edges: ${why?.render()}")
+        // a straight crease of the plate, well away from the bar: an ordinary rounding of a body a general
+        // boolean made, which is the whole point of the slice
+        val straight = edges.indexOfFirst { it.geom is constructit.geom.EdgeGeom.Straight && it.reason == null }
+        assertTrue(straight >= 0, "the fused body has a straight crease to round")
+        val before = Geom3.volume(body.mesh)
+        val rounded = ev.solid(blend(cx, ev, fused, 2.0, BlendKind.FILLET, false, straight))
+        assertManifold(rounded.mesh, "the rounded fused body")
+        assertTrue(Geom3.volume(rounded.mesh) < before, "and it takes material off")
+    }
+
+    /**
+     * **The half of OP-9's sink rule that stands**: an operand with no analytic carrier at all — a body read
+     * from a file — leaves the result mesh-only, in exactly the words it always had.
+     */
+    @Test
+    fun aBooleanOverAnImportedOperandStillHasNoEdgesToBlend() {
+        val cx = Construction()
+        val ev = Evaluator()
+        val bar = ev.solid(cx.turnedBar(90.0))
+        val imported =
+            constructit.geom.Solid3.of(
+                constructit.geom.Feature3.Imported("part.jt", openShell = constructit.geom.Watertight.defect(bar.mesh)),
+                bar.mesh,
+            )
+        val plate = ev.solid(cx.extrude(cx.sketchOn(cx.planeXY(), cx.rect(0.0, 0.0, 40.0, 30.0, "q")), cx.const(20.mm)))
+        val (out, whyBool) = Geom3.combine(constructit.geom.BoolOp.UNION, plate, imported)
+        assertTrue(whyBool == null, "the boolean itself is unaffected: ${whyBool?.render()}")
+        val fused = assertNotNull(out)
+        val (targets, why) = Blend3.targets(fused.feature, false, 0)
+        assertTrue(targets == null, "a boolean over an imported operand names no edges")
+        assertTrue(assertNotNull(why).contains("mesh-only"), "and says so in the old words: $why")
     }
 }

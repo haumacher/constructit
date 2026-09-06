@@ -15,11 +15,13 @@ import constructit.geom.BlendSection
 import constructit.geom.Curve3Element
 import constructit.geom.EdgeName
 import constructit.geom.Geom3
+import constructit.geom.GeomMath
 import constructit.geom.Plane3
 import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Vec3
 import constructit.units.mm
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
@@ -987,6 +989,129 @@ param "r" = 5mm
                 val c = abs(f.plane!!.normal.normalized().dot(dir)).coerceIn(1e-3, 1.0)
                 sqrt(1.0 - c * c) / c
             } ?: 0.0
+    }
+
+    // ---- 11. the bored block: every crease of a body a general boolean made ----
+
+    /**
+     * **The bored-block class** (OP-31, slice 5c): every crease of a body the *general boolean* made, rounded
+     * and bevelled at 2 mm, under the matrix's own rule — built inside a bracket the algebra derives, or
+     * refused by name.
+     *
+     * The fixture is the commonest mechanical body there is and the one GitHub #36's reporter asked for: a
+     * 40 × 30 × 20 block with a 10 mm bore driven **across** its own extrusion axis, so the exact slab algebra
+     * (OP-22) has no answer and the general engine runs. Its creases are of two kinds and the algebra states a
+     * figure for each: the twelve straight ones are bands over their own length (`w·L`, the same figure every
+     * cell of the L-block is bracketed by), and the two **circular** rims are revolutions — Pappus over the
+     * wedge's own centroid radius, bracketed by containment between the exact section at the nearest radius
+     * the chorded ring reaches and the chorded section at the farthest (slice 5b's own rule, one producer
+     * further on).
+     */
+    @Test
+    fun everyCreaseOfABoredBlockRoundsOrRefusesByName() {
+        assumeTrue(constructit.geom.MeshBool.available, "no general boolean engine")
+        built = 0
+        refused = 0
+        residual = 0
+        val cx = Construction()
+        val block = cx.extrude(cx.sketchOn(cx.planeXY(), boredPlan(cx)), cx.const(20.mm))
+        val hole = cx.freePoint("bore.c", 15.mm, 10.mm)
+        val drill =
+            cx.extrude(
+                cx.sketchOn(cx.plane(Vec3(-5.0, 0.0, 0.0), Vec3.Y, Vec3.Z), cx.region(cx.loop(cx.circleCR(hole, cx.const(5.mm))))),
+                cx.const(50.mm),
+            )
+        val base = cx.subtract(block, drill)
+        val body = Body(Evaluator().solid(base))
+        assertManifold(body.mesh, "the bored block")
+        assertEquals(14, body.count, "twelve straight creases and two rims")
+
+        val size = 2.0
+        for (i in 0 until body.count) {
+            for (kind in kinds) {
+                val name = "bored/e$i${tag(kind)}$size"
+                val (choices, whyC) = Blend3.choicesFor(body.solid, listOf(i), BlendSection(kind, size))
+                if (choices == null) {
+                    val reason = whyC?.render() ?: ""
+                    assertTrue(namesSomething(reason), "$name was refused without naming an edge or a face: '$reason'")
+                    refused++
+                    println("$name | refused | — | ${reason.take(70)}")
+                    continue
+                }
+                val ref = cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, false, i, choices)
+                val r = Evaluator().eval(ref.node)
+                if (r is EvalResult.Invalid) {
+                    val reason = r.reason
+                    assertTrue(namesSomething(reason), "$name was refused without naming an edge or a face: '$reason'")
+                    refused++
+                    println("$name | refused | — | ${reason.take(70)}")
+                    continue
+                }
+                val took = body.volume - measure(ref, name)
+                val bracket = assertNotNull(boredBracket(body, i, kind, size), "$name is bracketed by the algebra")
+                assertTrue(took in bracket, "$name took $took, outside its own bracket $bracket")
+                built++
+                println("$name | built | $took | $bracket")
+            }
+        }
+        tally("the bored block's own creases")
+        assertEquals(28, built + refused, "fourteen creases, both kinds")
+    }
+
+    /** The bored block's plan: the 40 × 30 rectangle the drill goes through. */
+    private fun boredPlan(cx: Construction): constructit.dsl.RegionRef {
+        val xy = listOf(Vec3(0.0, 0.0, 0.0), Vec3(40.0, 0.0, 0.0), Vec3(40.0, 30.0, 0.0), Vec3(0.0, 30.0, 0.0))
+        val pts = xy.mapIndexed { i, p -> cx.freePoint("bp$i", p.x.mm, p.y.mm) }
+        return cx.region(cx.loop(*xy.indices.map { cx.segment(pts[it], pts[(it + 1) % xy.size]) }.toTypedArray()))
+    }
+
+    /**
+     * What a rounding of crease [i] of the bored block takes, bracketed — a **band** over a straight run and
+     * a **revolution** over a circular one.
+     *
+     * Both figures are read off the body rather than tabulated: the run's own length, the ring's own radius
+     * and the wedge's own centroid, with the side the material stands on decided by asking the body
+     * ([Geom3.encloses]) exactly as the engine's own sector is.
+     */
+    private fun boredBracket(
+        b: Body,
+        i: Int,
+        kind: BlendKind,
+        size: Double,
+    ): Bracket? {
+        // the general engine's own float32 noise, at the matrix's established rate: a part in a million of
+        // the body it worked on, which is three orders below the chord term and is what a body assembled from
+        // float32 vertices costs whatever is rounded on it
+        val noise = 1e-6 * b.volume
+        val geom = b.edges[i].geom
+        if (geom is constructit.geom.EdgeGeom.Straight) {
+            val l = (geom.b - geom.a).length()
+            val w = Figures.wedgeArea(size, kind)
+            val hi = Figures.wedgeAreaByChords(size, kind)
+            return Bracket(w * l - noise, hi * l + noise)
+        }
+        val piece = (geom as? constructit.geom.EdgeGeom.OnPlane)?.piece as? constructit.geom.ProfileElement.CircleE ?: return null
+        val plane = (geom as constructit.geom.EdgeGeom.OnPlane).plane
+        val radius = piece.circle.radius
+        val centre = plane.toWorld(piece.circle.center)
+        // which way the material lies from the ring, radially — asked of the body, never assumed
+        val at = plane.toWorld(piece.circle.center + constructit.geom.Vec2(radius, 0.0))
+        val out = (at - centre).normalized()
+        val n = plane.normal.normalized()
+        val outward = if (Geom3.encloses(b.mesh, at + out * 0.2 - n * 0.2) || Geom3.encloses(b.mesh, at + out * 0.2 + n * 0.2)) 1.0 else -1.0
+        val rho = radius + outward * Figures.centroidReach(size, kind)
+        // the ring reaches the engine as a chord polygon, so it is bracketed by **containment**: the exact
+        // section carried round the polygon's own nearest radius below, the chorded section round the ring's
+        // own radius above. The inscription happens **twice** and the bound says so — the body's own ring is
+        // a polygon inscribed in the bore's circle, and the tool's revolution is a polygon inscribed in that
+        // — so each takes a factor `cos(π/n)` off the radius the material genuinely reaches.
+        val steps = GeomMath.chordSteps(rho, 2.0 * PI, GeomMath.TESS_TOL_MM)
+        val inscribed = kotlin.math.cos(PI / steps)
+        val near = rho * inscribed * inscribed
+        return Bracket(
+            Figures.wedgeArea(size, kind) * 2.0 * PI * near - noise,
+            Figures.wedgeAreaByChords(size, kind) * 2.0 * PI * rho + noise,
+        )
     }
 
     /** How long edge [i] of [b] runs, whichever curve it is — the chain's pieces are arcs as often as not. */

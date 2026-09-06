@@ -6832,12 +6832,20 @@ Follow-up constructions rely on the **analytic layer**, not the mesh — because
 
 **Half of this rule is retired, and half of it stands** (OP-31 item 4, session 83). The first bullet was a
 promise for eleven sessions: a general boolean's result was `Feature3.MeshBoolean`, which carried its `kind`
-and nothing else, and every provenance accessor refused it. It is now kept where both operands' faces are
-**planes** — the result keeps every one of them, on the operand's own exact carrier, with its outline trimmed
-by plane∩plane lines and its creases exact — so a fused part is sketched on, sectioned and **rounded** exactly
-as an extrusion is. What stands is the sentence's own precondition: a body with **no carrier at all** — an
-imported mesh, a skin, a sweep, anything whose faces are emergent triangles — is still a sink, and so, for now,
-is an operand face that is *curved* (see the OP-31 note for why that is a whole case rather than a gap).
+and nothing else, and every provenance accessor refused it. It is now kept wherever the operands' faces have
+carriers at all — the result keeps every one of them, on the operand's own exact plane, cylinder, cone, sphere
+or torus, with its trim computed and its creases exact wherever the vocabulary reaches them — so a fused,
+bored, counterbored or pinned part is sketched on, sectioned and **rounded** exactly as an extrusion is.
+
+**And the curved half went with it** (OP-31, slice 5c, the same session). Item 4 carried planes only and cut
+the curved case whole; slice 5c carries the curved carrier too, states its trim in the surface's own
+`(θ, t)`, and adds the third state the fitted tier admits for the creases the vocabulary cannot name — a chain
+of cubics through points exact on **both** surfaces, with the tolerance it reached written at the value. What
+stands of the sink rule is now exactly the sentence's own precondition and nothing more: a body with **no
+carrier at all** — an imported mesh, a skin, a sweep, an elliptic cylinder, a spline's band, anything whose
+faces are emergent triangles — is still a sink and refuses by name, as does an operand whose named faces are
+not its whole boundary (a prism's), and as does a crease running through a **tangency**, where no point of it
+can be pulled onto both surfaces at once (see the OP-31 note for why that is a whole case rather than a gap).
 
 
 A follow-up genuinely relies on **mesh output** only here:
@@ -17156,9 +17164,13 @@ as a tool.
   corner *splices* into a face. The **elliptical** mitre's swept sphere is not built: its spine is exact and
   this session states it, but the section it carries changes along the run, so it is refused by name and
   queued as (5f). Corner-curve cells are in the matrix — 292 of them. See the as-built note below.
-- **(5c) Curved faces through the boolean** — item 4 extended to cylinders, cones, spheres and tori from
-  extruded arcs, revolutions and bands: the result face keeps its carrier, a plane∩cylinder crease is the conic
-  it is, cylinder∩cylinder is fitted. Script 3 with a bored hole becomes a fixture.
+- ~~**(5c) Curved faces through the boolean**~~ — **delivered in session 83**: item 4 is extended to
+  cylinders, cones, spheres and tori from extruded arcs, revolutions and bands. The result face keeps the
+  operand's own carrier and states its trim in the surface's own `(θ, t)`; plane ∩ cylinder, ∩ cone, ∩ sphere
+  and the coaxial rings are the exact curves they are, and two cylinders crossing are a fitted chain through
+  points exact on both. A bored block is a fixture, its rim rounds to an exact torus, and the matrix gains a
+  bored-block class of 28 cells. The one whole cut is a crease through a **tangency** — two equal crossing
+  cylinders — which refuses by name. See the as-built note below.
 - **(5d) The drawing's two composition gaps** — a free end's notch under a neighbour's trim, and the bevelled
   vertex's apex faces, both face-list only; the 36 face-class cuts become closed sections.
 - **(5e) Session 79's two cuts** — the corner between a curved and a straight edge (a medial surface, fitted
@@ -17453,6 +17465,154 @@ is the standing gap where it does not. (5) No **cap face is ever superseded**, b
 catalogue builds is between two straight creases and a cap only exists on a curved one; the day that changes
 it needs `cornerSuperseded`'s own treatment.
 
+
+#### Implementation status (as built — curved faces through the boolean, slice 5c, session 83)
+
+**A bore no longer costs a body its faces.** Item 4 kept a general boolean's faces only where **every**
+operand face was a plane; one bored hole — *"the target object is the result of add and subtract, but this is
+the only way to create the base solid of such structure"* (GitHub #36's reporter) — and the whole result went
+back to being a mesh: nothing to round, nothing to sketch on, nothing to section exactly. The rule is item 4's
+own with one word struck out, and the **argument is unchanged**: a boolean never *moves* a surface, curved or
+not. Every triangle of the result lies in a face of one of the two operands and only the *trim* is emergent,
+so a result face on a cylinder **is** that cylinder — the one an extruded arc sweeps, the one a revolution's
+segment sweeps, the one a rounding's band is — carried as the very `Surface3` the operand already stated, and
+a face on a cone, a sphere or a torus likewise. The assembly lives in `geom/BoolFace3.kt` now (item 4's own
+code, widened, and the one place the whole argument is written down); `Section3.boolProvenance` builds the
+carriers and hands them over, and everything above it is untouched.
+
+**One thing had to travel with the carrier: the meridian.** `Revolve3.Band` says *what* surface a face is, and
+for a cylinder and a cone how far along the axis it runs — but for a **sphere** and a **torus** it says only
+the radii, so a quarter torus (a rounded rim) and a whole one are the same value. How much of the meridian
+circle a patch covers is exactly what a boolean has to know to say which of its triangles lie on the face, so
+`Surface3` gained `meridian`: the band's own generating curve in the frame's `(s, r)` half-plane, filled in by
+`Revolve3.bandPatch` (through the new `Frame.toSR`) and by everything that goes through it. Null means *the
+family's whole natural extent*, which is what every producer written before this slice keeps meaning.
+
+**A curved face states its own boundary in the surface's own `(θ, t)`.** A planar face states its outline in
+its plane's `(u, v)`; a curved one states it in the turn angle and the parameter along its own meridian —
+millimetres along a straight meridian, radians about a curved one, the meridian's own parameter in each case,
+which is what makes `(θ, t)` a chart of *every* band this drawing names rather than only of the two that
+happen to be graphs over the axis. In that chart a **ring** is a horizontal straight run, a **ruling** a
+vertical one, and an oblique plane's cut is the sinusoid that has no name — stated as a fitted chain with
+`FacePatch.fitted` saying how far it may be. The alternative was a bounding box in `(θ, t)`, which is what the
+family alone gives, and it was rejected outright: it *overstates* the face wherever the trim is oblique, and a
+section read against it would draw a curve running off the material — the one state (the matrix's own rule)
+that must never happen.
+
+**Containment without topology, because the boundary does not always close.** The `(θ, t)` boundary of a face
+that wraps — a bore's whole cylinder, a ring's whole meridian — is not a set of closed loops, so an even-odd
+ray cannot read it. It is directed instead, **material to the left** (OP-14's own convention, one chart over),
+and *"is this point on the face"* is the side of the nearest boundary piece, searched over its own ±2π copies
+in whichever coordinate wraps. The answer is a **value** and needs no mesh, which is what lets a section, a
+nested boolean and a pick all read the same face the same way. The direction is established once against a
+triangle the face genuinely has and the whole outline is reversed if the chart's handedness runs the other way
+— asserted rather than assumed, since a bore's own normal points inward and the chart then flips.
+
+**What is exact, and it is most of it.** Every crease is stated in this drawing's own vocabulary wherever the
+vocabulary reaches it, and the table is `Revolve3.planeCut`'s — the very table a *section* is read through,
+asked here without the band's own extent, so there is one statement and not two. Plane ∩ plane is a line;
+plane ∩ cylinder is a circle, a true ellipse or a pair of rulings; plane ∩ cone a circle or an ellipse; plane
+∩ sphere a circle whichever way the plane is turned; plane ∩ torus the rings a coaxial or meridian plane cuts.
+Two **coaxial** bands meet in the circles their meridians cross at, which is what a counterbore's step is. A
+corner of a face is the point where **three** carriers meet: three planes keep item 4's own 2D solve verbatim
+(so not a bit of the planar half moved), and anything else is Newton on the three exact implicit surfaces from
+the engine's own vertex, checked against that vertex and refused rather than shipped if it does not land.
+
+**What is fitted, and how far.** Where the vocabulary does not reach — two cylinders whose axes cross or are
+skew, a cone met askew, a torus met off its axis — the crease is a chain of cubics through points that are
+**every one of them exact on both surfaces** (`ontoCrease` pulls the engine's own boundary walk onto the
+curve; `EdgeGeom.InSpace`, slice 5a's third carrier), with `SolidEdge.fitted` carrying the tolerance the fit
+*reached*. On a pipe tee of an 8 mm main and a 4 mm branch every point of the chain stands within the stated
+tolerance of **both** cylinders, which `BooleanCurvedFaceTest` measures against the cylinders and never
+against the fit. A rounding along such a crease is refused by name — its own normal section turns along the
+run, which is 5f's canal and this drawing states it for no edge.
+
+**A curved result face is cut like a revolution's band, and clipped to its own trim.** `Section3.cutFace`
+sends it through `BoolFace3.cutPatch`: the exact curves `Revolve3.planeCut` gives, each clipped to the face's
+`(θ, t)` outline by bisection on the curve's own parameter, and — where the table has no name for the cut —
+the chart is **marched** and the answer is chords, flagged (OP-15's honesty line, not crossed). A level
+section through a bored block comes back exact, and so does one through the torus of a rounded rim. A sketch
+space on such a face refuses by name, saying which surface it is
+(`refusal.section.boolFaceIsCurved`), exactly as a blend's band does. The marching is not a corner of the
+design that nothing reaches: a plane parallel to a **torus'** own axis and off it cuts it in a quartic, which
+is precisely the section a ribbed, rounded, bored block is asked for, and `BooleanCurvedFaceTest` takes it and
+asserts that it comes back flagged.
+
+**The recognition tolerance is the chord's, and that is a measurement this slice had to make.** A curved face
+reaches the engine as a **chord polygon**, so every vertex the boolean itself creates — where a plate's face
+cuts a bore — stands where the plane meets a *chord*, up to the tessellation's own sagitta inside the true
+surface. Item 4's sixty-four float32 ULPs is a micron; the sagitta of a 25 mm cylinder at this drawing's chord
+rule is twenty-two of them, and reading the vertex as *off the cylinder* is how the provenance of a fused
+turned part first refused. So a curved carrier's recognition tolerance is `GeomMath.effectiveTol` at that
+carrier's own radius, doubled — a recognition tolerance and nothing else, since what the outline and the
+creases are built from is the exact surface. Its stated limit is that two curved carriers standing closer
+together than their own chords cannot be told apart by position, and that is why the lookup takes the
+**nearest** carrier rather than the first.
+
+**A rounding is *tangent* to what it rounds, and that is a crease a quadratic loses.** A band runs tangent onto
+the two faces it rounds — that is what a rounding *is* — so a **dressed body used as a boolean operand** meets
+its own neighbours along circles where a meridian **touches** a line rather than crossing it, and the double
+root arithmetic drops there took the whole provenance of a ribbed, rounded, bored block down with it. The
+touch is found by **distance** instead (`touchPoints`), including at an arc's own endpoint, which is where a
+rounding's section ends and therefore the ordinary case rather than a corner one; the circle it names is
+exact. That is what lets a rounded rim survive the next boolean as the **torus** it is — `Torus(rc = 7,
+minor = 2)`, asserted by name — and it is the only place this slice had to add geometry rather than reuse it.
+
+**Two operands may share a surface, and then the body has one face there and not two.** A turned bar fused to a
+plate stands its own cap in the plate's own side face. The surface at that plane is one face of the result and
+the boundary between the two carriers is no crease of the body at all — it is determined by neither of them,
+which is exactly what the corner solve could not do and what made such a body refuse *before* this slice as
+well. So the connected-piece walk crosses freely between coplanar carriers **of different operands**, and the
+piece it finds is listed under the first carrier it stands on; the other keeps its slot and says where its
+surface went (`refusal.section.boolFaceCoplanar`). It is a **piece** rule and not a carrier rule, and that is
+the half that matters: a pocket's floor and a bar's top face may lie in one plane and be nowhere near each
+other, and each is then its own piece under its own name (`BooleanProvenanceProbeTest` is the fixture that
+insisted on it). *Same surface* is decided by the surfaces themselves and covers the curved twin as well — a
+pin driven into a bore of its own radius — by standing on one carrier and asking the other (`oneSurface`),
+which is a predicate about two exact surfaces and never a fit.
+
+**No address moved, and therefore no format version.** The face list is **operand-major** as before — every
+face of the first operand in that operand's own order, then the second's, pieces by smallest canonical
+triangle — creases are ordered by the pair of faces they separate and then by the smallest canonical vertex,
+and a consumed slot still stands and states its reason. The coplanar rule can only change a body that
+**refused wholly** before it (two coplanar carriers meeting made a corner no pair of planes fixed), so no
+drawing that had an address loses one; item 4's own two fixtures pass unmoved, which is the evidence rather
+than the claim.
+
+**The blend needed nothing at all, which is the provenance rule paying for itself.** `Blend3.traceOf`
+dispatches on the *surface* and never on the feature that made it, so a crease between a plane and a cylinder
+square to it is read as a circle, `creaseOf` proves the section rigid, and slice 5b's `revolvedBand` builds
+the rounding as the exact **torus** it is. A 2 mm fillet on the rim of a 10 mm bore through a 40 × 30 × 20
+block takes **30.4976 mm³** against Pappus' own `A·φ·ρ = 29.3771` (`ρ = 5 + centroidReach`) and the chorded
+containment bracket `[29.144, 30.621]`; its band comes back as `Torus(rc = 7, minor = 2)`. A 2 mm chamfer of
+the same rim takes **70.8900** against the cone's exact `71.209`, bracket `[70.702, 71.23]`. Both ends of the
+bore give the same figure to a part in a million.
+
+**The matrix gains a bored-block class**: `everyCreaseOfABoredBlockRoundsOrRefusesByName` takes every crease
+of a body the *general boolean* made — the twelve straight ones and the two rims — at 2 mm in both kinds, and
+demands the matrix's own two states. **28 cells, 28 built inside their own bracket, none refused and none in a
+residue.** The figures are derived, not fitted: a band over its own run for a straight crease, and Pappus over
+the wedge's centroid radius for a rim, bracketed by containment between the exact section at the radius the
+chorded ring actually reaches and the chorded section at the ring's own radius — the inscription happening
+**twice** (the body's ring is a polygon inscribed in the bore's circle, and the tool's revolution a polygon
+inscribed in that), which is a bound the chamfer cells needed and which is stated rather than tuned.
+`BlendChainCostTest` is unmoved.
+
+**The cuts, each whole and each refused by name.** (1) **A crease that runs through a tangency of two
+surfaces that are not coaxial** — two cylinders of the *same* radius whose axes meet are tangent at the two
+points where their crease crosses itself, so the crease has no direction there and no point of it can be
+pulled onto both surfaces at once. (A **coaxial** tangency is exact and is the paragraph above: it is a circle
+and it is stated as one.) What the equal-cylinder crease really is, is two plane ellipses; recognising that
+degenerate pair is a future extension and is named as one, and until then the provenance refuses **wholly**
+rather than fitting through a singularity (`refusal.section.boolTrimNotDetermined`). (2) An operand face whose surface this drawing has **no name for at
+all** — an elliptic cylinder, a spline's band, a ruled loft strip — is the sink OP-9 named, and
+`refusal.section.boolFaceNotPlane` now says exactly that instead of *"is not a plane"*. (3) An operand with no
+analytic faces at all (an imported mesh, a skin, a sweep) and one whose faces are not its whole boundary (a
+prism's) refuse in the old words, unchanged. (4) A **curved** face of the result takes no sketch space, by the
+same rule a revolution's band and a blend's band already live under. (5) Two coplanar faces **of one operand**
+meeting in the result are not merged — the outline test is what tells them apart (item 4's own note) and
+merging would destroy it — so their fake crease is still a corner no pair of carriers fixes; it is refused by
+name and was never built, and it is one boolean's own profile drawn with two collinear pieces.
 
 #### Implementation status (as built — the corner's slot count recorded, slice 5g, session 83)
 
@@ -22147,7 +22307,7 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, (5c) curved faces through the boolean, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, (5d) the drawing's two composition gaps, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41

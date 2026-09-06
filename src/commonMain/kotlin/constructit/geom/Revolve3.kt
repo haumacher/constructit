@@ -122,7 +122,29 @@ object Revolve3 {
          *
          * See [Surface3] for why the frame travels with the band at all, and for the alternatives rejected.
          */
-        fun surfaceOf(band: Band): Surface3 = Surface3(O, A, P, turnStart, turnEnd, full, band)
+        fun surfaceOf(
+            band: Band,
+            meridian: ProfileElement? = null,
+        ): Surface3 = Surface3(O, A, P, turnStart, turnEnd, full, band, meridian)
+
+        /**
+         * The map from this frame's **sketch** coordinates into its own `(s, r)` — the axis frame read as an
+         * affine, so a whole profile piece can be carried into it and not only a point ([sr] one kind up).
+         *
+         * It is what lets a band state its own **meridian** ([Surface3.meridian]): a sphere's or a torus's
+         * family says the radii and not how much of the meridian circle the patch covers, and a boolean has
+         * to know exactly that to say which of its triangles lie on the face (OP-31, slice 5c).
+         */
+        val toSR: Affine
+            get() =
+                Affine(
+                    axis2.x,
+                    perp2.x,
+                    axis2.y,
+                    perp2.y,
+                    -axis2.dot(origin2),
+                    -perp2.dot(origin2),
+                )
     }
 
     /**
@@ -299,6 +321,9 @@ object Revolve3 {
         name: FaceName,
     ): FacePatch {
         val band = bandOf(f, e)
+        // the piece **is** the meridian, carried into the frame's own `(s, r)` — which is the one thing the
+        // family cannot say about a sphere or a torus (OP-31, slice 5c, and [Surface3.meridian])
+        val meridian = GeomMath.transform(e, f.toSR)
         if (band !is Band.Planar) {
             return FacePatch(
                 name,
@@ -309,10 +334,10 @@ object Revolve3 {
                 } else {
                     Msgs.refusalRevolveThatProfileEdgeSweepsNot(name = band.label)
                 },
-                f.surfaceOf(band),
+                f.surfaceOf(band, meridian),
             )
         }
-        return FacePatch(name, planarPlane(f, band), planarOutline(f, band), null, f.surfaceOf(band))
+        return FacePatch(name, planarPlane(f, band), planarOutline(f, band), null, f.surfaceOf(band, meridian))
     }
 
     /**
@@ -611,6 +636,39 @@ object Revolve3 {
         return BandCut(null, sampledRuns(f, e, cut))
     }
 
+    /**
+     * The **whole exact curve** a plane meets this band's surface in, in [cut]'s own `(u, v)` — the same
+     * table [cutBandOf] dispatches on, asked without the band's own extent (OP-31, slice 5c).
+     *
+     * *Why the extent is left out here.* [cutBandOf] answers *"what does this plane cut off this face"*, so
+     * a candidate only partly on the band disqualifies the exact answer and the cut comes back as chords.
+     * A **crease** is the other question: a general boolean's result face is a piece of the operand's
+     * surface, its neighbour is a piece of a plane, and the curve between them is the whole plane ∩ surface
+     * curve *clipped at the two corners the boolean puts on it* — which the caller does, from the carriers,
+     * exactly as it clips a line between two planes. Asking for the trimmed answer here would throw away the
+     * very curve that has to be clipped.
+     *
+     * Null where the vocabulary has no name for the curve — a plane against a cone askew (a hyperbola or a
+     * parabola), a plane against a torus off its axis (a quartic) — and then the caller fits it and says so.
+     */
+    internal fun planeCut(
+        f: Frame,
+        e: ProfileElement,
+        cut: Plane3,
+    ): List<ProfileElement>? {
+        val band = bandOf(f, e)
+        if (band is Band.Degenerate) return emptyList()
+        val n = cut.normal.normalized()
+        val k = f.A.dot(n)
+        val perpToAxis = abs(abs(k) - 1.0) <= DIR_EPS
+        val parallelToAxis = abs(k) <= DIR_EPS
+        val throughAxis = parallelToAxis && abs(cut.distanceTo(f.O)) <= Section3.ON_PLANE_TOL
+        if (perpToAxis) return axisNormalCut(f, e, cut, k)
+        familyCut(f, band, cut, k)?.let { return it }
+        if (throughAxis) return throughAxisCut(f, e, cut, n)
+        return null
+    }
+
     // ---- the two family-independent columns ----
 
     /**
@@ -669,16 +727,7 @@ object Revolve3 {
             val ea = Vec2(f.A.dot(cut.u), f.A.dot(cut.v))
             val er = Vec2(rad.dot(cut.u), rad.dot(cut.v))
             val toWorld = Affine(ea.x, ea.y, er.x, er.y, o.x, o.y)
-            val toSR =
-                Affine(
-                    f.axis2.x,
-                    f.perp2.x,
-                    f.axis2.y,
-                    f.perp2.y,
-                    -f.axis2.dot(f.origin2),
-                    -f.perp2.dot(f.origin2),
-                )
-            out.add(GeomMath.transform(GeomMath.transform(e, toSR), toWorld))
+            out.add(GeomMath.transform(GeomMath.transform(e, f.toSR), toWorld))
         }
         return out
     }

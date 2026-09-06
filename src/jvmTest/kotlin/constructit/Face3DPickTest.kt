@@ -359,38 +359,60 @@ class Face3DPickTest {
     }
 
     /**
-     * **A body a boolean made over a curved operand has no face to name**, and says which face is to blame.
+     * **A body a general boolean made is sketched on like any other**, and its own *curved* faces refuse by
+     * name exactly as a blend's band does.
      *
-     * *What moved under this test* (OP-31, item 4, session 83). A general boolean whose two operands' faces
-     * are all **planes** now keeps every one of them, so a sketch space opens on the result exactly as it
-     * does on an extrusion. The bore here is a **cylinder**, which is the one whole case this slice does not
-     * carry, so the refusal stands — and it now names the face rather than only the route, which is the
-     * more useful sentence and heals the moment the operands become planar (OP-3).
+     * *What moved under this test, twice* (OP-31, session 83). It first read *"a mesh boolean refuses by its
+     * route"* — OP-9's sink rule whole. Item 4 kept a boolean's faces wherever **both** operands' faces were
+     * planes, and this fixture (a bore, hence a cylinder) was then the case that still refused. Slice 5c
+     * carries the cylinder too, so the flat faces of a bored plate open spaces like an extrusion's, and the
+     * refusal that stands is the one about the **face the user clicked**: the bore's wall is a cylinder and
+     * there is nothing to sketch on there.
      */
     @Test
-    fun aMeshBooleanRefusesByItsRoute() {
+    fun aBooleanOverACurvedOperandOpensOnItsFlatFacesAndRefusesOnItsBore() {
         requireEngine()
         val ed = plate()
-        // a bore drilled through a side face is a cross-axis boolean, hence the general mesh route
+        // a groove milled along the plate's top edge: a cross-axis boolean (hence the general mesh route)
+        // whose cylindrical wall is in plain sight from above
         ed.setTool(Tools.SKETCH_ON_FACE)
         ed.click(Vec2(20.0, 0.0))
         ed.setTool(Tools.CIRCLE_R)
         ed.type("4")
-        ed.click(Vec2(0.0, 10.0))
+        ed.click(Vec2(0.0, 20.0))
         ed.setTool(Tools.CUT)
-        ed.type("12")
-        ed.click(Vec2(4.0, 10.0))
+        ed.type("30")
+        ed.click(Vec2(4.0, 20.0))
         val bored = ed.solids().last()
         assertTrue(featureOf(bored) is Feature3.MeshBoolean, "the general boolean's result: ${ed.statusHint}")
 
+        // …and it names its faces now, the groove's cylinder among them
+        val faces = assertNotNull(Section3.faces(featureOf(bored)).first, "the grooved plate names its faces")
+        assertTrue(
+            faces.any { it.surface?.band is constructit.geom.Revolve3.Band.Cylinder },
+            "the groove's own cylinder is one of them",
+        )
+
+        // a flat face of it opens a space, which is the whole of what this slice buys
         assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))
         val spaces = ed.doc.spaces.size
         val vp = view(ed, Camera3(target = Vec3(20.0, 15.0, 10.0), distance = 260.0, yaw = -1.1, pitch = 0.8))
         ed.setTool(Tools.SKETCH_ON_FACE)
-        vp.clickWorld(Vec3(20.0, 20.0, 20.0))
-        assertEquals(spaces, ed.doc.spaces.size, "nothing opened: ${ed.statusHint}")
-        assertTrue("is not a plane" in ed.statusHint, "the face to blame is named: ${ed.statusHint}")
-        assertTrue(ed.doc.nameOf(bored) in ed.statusHint, "…and so is the body: ${ed.statusHint}")
+        vp.clickWorld(Vec3(30.0, 20.0, 20.0))
+        assertEquals(spaces + 1, ed.doc.spaces.size, "a space opened on the flat top: ${ed.statusHint}")
+        assertEquals(bored, ed.activeSpace.anchor, "…and it is a face of the bored body")
+
+        // the groove's wall is a cylinder, and clicking it says so instead of opening something else
+        assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))
+        val after = ed.doc.spaces.size
+        val wall = Vec3(20.0 + 4.0 * kotlin.math.cos(0.9), 15.0, 20.0 - 4.0 * kotlin.math.sin(0.9))
+        // steeply from above and from the +x side, so the line of sight goes down **into** the groove
+        val vp2 = view(ed, Camera3(target = wall, distance = 200.0, yaw = 0.0, pitch = 1.3))
+        ed.setTool(Tools.SKETCH_ON_FACE)
+        vp2.clickWorld(wall)
+        assertEquals(after, ed.doc.spaces.size, "nothing opened on the cylinder: ${ed.statusHint}")
+        assertTrue("cylinder" in ed.statusHint, "the face to blame is named by its surface: ${ed.statusHint}")
+        assertTrue("not a plane" in ed.statusHint, "…and by what it is not: ${ed.statusHint}")
     }
 
     // ---- 5. one face, one space ----

@@ -19138,15 +19138,44 @@
     },
     "x-translated": "47e1060f"
   },
-  "refusal.section.boolFaceNotPlane": "this solid is a general boolean, and {name} of one of the two solids it was made from is not a plane — only bodies whose every face is a plane carry their faces through a general boolean so far, so this one's faces stay emergent and cannot be named",
+  "refusal.section.boolFaceNotPlane": "this solid is a general boolean, and {name} of one of the two solids it was made from is neither a plane nor a surface this drawing has a name for, so there is nothing to trace this body's own faces back to and they stay emergent",
   "@refusal.section.boolFaceNotPlane": {
-    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean (a union, a difference or an intersection computed by the mesh engine) cannot name its own faces: one of the faces of one of the two solids that went into it is curved, and curved faces are not yet carried through. {name} is that face's own name and is itself a translated message.",
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean (a union, a difference or an intersection computed by the mesh engine) cannot name its own faces: one of the faces of one of the two solids that went into it is neither flat nor one of the curved surfaces this program can state exactly (a cylinder, a cone, a sphere, a ring), so there is nothing exact to trace the result back to. {name} is that face's own name and is itself a translated message.",
     "placeholders": {
       "name": {
         "type": "message"
       }
-    },
-    "x-translated": "ddb6fe5a"
+    }
+  },
+  "refusal.section.boolFaceCoplanar": "this face lies in the very plane {name} of the other solid lies in, and the body they make together has one face there rather than two — it is that one, so nothing is left of this entry",
+  "@refusal.section.boolFaceCoplanar": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why one entry in the face list of a general boolean's result has no surface of its own: this face of one of the two solids lies in the same plane as a face of the other solid, so where the two meet the result has a single flat face and it is listed under the other one. {name} is that other face's own name and is itself a translated message. The entry stays in the list so that positions in it never shift.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolFaceIsCurved": "{name} is {what} and not a plane, so there is nothing to sketch on there; put a datum plane where you want to sketch",
+  "@refusal.section.boolFaceIsCurved": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why one face of the result of a general boolean cannot be sketched on: it is a piece of a curved face of one of the two solids that went into the boolean. {name} is that face's own name and {what} names the kind of curved surface it is (a cylinder, a cone, a sphere, a ring); both are themselves translated messages.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "what": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolTrimNotDetermined": "this solid is a general boolean, and where it trimmed {name} is a curve the two surfaces meeting there do not determine, so its faces cannot be stated exactly and are left unnamed rather than approximated",
+  "@refusal.section.boolTrimNotDetermined": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean cannot name its own faces: the boundary the boolean left on one face could not be pinned down on the two exact surfaces that meet along it, so writing it down would be a guess. {name} is that face's own name and is itself a translated message.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
   },
   "refusal.section.boolSurfaceOffCarrier": "this solid is a general boolean, and part of its surface lies on no face of either of the two solids it was made from, so its faces cannot be traced back to one and are left unnamed",
   "@refusal.section.boolSurfaceOffCarrier": {

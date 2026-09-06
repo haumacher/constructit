@@ -2275,7 +2275,7 @@ object Blend3 {
      * share — a Hermite cubic on central-difference tangents, halved until the midpoint of every span is
      * within [tol] — is the method, and it is written down once above.
      */
-    private fun fittedChain3(
+    internal fun fittedChain3(
         tol: Double,
         at: (Double) -> Vec3?,
     ): Pair<List<Curve3Element>, Double>? {
@@ -2352,7 +2352,7 @@ object Blend3 {
      * number there is exactly the dishonesty [FacePatch.fitted] exists to prevent, so the measured worst is
      * what every reader of the value is given.
      */
-    private fun fittedChain(
+    internal fun fittedChain(
         tol: Double,
         at: (Double) -> Vec2?,
     ): Pair<List<ProfileElement>, Double>? {
