@@ -359,8 +359,13 @@ class Face3DPickTest {
     }
 
     /**
-     * **A mesh-route body has no face to name**, and says which route it took. This is the *mesh* half of the
-     * parked face-ID provenance item, refusing by name rather than guessing at a triangle's identity.
+     * **A body a boolean made over a curved operand has no face to name**, and says which face is to blame.
+     *
+     * *What moved under this test* (OP-31, item 4, session 83). A general boolean whose two operands' faces
+     * are all **planes** now keeps every one of them, so a sketch space opens on the result exactly as it
+     * does on an extrusion. The bore here is a **cylinder**, which is the one whole case this slice does not
+     * carry, so the refusal stands — and it now names the face rather than only the route, which is the
+     * more useful sentence and heals the moment the operands become planar (OP-3).
      */
     @Test
     fun aMeshBooleanRefusesByItsRoute() {
@@ -384,7 +389,7 @@ class Face3DPickTest {
         ed.setTool(Tools.SKETCH_ON_FACE)
         vp.clickWorld(Vec3(20.0, 20.0, 20.0))
         assertEquals(spaces, ed.doc.spaces.size, "nothing opened: ${ed.statusHint}")
-        assertTrue("mesh-only" in ed.statusHint, "the route is named: ${ed.statusHint}")
+        assertTrue("is not a plane" in ed.statusHint, "the face to blame is named: ${ed.statusHint}")
         assertTrue(ed.doc.nameOf(bored) in ed.statusHint, "…and so is the body: ${ed.statusHint}")
     }
 

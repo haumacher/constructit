@@ -300,6 +300,22 @@ sealed interface Feature3 {
          * general case is one line away when that package wants it.
          */
         val plan: List<Region> = emptyList(),
+        /**
+         * **The faces and edges this result keeps** (OP-31, item 4) — null when they could not be assembled,
+         * and then [provenanceRefusal] says why.
+         *
+         * *What corrects the note above.* A boolean never **moves** a surface: every triangle of the result
+         * lies in a face of one of the two operands, and only the *trim* is emergent. So the OP-9 sink rule
+         * is half retired — the faces and the creases of a general boolean's result are exactly computable
+         * from the operands' own carriers, and what stands is only the case where an operand has no carrier
+         * at all (an imported mesh, a skin), which still refuses by name. Assembled once here, by
+         * [Section3.boolProvenance], from the mesh and the two operand features; a body that has it names its
+         * faces, offers them to a sketch space, sections through them and can be **blended** exactly as an
+         * extrusion is.
+         */
+        val provenance: BoolProvenance? = null,
+        /** Why [provenance] is null — the reason [Section3.faces] and [Section3.edges] then give (OP-3). */
+        val provenanceRefusal: Msg? = null,
     ) : Feature3 {
         override val footprint: List<Region> get() = plan
     }
@@ -3113,8 +3129,18 @@ object Geom3 {
         return if (sameAxis(a.feature, b.feature)) {
             boolean(kind, a, b)
         } else {
-            val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
-            if (mesh == null) null to why else Solid3.of(Feature3.MeshBoolean(kind), mesh) to null
+            val (r, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
+            if (r == null) {
+                null to why
+            } else {
+                // **The result keeps its faces** (OP-31, item 4): the operand every triangle came from is the
+                // engine's own fact ([BoolMesh]), which face of that operand is a lookup against the operand's
+                // exact carriers, and the trim is computed. Assembled here rather than lazily because it is
+                // also what decides whether this body *has* faces, and that decision may not depend on who
+                // asks first.
+                val (prov, whyProv) = Section3.boolProvenance(a.feature, b.feature, r)
+                Solid3.of(Feature3.MeshBoolean(kind, provenance = prov, provenanceRefusal = whyProv), r.mesh) to null
+            }
         }
     }
 

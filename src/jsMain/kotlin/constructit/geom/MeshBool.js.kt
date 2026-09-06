@@ -94,7 +94,7 @@ actual object MeshBool {
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, Msg?> {
+    ): Pair<BoolMesh?, Msg?> {
         val w = wasm ?: return null to meshBoolUnavailable(failure)
         if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanNeedsTwoClosed()
         var ma: dynamic = null
@@ -115,7 +115,8 @@ actual object MeshBool {
             } else if (result.isEmpty() as Boolean) {
                 null to Msgs.refusalMeshboolBooleanLeavesNothingSolid()
             } else {
-                MeshCanon.finish(mesh3(result.getMesh()))
+                val out = result.getMesh()
+                MeshCanon.finish(mesh3(out), owners(out, ma.originalID() as Int, mb.originalID() as Int))
             }
         } catch (t: Throwable) {
             null to Msgs.refusalMeshboolGeneralBooleanEngineFailed2(message = t.message ?: "")
@@ -123,6 +124,40 @@ actual object MeshBool {
             // WASM heap objects are not garbage-collected for us — a boolean per recompute would leak
             for (p in listOf(ma, mb, result)) if (p != null) p.delete()
         }
+    }
+
+    /**
+     * **Which operand each result triangle came from** ([BoolMesh]), read off Manifold's own triangle runs —
+     * the browser's half of the same derivation the JVM actual states, and deliberately word for word the
+     * same one, because the two platforms have to name the same faces (OP-31, item 4).
+     *
+     * `runOriginalID` says which original a run of triangles belongs to and `runIndex` where each run starts
+     * (in indices, divisible by 3). A field the module does not fill in, or an id matching neither input,
+     * leaves `-1`: *"the engine did not say"*, which the assembly answers by looking the triangle up against
+     * both operands' carriers rather than guessing.
+     */
+    private fun owners(
+        mesh: dynamic,
+        idA: Int,
+        idB: Int,
+    ): IntArray {
+        val tris = mesh.triVerts.unsafeCast<Uint32Array>().length / 3
+        val out = IntArray(tris) { -1 }
+        val ids = mesh.runOriginalID.unsafeCast<Uint32Array?>() ?: return out
+        val starts = mesh.runIndex.unsafeCast<Uint32Array?>() ?: return out
+        if (ids.length == 0 || starts.length < ids.length) return out
+        for (run in 0 until ids.length) {
+            val which =
+                when (ids[run]) {
+                    idA -> 0
+                    idB -> 1
+                    else -> continue
+                }
+            val from = starts[run] / 3
+            val to = if (run + 1 < starts.length) starts[run + 1] / 3 else tris
+            for (i in from until minOf(to, tris)) out[i] = which
+        }
+        return out
     }
 
     /** [mesh] as a Manifold `Mesh`: three float properties per vertex, triangles as a `Uint32Array`. */

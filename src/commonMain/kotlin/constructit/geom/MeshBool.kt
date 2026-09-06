@@ -35,14 +35,37 @@ expect object MeshBool {
 
     /**
      * [kind] applied to two closed meshes, or null with a reason. The result is canonical
-     * ([MeshCanon.canonical]) and therefore a deterministic function of the two inputs.
+     * ([MeshCanon.canonical]) and therefore a deterministic function of the two inputs — and it carries
+     * **which operand every triangle's surface came from** ([BoolMesh.owner]), which is what lets the result
+     * keep its faces (OP-31, item 4).
      */
     fun boolean(
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,
-    ): Pair<Mesh3?, Msg?>
+    ): Pair<BoolMesh?, Msg?>
 }
+
+/**
+ * A general boolean's result **with the one fact the engine already knows about it** (OP-31, item 4): the
+ * canonical mesh, and for every triangle of it which operand's surface that triangle is a piece of — `0` for
+ * the first, `1` for the second, `-1` where the engine did not say.
+ *
+ * *Why this and not more.* A boolean never **moves** a surface: every triangle of the result lies in a face
+ * of one of the two operands, and the only emergent thing is where that face was trimmed. So the operand is
+ * the whole of what the mesh engine has to contribute — *which* face of that operand is then a lookup
+ * against the operand's own exact carriers ([Section3.boolProvenance]), not a measurement. That is the line
+ * OP-9's mesh-is-a-sink rule is corrected on: the creases are emergent, the surfaces never were.
+ *
+ * *Where the number comes from.* Manifold's own `runOriginalID`, matched against the `originalID` of the two
+ * input manifolds — a fact the engine carries for exactly this purpose (reapplying materials), on both
+ * platforms. It survives [MeshCanon.canonical] because the sort carries it: the array is permuted with the
+ * triangles rather than recomputed. `-1` is honest and not an error: the assembly then looks the triangle up
+ * against **both** operands' carriers, and refuses only if it lies on neither.
+ *
+ * Not a `data class`: an [IntArray] compares by identity, so a generated `equals` would lie.
+ */
+class BoolMesh(val mesh: Mesh3, val owner: IntArray)
 
 /**
  * The reason a general boolean cannot be had, in one place because both actuals and the DSL say it.
@@ -129,7 +152,20 @@ object MeshCanon {
         return maxOf(Geom3.WELD_TOL, WELD_ULPS * F32_ULP * scale)
     }
 
-    fun canonical(mesh: Mesh3): Mesh3 {
+    fun canonical(mesh: Mesh3): Mesh3 = canonicalWith(mesh, null).first
+
+    /**
+     * [canonical], with a **per-triangle tag carried through the sort** (OP-31, item 4).
+     *
+     * The tag is permuted with the triangles rather than recomputed, which is the whole of what makes a
+     * boolean's provenance as deterministic as its triangles: the same two meshes give the same triangle
+     * list *and* the same tags, bit for bit. A triangle that the weld makes degenerate takes its tag out of
+     * the list with it. `null` in means an all-`-1` array out, so a caller with nothing to say says nothing.
+     */
+    fun canonicalWith(
+        mesh: Mesh3,
+        owner: IntArray?,
+    ): Pair<Mesh3, IntArray> {
         val normalized = mesh.vertices.map { Vec3(zero(it.x), zero(it.y), zero(it.z)) }
         val distinct = normalized.distinct().sortedWith(compareBy({ it.x }, { it.y }, { it.z }))
         // The lattice the exact path already welds on, walked in the canonical order above so that which
@@ -153,7 +189,8 @@ object MeshCanon {
         val remap = IntArray(normalized.size) { indexOf.getValue(repOf.getValue(normalized[it])) }
 
         val tris = ArrayList<Tri>(mesh.triangles.size)
-        for (t in mesh.triangles) {
+        val tags = ArrayList<Int>(mesh.triangles.size)
+        for ((i, t) in mesh.triangles.withIndex()) {
             val a = remap[t.a]
             val b = remap[t.b]
             val c = remap[t.c]
@@ -167,9 +204,10 @@ object MeshCanon {
                     Tri(c, a, b)
                 },
             )
+            tags.add(owner?.getOrNull(i) ?: -1)
         }
-        tris.sortWith(compareBy({ it.a }, { it.b }, { it.c }))
-        return Mesh3(order, tris)
+        val order2 = tris.indices.sortedWith(compareBy({ tris[it].a }, { tris[it].b }, { tris[it].c }))
+        return Mesh3(order, order2.map { tris[it] }) to IntArray(order2.size) { tags[order2[it]] }
     }
 
     /**
@@ -188,11 +226,14 @@ object MeshCanon {
      * welds too, so "one vertex per position" is what a [Mesh3] means here, and a zero-thickness contact
      * has no representation in it either way.
      */
-    fun finish(mesh: Mesh3): Pair<Mesh3?, Msg?> {
-        val out = canonical(mesh)
+    fun finish(
+        mesh: Mesh3,
+        owner: IntArray? = null,
+    ): Pair<BoolMesh?, Msg?> {
+        val (out, tags) = canonicalWith(mesh, owner)
         if (out.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanProducedNoTriangles()
         val fault = fault(out)
-        return if (fault == null) out to null else null to fault
+        return if (fault == null) BoolMesh(out, tags) to null else null to fault
     }
 
     /**
@@ -292,11 +333,22 @@ object MeshCanon {
                 if (j <= i) continue
                 val m = normalOf(mesh, mesh.triangles[j]) ?: continue
                 if (n.dot(m) > FLAP_COS) continue
-                return Msgs.refusalMeshboolZeroThicknessFlapEdgeBetween(from = mesh.vertices[from].toString(), to = mesh.vertices[to].toString())
+                return Msgs.refusalMeshboolZeroThicknessFlapEdgeBetween(from = at(mesh.vertices[from]), to = at(mesh.vertices[to]))
             }
         }
         return null
     }
+
+    /**
+     * Where a point stands, **as a position a user reads**: `(x, y, z) mm`, each coordinate through the
+     * millimetre formatting every other refusal in this kernel already uses ([Frames3.mm]).
+     *
+     * A refusal is a sentence, and a sentence may not contain a Kotlin `toString` — which is what these two
+     * used to put in front of the reader (`Vec3(x=12.5, y=0.0, z=3.25)`). The value stays a `String`
+     * placeholder and that is right rather than a shortcut: a number already formatted is **format**, not
+     * words, so it is locale-neutral by rule (OP-18, OP-29) and no translated pattern has to know about it.
+     */
+    private fun at(v: Vec3): String = "(${Frames3.mm(v.x)}, ${Frames3.mm(v.y)}, ${Frames3.mm(v.z)}) mm"
 
     /** The unit normal of one triangle, or null where it has no area to have one. */
     private fun normalOf(
@@ -322,7 +374,7 @@ object MeshCanon {
                 val forward = uses[edge(from, to)] ?: 0
                 val back = uses[edge(to, from)] ?: 0
                 if (forward != 1 || back != 1) {
-                    return Msgs.refusalMeshboolGeneralBooleanResultIsNot(from = mesh.vertices[from].toString(), to = mesh.vertices[to].toString(), forward = forward, back = back)
+                    return Msgs.refusalMeshboolGeneralBooleanResultIsNot(from = at(mesh.vertices[from]), to = at(mesh.vertices[to]), forward = forward, back = back)
                 }
             }
         }

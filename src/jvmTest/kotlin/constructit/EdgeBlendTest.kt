@@ -397,7 +397,16 @@ class EdgeBlendTest {
         assertTrue(loss > before - Geom3.volume(rounded.mesh), "a chamfer of $d takes more than a round of $d")
     }
 
-    /** A body the mesh engine made has no named edges, so a blend on it declines in [Section3]'s own words. */
+    /**
+     * A body the mesh engine made from a **curved** operand has no named edges, so a blend on it declines in
+     * [Section3]'s own words.
+     *
+     * *What moved under this test* (OP-31, item 4, session 83). A general boolean's result now keeps its
+     * faces and its creases wherever both operands' faces are **planes** — the reporter of GitHub #36 rounds
+     * an edge of one, and [BooleanProvenanceScriptTest] is that case. The bar here is *turned*, so one of its
+     * faces is a cylinder, and a curved carrier is the whole case this slice does not carry: the refusal
+     * stands and names the face rather than the route.
+     */
     @Test
     fun aMeshOnlyBodyHasNoEdgesToBlend() {
         val cx = Construction()
@@ -408,7 +417,7 @@ class EdgeBlendTest {
         val body = ev.solid(fused)
         assertManifold(body.mesh, "the fused body")
         val (targets, why) = Blend3.targets(body.feature, false, 0)
-        assertTrue(targets == null, "a mesh boolean's result names no edges")
-        assertTrue(assertNotNull(why).contains("mesh-only"), "and says so: $why")
+        assertTrue(targets == null, "a boolean over a curved operand names no edges")
+        assertTrue(assertNotNull(why).contains("is not a plane"), "and names the face it is about: $why")
     }
 }
