@@ -14588,6 +14588,39 @@ the composition table is driven generically as well as by its own test.
   very checks reported a stale all-clear against yesterday's bundle, which is the same defect as a review
   nobody repeats, one layer down.
 
+- **Turn 83 — languages, the parked area: the exchange package finally says nothing of its own** (OP-29;
+  session 81). Nothing here is new mechanism, which is the point the package was queued to make: the four
+  slices built a `Msg` factory, a review loop and a plugin run general enough that a fifth area — one no
+  slice had ever touched — is a day of ordinary conversion, not a fifth slice. `Exports.kt`, `ExportScene.kt`,
+  `Imports.kt`, `JtImport.kt` and `ThreeMf.kt` gave up 25 sentences to `l10n/app_en.arb`, the `+ (if (n == 1)
+  "" else "s")` idiom among them now an ICU `plural`, and every one of them composes the way `phraseDashReason`
+  already taught this codebase to: a clause that is sometimes empty is a `message`-typed argument filled with
+  `Msg.EMPTY` (export's trailing note, import's *open shell* / *refused* / *file-note* clauses), and "one body
+  and one wireframe run" is `Msgs.listAnd` fed two already-built messages rather than a third string spliced
+  by hand. Because every one of the five files renders its own sentence immediately — `Exports.export` and
+  `Imports.importScene` hand a caller a finished `String`, never a stored `Msg`, since the result is read once
+  and discarded rather than kept live across a language switch the way `Document.noteMsg` must survive — the
+  ~1500 existing substring assertions over `.message`/`.refusal` needed not one rewording, which is what
+  "English patterns byte-identical to today's" actually bought: `Msgs.xxx(...).render()` reproduces the exact
+  old string concatenation, byte for byte, and the suite that already existed proved it rather than a suite
+  written for the occasion. **`EngineBundleTest` gained one thing besides a fifth directory**: `ThreeMf.kt`
+  hand-builds 3MF's XML one tag per string literal, and an attribute sitting beside its value
+  (`"<Types xmlns=\"...\">"`) reads as two words side by side exactly as English prose does — so the scanner
+  borrowed `ChromeBundleTest`'s own `withoutMarkup` (tags stripped before the prose regex runs) rather than
+  growing a `developerText` whitelist that would have hidden a real sentence behind a rule. **The review loop
+  earned its keep again, on a much smaller bundle**: German and French cost 3,986 billed characters for the
+  25 keys (2,205 of 2,230 reused verbatim), `TranslationReviewTest` caught the one class of error it is built
+  to catch — French left *Extrude* and *Revolve* untranslated where the rest of the chrome already carries
+  *Extruder* and *Révolution* — and reading caught eight more no test could: German's *"scales, shears or
+  mirrors"* came back with *shears* as **verschiebt** (*moves*, a different transform entirely), a plural's
+  singular branch left *solid* and *"von Körpern"* untranslated or mistranslated, French put the invariant
+  nouns *corps* and *tracé filaire* through a partitive *"de"* that does not belong on either, a French *"is an
+  open shell"* verb agreed as plural even in its own singular branch, and *"manifold orientation"* — this
+  project's OP-9 sense of *watertight* by another name — lost the word "manifold" in both languages until it
+  was respelled against the wording `ui.3mf.title` already uses for the identical requirement. One new test,
+  `ExportSceneTest.theOpenShellExportNoteSpeaksGermanAndFrenchOffOneValue`, renders one `Msg` value in three
+  languages to keep the point honest. **OP-29 now has no parked area left.**
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -20933,12 +20966,18 @@ own diagnostics, parked twice, went with it. It leaves **one** thing parked, sta
 **`exchange/` layer**'s import and export notes, the one area no slice of OP-29 owned — a future extension
 with the mechanism already built and the loop already standing, not a non-goal.
 
-**Queued in session 81 — the `exchange/` layer's own words (OP-29's one parked area).** About twenty
-user-visible sentences in `Exports.kt`, `Imports.kt`, `JtImport.kt` and `ExportScene.kt` — what was exported
-and what was skipped, why a JT file could not be read, which bodies are open shells — plus one
+**Retired in session 81 — the `exchange/` layer's own words (OP-29's one parked area).** ~~Queued: about
+twenty user-visible sentences in `Exports.kt`, `Imports.kt`, `JtImport.kt` and `ExportScene.kt` — what was
+exported and what was skipped, why a JT file could not be read, which bodies are open shells — plus one
 `+ (if (n == 1) "" else "s")` idiom that renders *"2 Elements"* in German. They are the last English a user
 can be shown. The work is: move them into `l10n/app_en.arb` with real descriptions, add `exchange/` to
-`EngineBundleTest`'s list, re-run `translateArb`, and let `TranslationReviewTest` name what came back wrong.
+`EngineBundleTest`'s list, re-run `translateArb`, and let `TranslationReviewTest` name what came back wrong.~~
+Done: 25 `Msg` keys now carry every sentence of `Exports.kt`, `ExportScene.kt`, `Imports.kt`, `JtImport.kt`
+and `ThreeMf.kt` — the plural idiom among them an ICU plural, `EngineBundleTest` scanning `exchange/` from
+here on (markup-stripped, since `ThreeMf.kt` hand-builds 3MF's XML one tag per literal) — and German and
+French passed the same review loop for 3,986 billed DeepL characters, one correction the loop itself caught
+(French kept *Extrude*/*Revolve* untranslated) and eight more only reading found, "shears" landing as
+*verschiebt* (moves) among them. See *Turn 83* in the discussion log.
 
 **Slice 1 of the languages retired in session 81 — the mechanism, and the chrome.** The ARB, the generator,
 the two `format` actuals and the locale switch are built, and the whole chrome speaks them: 134 tool rows,

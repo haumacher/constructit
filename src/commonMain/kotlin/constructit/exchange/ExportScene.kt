@@ -10,6 +10,7 @@ import constructit.editor.ElementKind
 import constructit.editor.Mat4
 import constructit.geom.Axis3
 import constructit.geom.Mesh3
+import constructit.l10n.Messages
 
 /**
  * One exportable body: a **named node** carrying an indexed triangle mesh and one material.
@@ -92,9 +93,9 @@ class ExportScene(
             if (nodes.isNotEmpty()) {
                 null
             } else if (notes.isEmpty()) {
-                "nothing to export: this drawing has no solid yet — trace an outline, then Extrude or Revolve"
+                Messages.refusalExportNothingToExportNoSolidYet()
             } else {
-                "nothing to export: " + notes.joinToString("; ")
+                Messages.refusalExportNothingToExportBecause(why = notes.joinToString("; "))
             }
 
     companion object {
@@ -144,11 +145,11 @@ class ExportScene(
                 if (el.ref.node.id in consumed) continue
                 val mesh = (ev.valueOf(el.ref) as? SolidValue)?.solid?.mesh
                 if (!el.visible) {
-                    notes.add("${exportName(doc, el)} is hidden — not exported")
+                    notes.add(Messages.noteExportHidden(name = exportName(doc, el)))
                     continue
                 }
                 if (mesh == null || mesh.triangles.isEmpty()) {
-                    notes.add("${exportName(doc, el)} is invalid — not exported (its construction produced no solid)")
+                    notes.add(Messages.noteExportInvalid(name = exportName(doc, el)))
                     continue
                 }
                 nodes.add(ExportNode(exportName(doc, el), mesh, doc.materialOf(el)))

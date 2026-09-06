@@ -13,6 +13,7 @@ import constructit.exchange.ExportScene
 import constructit.exchange.LengthUnit
 import constructit.geom.Axis3
 import constructit.geom.Vec2
+import constructit.l10n.Msgs
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -231,5 +232,24 @@ class ExportSceneTest {
         assertEquals(before.nodes.map { it.name }, after.nodes.map { it.name })
         assertEquals(before.nodes.single().mesh.vertices, after.nodes.single().mesh.vertices)
         assertEquals(before.nodes.single().mesh.triangles, after.nodes.single().mesh.triangles)
+    }
+
+    /**
+     * **The exchange package's own words, off one value, in German and French** (the session-81 exchange
+     * package that closed OP-29's one parked area). `note.export.openShell` carries the plural idiom the
+     * queue named (`+ (if (n == 1) "" else "s")`, now an ICU plural) — one `Msg` value, rendered in three
+     * languages, none of them recomputed.
+     */
+    @Test
+    fun theOpenShellExportNoteSpeaksGermanAndFrenchOffOneValue() {
+        val one = Msgs.noteExportOpenShell(count = 1, names = "e42")
+        assertTrue("e42 is an open shell" in one.render("en"), one.render("en"))
+        assertTrue("e42 ist eine offene Schale" in one.render("de"), one.render("de"))
+        assertTrue("e42 correspond à une coque ouverte" in one.render("fr"), one.render("fr"))
+
+        val many = Msgs.noteExportOpenShell(count = 2, names = "e42, e43")
+        assertTrue("e42, e43 are open shells" in many.render("en"), many.render("en"))
+        assertTrue("e42, e43 sind offene Schalen" in many.render("de"), many.render("de"))
+        assertTrue("e42, e43 sont des coques ouvertes" in many.render("fr"), many.render("fr"))
     }
 }

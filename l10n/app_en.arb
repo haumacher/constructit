@@ -2,6 +2,7 @@
   "@@locale": "en",
   "@@x-geom-session-81-corners": "geom: session 81 corners",
   "@@x-section-slice3": "l10n: session 81 slice 3",
+  "@@x-section-exchange": "l10n: session 81 exchange",
   "tool.point.title": "Point",
   "@tool.point.title": {
     "description": "UI text of the \"Point\" tool in ConstructIt, a parametric 2D/3D CAD program; toolbar section \"points\". These strings are the tool's button label, the help sentence shown while it is armed, and the names of the things it asks the user to click. What the tool does: Click empty space to place a free point.",
@@ -18764,5 +18765,261 @@
       }
     },
     "x-translated": "32f36bfc"
+  },
+  "msg.export.format.purpose.glb": "for viewing: glTF 2.0, one node per solid, PBR materials",
+  "@msg.export.format.purpose.glb": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Tooltip text next to the GLB export button, describing what this export format is for (a viewing format, glTF 2.0 with one scene node per solid body and PBR materials).",
+    "x-translated": "b431670a"
+  },
+  "msg.export.format.purpose.threeMf": "for printing: units and manifold orientation are part of the spec",
+  "@msg.export.format.purpose.threeMf": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Tooltip text next to the 3MF export button, describing what this export format is for (a printing format whose specification requires a stated unit and a manifold, consistently oriented mesh).",
+    "x-translated": "21cfc86c"
+  },
+  "msg.export.format.purpose.stl": "the universal fallback: triangles only, millimetres by convention",
+  "@msg.export.format.purpose.stl": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Tooltip text next to the STL export button, describing what this export format is for (the universal fallback format: an unlabelled triangle soup, millimetres only by convention, no units field).",
+    "x-translated": "d780697d"
+  },
+  "msg.export.format.purpose.jt": "for CAD interchange: Siemens JT (ISO 14306), written by the kotlinJT sibling",
+  "@msg.export.format.purpose.jt": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Tooltip text next to the JT export button, describing what this export format is for (CAD interchange with other CAD systems, the Siemens JT format standardized as ISO 14306). \"kotlinJT\" is the name of the sibling open-source library that writes the file and must not be translated.",
+    "x-translated": "e6f559e"
+  },
+  "note.export.hidden": "{name} is hidden — not exported",
+  "@note.export.hidden": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). One entry in the parenthetical list of skipped bodies inside an export result note, naming a solid that was not exported because the user hid it in the drawing. {name} is the drawing's own name for the element (such as \"e14\") and must never be translated.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    },
+    "x-translated": "b41d3b93"
+  },
+  "note.export.invalid": "{name} is invalid — not exported (its construction produced no solid)",
+  "@note.export.invalid": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). One entry in the parenthetical list of skipped bodies inside an export result note, naming a solid that was not exported because its construction currently evaluates to no geometry at all (OP-3). {name} is the drawing's own name for the element and must never be translated.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    },
+    "x-translated": "c6204414"
+  },
+  "refusal.export.nothingToExportNoSolidYet": "nothing to export: this drawing has no solid yet — trace an outline, then Extrude or Revolve",
+  "@refusal.export.nothingToExportNoSolidYet": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when Export is used on a drawing that has never built any 3D solid at all. \"Extrude\" and \"Revolve\" are the exact names of two tools of this program and should be translated the same way their own tool-button labels are.",
+    "x-translated": "3bd8e324"
+  },
+  "refusal.export.nothingToExportBecause": "nothing to export: {why}",
+  "@refusal.export.nothingToExportBecause": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when Export finds solids in the drawing but every one of them was skipped (hidden or invalid). {why} is the semicolon-separated list of already-worded reasons (see note.export.hidden and note.export.invalid) and is inserted as already-composed text.",
+    "placeholders": {
+      "why": {
+        "type": "String"
+      }
+    },
+    "x-translated": "b5c10389"
+  },
+  "note.export.openShell": "{count, plural, one{{names} is an open shell} other{{names} are open shells}} — written as-is, not printable",
+  "@note.export.openShell": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Clause appended to a successful export's result note (GLB or JT) naming which bodies came from an import and are open shells rather than closed solids: they are written into the file exactly as they are, but a slicer cannot print them. {names} is the comma-separated list of the drawing's own names for those bodies (never translated); {count} is how many of them there are, and selects the verb.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    },
+    "x-translated": "4ee8fc03"
+  },
+  "refusal.export.notExported": "not exported — {reason}",
+  "@refusal.export.notExported": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when a 3MF, STL or JT export could not be written at all. {reason} is the already-worded reason: either the printing formats' own open-shell refusal (see refusal.export.openShellCannotPrint) or the message of an exception the writer library raised.",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    },
+    "x-translated": "290e73cb"
+  },
+  "msg.export.exported": "Exported {fileName} — {bodyCount, plural, one{{bodyCount} solid} other{{bodyCount} solids}}, {triangleCount} triangles{notes}",
+  "@msg.export.exported": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Note shown in the file-note area after a successful export to GLB, 3MF, STL or JT, summarizing what went into the file. {fileName} is the file name that was written (such as \"drawing.glb\") and is never translated. {bodyCount} is how many solid bodies the file holds, {triangleCount} is the total triangle count of its meshes (always read out with the plural word, even for a count of one, matching this program's long-standing wording). {notes} is empty when nothing more needs saying, or a parenthetical clause naming a hidden or invalid body, or an open-shell warning (see phrase.parenNote).",
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "notes": {
+        "type": "message"
+      },
+      "triangleCount": {
+        "type": "int"
+      },
+      "bodyCount": {
+        "type": "int"
+      }
+    },
+    "x-translated": "e673cfba"
+  },
+  "phrase.parenNote": " ({notes})",
+  "@phrase.parenNote": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A trailing parenthetical clause appended to an export or import result note in this program, carrying one or more semicolon-separated remarks about what happened (a skipped body, an open shell, a note the file itself carried). Note the leading space: this is appended directly after the sentence before it. {notes} is the already-composed text of those remarks.",
+    "placeholders": {
+      "notes": {
+        "type": "message"
+      }
+    },
+    "x-translated": "c8d1440c"
+  },
+  "refusal.export.openShellCannotPrint": "{name} is an open shell, so it cannot be printed ({why}) — hide it to export the rest",
+  "@refusal.export.openShellCannotPrint": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when a 3MF or STL export is asked to write a body that is an open shell (imported geometry whose surface does not close), which a print file cannot represent. {name} is the drawing's own name for the offending body (never translated); {why} is the geometric reason the body is not closed (a sentence fragment from this program's mesh-validity check, such as \"the surface is not closed and consistently wound at the edge 3-4\").",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "why": {
+        "type": "String"
+      }
+    },
+    "x-translated": "39a57e86"
+  },
+  "refusal.import.notReadableJtFile": "not imported — this is not a readable JT file ({reason})",
+  "@refusal.import.notReadableJtFile": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when the bytes handed to Import could not be parsed as a JT file at all. {reason} is whatever the JT reader library says went wrong, in its own words (not composed by this program and not necessarily English).",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    },
+    "x-translated": "1d2e7c4a"
+  },
+  "refusal.import.noMeasurementUnit": "not imported — {fileName} declares no measurement unit, so its numbers have no length; re-export it from the CAD system with units set (JT_PROP_MEASUREMENT_UNITS)",
+  "@refusal.import.noMeasurementUnit": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when a JT file was read successfully but declares no length unit at all, so this program refuses to guess a scale. {fileName} is the name of the file the user picked and is never translated. \"JT_PROP_MEASUREMENT_UNITS\" is the exact name of a property in the JT file format and other CAD tools' own dialogs, and must not be translated.",
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    },
+    "x-translated": "5d5c64ed"
+  },
+  "refusal.import.nothingImported": "nothing imported from {fileName}: {why}",
+  "@refusal.import.nothingImported": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Refusal shown in the file-note area when a JT file was read successfully but offered no body and no wireframe run this program could place at all. {fileName} is the name of the file the user picked and is never translated. {why} is the already-worded, semicolon-separated list of reasons (or, when there is nothing more specific to say, \"it holds no geometry at all\" — see refusal.import.noGeometryAtAll).",
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "why": {
+        "type": "String"
+      }
+    },
+    "x-translated": "26c52824"
+  },
+  "refusal.import.noGeometryAtAll": "it holds no geometry at all",
+  "@refusal.import.noGeometryAtAll": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). The fallback reason inside refusal.import.nothingImported when a JT file offered nothing more specific to say about why nothing came in.",
+    "x-translated": "fd3b1eac"
+  },
+  "msg.import.bodies": "{count, plural, one{{count} body} other{{count} bodies}}",
+  "@msg.import.bodies": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). How many solid bodies an import brought in, read out as a phrase (\"1 body\", \"3 bodies\") that becomes part of the larger \"Imported …\" result note (see msg.import.imported).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    },
+    "x-translated": "7ad9c559"
+  },
+  "msg.import.runs": "{count, plural, one{{count} wireframe run} other{{count} wireframe runs}}",
+  "@msg.import.runs": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). How many wireframe runs (open or closed polylines that are not solid bodies — centrelines, sketches, construction curves) an import brought in, read out as a phrase (\"1 wireframe run\", \"2 wireframe runs\") that becomes part of the larger \"Imported …\" result note (see msg.import.imported).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    },
+    "x-translated": "22e328ee"
+  },
+  "msg.import.openShellsClause": " — {count, plural, one{{names} is an open shell} other{{names} are open shells}}: display and arrangement only, excluded from 3MF/STL and from booleans",
+  "@msg.import.openShellsClause": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Clause appended to a successful import's result note, naming which of the imported bodies are open shells (surfaces that do not close) rather than closed solids, and what that limits them to. Note the leading space: this is appended directly after the sentence before it. {names} is the comma-separated list of the drawing's own names for those bodies (never translated); {count} is how many there are and selects the verb. \"3MF/STL\" are the exact names of two file formats and must not be translated.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    },
+    "x-translated": "904cf951"
+  },
+  "msg.import.refusedClause": " ({count} refused: {list})",
+  "@msg.import.refusedClause": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Clause appended to an import's result note, naming bodies the file offered that this program declined to bring in at all, and why. Note the leading space: this is appended directly after the sentence before it. {count} is how many were refused; {list} is the already-worded, semicolon-separated list of their reasons.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "list": {
+        "type": "String"
+      }
+    },
+    "x-translated": "8d98b6db"
+  },
+  "msg.import.imported": "Imported {what} from {fileName}{open}{bad}{rest}",
+  "@msg.import.imported": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Note shown in the file-note area after a successful import from a JT file, summarizing what came in. {what} says how many bodies and wireframe runs came in (see msg.import.bodies, msg.import.runs); {fileName} is the name of the file the user picked and is never translated. {open}, {bad} and {rest} are each either empty or a parenthetical clause: which bodies are open shells (msg.import.openShellsClause), which were refused (msg.import.refusedClause), and any other remark the file itself carried (phrase.parenNote).",
+    "placeholders": {
+      "rest": {
+        "type": "message"
+      },
+      "fileName": {
+        "type": "String"
+      },
+      "what": {
+        "type": "message"
+      },
+      "bad": {
+        "type": "message"
+      },
+      "open": {
+        "type": "message"
+      }
+    },
+    "x-translated": "6372f541"
+  },
+  "note.import.transformNotPlacementRun": "{name} carries a transform that scales, shears or mirrors it, which is not a placement — it was applied to the run's own points instead, so it cannot be re-placed from it",
+  "@note.import.transformNotPlacementRun": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Note about one imported wireframe part whose file transform is not a rigid rotation and translation (it also scales, shears or mirrors the geometry), so this program could not turn it into an editable placement and baked it into the run's own coordinates instead. {name} is the drawing's own name for the wireframe part and must never be translated.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    },
+    "x-translated": "aef61a29"
+  },
+  "note.import.transformNotPlacementBody": "{name} carries a transform that scales, shears or mirrors it, which is not a placement — it was applied to the body's own vertices instead, so the body cannot be re-placed from it",
+  "@note.import.transformNotPlacementBody": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). Note about one imported solid body whose file transform is not a rigid rotation and translation (it also scales, shears or mirrors the geometry), so this program could not turn it into an editable placement and baked it into the body's own vertices instead. {name} is the drawing's own name for the body and must never be translated.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    },
+    "x-translated": "af1cb8e2"
+  },
+  "note.import.theFileSays": "the file says: {text}",
+  "@note.import.theFileSays": {
+    "description": "ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). One entry among the notes an import carries over verbatim from the JT reader library's own honesty contract — something the library could not represent faithfully. {text} is the library's own wording and is not composed by this program (not necessarily English).",
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    },
+    "x-translated": "c9891e35"
   }
 }

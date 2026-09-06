@@ -1,6 +1,7 @@
 package constructit.exchange
 
 import constructit.geom.Watertight
+import constructit.l10n.Messages
 
 /**
  * **3MF — the printing half, done honestly.** Core spec only: an OPC (ZIP) container with three parts, one
@@ -42,7 +43,7 @@ object ThreeMf {
     fun check(scene: ExportScene): String? {
         for (n in scene.nodes) {
             val why = Watertight.defect(n.mesh) ?: continue
-            return "${n.name} is an open shell, so it cannot be printed ($why) — hide it to export the rest"
+            return Messages.refusalExportOpenShellCannotPrint(name = n.name, why = why.render())
         }
         return null
     }

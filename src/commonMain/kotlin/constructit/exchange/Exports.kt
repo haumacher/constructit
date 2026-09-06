@@ -3,6 +3,9 @@ package constructit.exchange
 import constructit.core.Evaluator
 import constructit.editor.Document
 import constructit.geom.Watertight
+import constructit.l10n.Messages
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import de.haumacher.kotlinjt.write.JtWriteException
 
 /**
@@ -24,12 +27,18 @@ enum class ExportFormat(
     val extension: String,
     /** The MIME type a browser download should carry. */
     val mimeType: String,
-    /** What this format is *for*, in the words the button's tooltip uses. */
-    val purpose: String,
+    /**
+     * What this format is *for*, in the words the button's tooltip uses (OP-29's exchange slice).
+     *
+     * A `Msg` rather than a pre-rendered `String`, even though every constant sits in a table built once per
+     * session: it is this enum's own render-at-the-edge promise, since a tooltip wired to it later must still
+     * read in whatever language is active *then*, not in the language active when the JVM loaded this class.
+     */
+    val purpose: Msg,
 ) {
-    GLB("GLB", "glb", "model/gltf-binary", "for viewing: glTF 2.0, one node per solid, PBR materials"),
-    THREE_MF("3MF", "3mf", "model/3mf", "for printing: units and manifold orientation are part of the spec"),
-    STL("STL", "stl", "model/stl", "the universal fallback: triangles only, millimetres by convention"),
+    GLB("GLB", "glb", "model/gltf-binary", Msgs.msgExportFormatPurposeGlb()),
+    THREE_MF("3MF", "3mf", "model/3mf", Msgs.msgExportFormatPurposeThreeMf()),
+    STL("STL", "stl", "model/stl", Msgs.msgExportFormatPurposeStl()),
 
     /**
      * JT has **no registered media type**: `model/jt` is passed around in the wild but names no registry
@@ -37,7 +46,7 @@ enum class ExportFormat(
      * download carries the truthful one — "a byte stream this transport does not name" — and the extension
      * says the rest, which is what every consumer of a JT file keys on anyway.
      */
-    JT("JT", "jt", "application/octet-stream", "for CAD interchange: Siemens JT (ISO 14306), written by the kotlinJT sibling"),
+    JT("JT", "jt", "application/octet-stream", Msgs.msgExportFormatPurposeJt()),
 }
 
 /**
@@ -79,11 +88,13 @@ object Exports {
                 // kind of surprise that is discovered on the print bed. Every other format writes it — see
                 // [openShellNote].
                 ExportFormat.THREE_MF ->
-                    ThreeMf.check(scene)?.let { return ExportResult(format, fileName, null, "not exported — $it") }
-                        ?: ThreeMf.write(scene)
+                    ThreeMf.check(scene)?.let {
+                        return ExportResult(format, fileName, null, Messages.refusalExportNotExported(reason = it))
+                    } ?: ThreeMf.write(scene)
                 ExportFormat.STL ->
-                    Stl.check(scene)?.let { return ExportResult(format, fileName, null, "not exported — $it") }
-                        ?: Stl.write(scene)
+                    Stl.check(scene)?.let {
+                        return ExportResult(format, fileName, null, Messages.refusalExportNotExported(reason = it))
+                    } ?: Stl.write(scene)
                 // The sibling library refuses, by name, any scene its own reader would hand back differently
                 // (a node with geometry *and* children, an undeclared unit, a child its collapse would splice
                 // out). The adapter is built so none of those is reachable — but a refusal that escapes as a
@@ -93,17 +104,31 @@ object Exports {
                     try {
                         Jt.write(scene)
                     } catch (e: JtWriteException) {
-                        return ExportResult(format, fileName, null, "not exported — ${e.message}")
+                        return ExportResult(
+                            format,
+                            fileName,
+                            null,
+                            Messages.refusalExportNotExported(reason = e.message ?: ""),
+                        )
                     }
             }
-        val bodies = "${scene.nodes.size} solid${if (scene.nodes.size == 1) "" else "s"}"
         val said = scene.notes + openShellNote(scene)
-        val notes = if (said.isEmpty()) "" else " (${said.joinToString("; ")})"
+        val notesArg =
+            if (said.isEmpty()) {
+                Msg.EMPTY
+            } else {
+                Msgs.phraseParenNote(notes = Msg.joined(said.map { Msg.text(it) }, "; "))
+            }
         return ExportResult(
             format,
             fileName,
             bytes,
-            "Exported $fileName — $bodies, ${scene.triangleCount} triangles$notes",
+            Messages.msgExportExported(
+                fileName = fileName,
+                bodyCount = scene.nodes.size,
+                triangleCount = scene.triangleCount,
+                notes = notesArg,
+            ),
         )
     }
 
@@ -121,6 +146,6 @@ object Exports {
     private fun openShellNote(scene: ExportScene): List<String> {
         val open = scene.nodes.filter { Watertight.defect(it.mesh) != null }.map { it.name }
         if (open.isEmpty()) return emptyList()
-        return listOf("${open.joinToString(", ")} ${if (open.size == 1) "is an open shell" else "are open shells"} — written as-is, not printable")
+        return listOf(Messages.noteExportOpenShell(count = open.size, names = open.joinToString(", ")))
     }
 }

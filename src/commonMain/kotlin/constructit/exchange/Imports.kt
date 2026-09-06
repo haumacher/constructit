@@ -9,6 +9,9 @@ import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.geom.Watertight
 import constructit.geom.Xform3
+import constructit.l10n.Messages
+import constructit.l10n.Msg
+import constructit.l10n.Msgs
 import constructit.units.Quantity
 import de.haumacher.kotlinjt.scene.LodPolicy
 import de.haumacher.kotlinjt.scene.readScene
@@ -136,7 +139,7 @@ object Imports {
                 return refused(
                     ImportFormat.JT,
                     fileName,
-                    "not imported — this is not a readable JT file (${e.message ?: e.toString()})",
+                    Messages.refusalImportNotReadableJtFile(reason = e.message ?: e.toString()),
                 )
             }
         return importScene(doc, scene, fileName)
@@ -163,8 +166,7 @@ object Imports {
                 ?: return refused(
                     format,
                     fileName,
-                    "not imported — $fileName declares no measurement unit, so its numbers have no length; " +
-                        "re-export it from the CAD system with units set (JT_PROP_MEASUREMENT_UNITS)",
+                    Messages.refusalImportNoMeasurementUnit(fileName = fileName),
                 )
         val offered = JtImport.bodies(scene, mmPerUnit)
         val names = ArrayList<String>()
@@ -200,27 +202,28 @@ object Imports {
         // (OP-18), so it survives save and undo — and `Show` takes it back.
         if (literals.isNotEmpty()) doc.setElementsVisible(literals, false)
         if (names.isEmpty() && runNames.isEmpty()) {
-            val why = (refusals + notes).ifEmpty { listOf("it holds no geometry at all") }
-            return refused(format, fileName, "nothing imported from $fileName: " + why.joinToString("; "))
+            val why = (refusals + notes).ifEmpty { listOf(Messages.refusalImportNoGeometryAtAll()) }
+            return refused(format, fileName, Messages.refusalImportNothingImported(fileName = fileName, why = why.joinToString("; ")))
         }
-        val bodyWord = "${names.size} bod${if (names.size == 1) "y" else "ies"}"
-        val runWord = "${runNames.size} wireframe run${if (runNames.size == 1) "" else "s"}"
-        val what =
+        val bodyMsg = Msgs.msgImportBodies(count = names.size)
+        val runMsg = Msgs.msgImportRuns(count = runNames.size)
+        val what: Msg =
             when {
-                runNames.isEmpty() -> bodyWord
-                names.isEmpty() -> runWord
-                else -> "$bodyWord and $runWord"
+                runNames.isEmpty() -> bodyMsg
+                names.isEmpty() -> runMsg
+                else -> Msgs.listAnd(head = bodyMsg, last = runMsg)
             }
         // stated **first** after the count, because it changes what the body can be used for
-        val open =
+        val open: Msg =
             if (shells.isEmpty()) {
-                ""
+                Msg.EMPTY
             } else {
-                " — ${shells.joinToString(", ")} ${if (shells.size == 1) "is an open shell" else "are open shells"}: " +
-                    "display and arrangement only, excluded from 3MF/STL and from booleans"
+                Msgs.msgImportOpenShellsClause(count = shells.size, names = shells.joinToString(", "))
             }
-        val bad = if (refusals.isEmpty()) "" else " (${refusals.size} refused: ${refusals.joinToString("; ")})"
-        val rest = if (notes.isEmpty()) "" else " (${notes.joinToString("; ")})"
+        val bad: Msg =
+            if (refusals.isEmpty()) Msg.EMPTY else Msgs.msgImportRefusedClause(count = refusals.size, list = refusals.joinToString("; "))
+        val rest: Msg =
+            if (notes.isEmpty()) Msg.EMPTY else Msgs.phraseParenNote(notes = Msg.joined(notes.map { Msg.text(it) }, "; "))
         return ImportResult(
             format = format,
             fileName = fileName,
@@ -229,7 +232,7 @@ object Imports {
             refusals = refusals,
             openShells = shells,
             notes = notes,
-            message = "Imported $what from $fileName$open$bad$rest",
+            message = Messages.msgImportImported(what = what, fileName = fileName, open = open, bad = bad, rest = rest),
         )
     }
 

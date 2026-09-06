@@ -8,6 +8,7 @@ import constructit.geom.Tri
 import constructit.geom.Vec3
 import constructit.geom.Xform3
 import constructit.geom.movedBy
+import constructit.l10n.Messages
 import de.haumacher.kotlinjt.scene.LengthUnit as JtLengthUnit
 import de.haumacher.kotlinjt.scene.Mat4 as JtMat4
 import de.haumacher.kotlinjt.scene.Material as JtMaterial
@@ -126,7 +127,7 @@ object JtImport {
         var met = 0
         // the library's own honesty contract, carried through unchanged: what it could not represent
         // faithfully is what this import could not either
-        for (n in scene.notes) notes.add("the file says: ${n.message}")
+        for (n in scene.notes) notes.add(Messages.noteImportTheFileSays(text = n.message))
 
         fun walk(
             node: JtSceneNode,
@@ -199,8 +200,7 @@ object JtImport {
             if (rigid) {
                 null
             } else {
-                "$name carries a transform that scales, shears or mirrors it, which is not a placement — " +
-                    "it was applied to the run's own points instead, so it cannot be re-placed from it"
+                Messages.noteImportTransformNotPlacementRun(name = name)
             }
         return JtWire(name, out, if (rigid) pose else Xform3.IDENTITY, appearanceOf(material), note)
     }
@@ -234,8 +234,7 @@ object JtImport {
             local.movedBy(pose),
             Xform3.IDENTITY,
             appearanceOf(material),
-            "$name carries a transform that scales, shears or mirrors it, which is not a placement — " +
-                "it was applied to the body's own vertices instead, so the body cannot be re-placed from it",
+            Messages.noteImportTransformNotPlacementBody(name = name),
         )
     }
 

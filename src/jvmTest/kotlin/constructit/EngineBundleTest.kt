@@ -12,14 +12,17 @@ import kotlin.test.assertTrue
  * its *coverage*, and coverage is what a feature like this loses silently — the next refusal written in
  * `geom/`, the next status note added to `Document`, carries its words in Kotlin unless something says
  * otherwise. So this reads the places the engine speaks from — `geom/`, `dsl/`, `core/`, `expr/`, `units/`,
- * `editor/Document.kt` and `editor/Editor.kt` — lexes their string literals and fails on any that reads as
- * an English sentence.
+ * `exchange/`, `editor/Document.kt` and `editor/Editor.kt` — lexes their string literals and fails on any
+ * that reads as an English sentence.
  *
  * `expr/` and `units/` joined the list in **slice 4**: the formula language's own diagnostics (*"a value is
  * expected at position 4"*, *"unknown unit 'in'"*) and the two dimension refusals beneath them were parked
- * by slice 2 and again by slice 3, and they were the last English the engine produced. What is left outside
- * this list, and why, is `exchange/` — the import and export notes, which are the one area no slice of
- * OP-29 has owned; see the closing note in DESIGN.md.
+ * by slice 2 and again by slice 3, and they were the last English the engine produced.
+ *
+ * `exchange/` joined the list in the **session 81 exchange package**, closing the one area OP-29 had left
+ * parked: the export and import notes of `Exports.kt`, `ExportScene.kt`, `Imports.kt`, `JtImport.kt` and
+ * `ThreeMf.kt`, and the one `+ "s"` plural idiom among them (an ICU plural now). See the as-built note under
+ * *Languages (OP-29)* in DESIGN.md.
  *
  * What is deliberately **not** a violation, each for a stated reason:
  *
@@ -41,6 +44,8 @@ class EngineBundleTest {
             // them, which slices 2 and 3 parked twice and which are messages now
             "src/commonMain/kotlin/constructit/expr",
             "src/commonMain/kotlin/constructit/units",
+            // session 81 exchange package: the last area OP-29 had left parked
+            "src/commonMain/kotlin/constructit/exchange",
             "src/commonMain/kotlin/constructit/editor/Document.kt",
             "src/commonMain/kotlin/constructit/editor/Editor.kt",
         )
@@ -63,6 +68,12 @@ class EngineBundleTest {
             // Document: two `require`s over arguments the editor has already checked
             "not an editable parameter",
             "not a free point",
+            // Glb: the writer's own preconditions, guaranteed by every caller in this build (Exports.export
+            // always hands it a millimetre, Z-up scene and always checks ExportScene.refusal first) — a user
+            // can never reach one, and a broken one is a bug in this repository, not a refusal to translate
+            "the root rotation of this writer takes a Z-up scene (OP-17)",
+            "the root scale of this writer takes millimetres (OP-7)",
+            "an empty scene is a refusal, not a file (see ExportScene.refusal)",
         )
 
     private fun sources(): List<File> =
@@ -190,13 +201,27 @@ class EngineBundleTest {
     /** Two words of two letters or more, side by side: the cheapest honest definition of a sentence. */
     private val prose = Regex("[A-Za-z][A-Za-z']+[  ]+[A-Za-z][A-Za-z']+")
 
+    /**
+     * `<...>` markup stripped out, the same way `ChromeBundleTest` reads `index.html`: the exchange package
+     * builds 3MF's XML by hand (`ThreeMf.kt`), one literal per tag or tag fragment, and an attribute name
+     * beside its value (`"<Types xmlns=\"...\">"`) reads as two words side by side exactly as a sentence
+     * does. It is markup, not prose, and every one of these literals is fully consumed by a tag once its
+     * interpolations are gone — so this only ever removes tag shapes, never a sentence that happens to
+     * mention one.
+     */
+    private fun withoutMarkup(text: String): String =
+        text
+            .replace(Regex("<[^<>]*>"), "")
+            .replace(Regex("<[A-Za-z/][^<>]*$"), "")
+            .replace(Regex("^[^<>]*>"), "")
+
     @Test
     fun noEnglishSentenceIsWrittenIntoTheEngine() {
         val offenders = ArrayList<String>()
         for (file in sources()) {
             for (literal in stringLiterals(file.readText())) {
                 if (literal in developerText) continue
-                if (prose.containsMatchIn(withoutInterpolations(literal))) {
+                if (prose.containsMatchIn(withoutMarkup(withoutInterpolations(literal)))) {
                     offenders.add("${file.path}: \"$literal\"")
                 }
             }
