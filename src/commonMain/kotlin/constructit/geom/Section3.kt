@@ -1298,6 +1298,15 @@ object Section3 {
         // *draws* is the trimmed outline, taken from the dressed list where the two frames are the same
         // plane, so the picture shows the rounded corner the body actually has.
         if (feature is Feature3.Blend) {
+            // …**and the faces the dressing adds are reached past the base's own**, by the very extension the
+            // convention already makes for a shell and for a revolution's caps ([FACE_ADDRESS_CONVENTION]:
+            // base-then-added, *"every one of which was a refusal before, so no stored byte changes
+            // meaning"*). A dressed list is the base's faces at their own indices, then one band per rounded
+            // edge, then the corner patches ([Blend3.dressedFaces]) — so an address at or past the base's
+            // own count is that list's entry, counted from where the base's faces end. It composes level by
+            // level for a chain, because [faceAddressCount] of a dressed base already includes what *it*
+            // added.
+            if (piece >= faceAddressCount(feature.base)) return dressedFacePatch(feature, piece)
             val (base, why) = facePatchOfFootprintPiece(feature.base, piece)
             if (base == null) return null to why
             val trimmed =
@@ -1384,7 +1393,74 @@ object Section3 {
      * walk the whole address space counts up to ([FACE_ADDRESS_CONVENTION]).
      */
     fun faceAddressCount(feature: Feature3): Int =
-        Geom3.boundaryPieces(feature).size + (faces(feature).first?.let { endFaces(it).size } ?: 0)
+        if (feature is Feature3.Blend) {
+            // the base's own addresses, then one per face the dressing adds — bands and corner patches alike
+            val below = faces(feature.base).first?.size ?: 0
+            val mine = faces(feature).first?.size ?: 0
+            faceAddressCount(feature.base) + (mine - below).coerceAtLeast(0)
+        } else {
+            Geom3.boundaryPieces(feature).size + (faces(feature).first?.let { endFaces(it).size } ?: 0)
+        }
+
+    /**
+     * The face a dressed body's address [piece] names, past its base's own — a **band** or a **corner patch**,
+     * in the dressed list's own order, with the sketching frame every face space is measured in.
+     *
+     * *Which faces take a space, and which refuse.* A bevel's band is a plane and so is the **slide** leg of
+     * a walk about a bevelled upright; both take a space. A fillet's band is a cylinder, a walk's turning leg
+     * a cone or a torus, a ball's patch a sphere — every one of them refuses **by name**, in the face's own
+     * words, which is the sentence [Blend3] already writes for it (*"…is a cone and not a plane — it is where
+     * the rounding's own ball stands, so there is nothing to sketch on there; put a datum plane where you
+     * want to sketch"*). A face carrying any other reason refuses in that reason.
+     */
+    private fun dressedFacePatch(
+        feature: Feature3.Blend,
+        piece: Int,
+    ): Pair<FacePatch?, Msg?> {
+        val (fs, why) = faces(feature)
+        if (fs == null) return null to why
+        val below = faces(feature.base).first?.size ?: return null to why
+        val at = below + (piece - faceAddressCount(feature.base))
+        val patch =
+            fs.getOrNull(at)?.takeIf { at >= below }
+                ?: return null to Msgs.refusalSectionThisSolidHasNoFace(piece = piece + 1, count = faceAddressCount(feature))
+        if (patch.reason != null) return null to patch.reason
+        if (patch.plane == null) return null to Msgs.refusalSectionThatFaceIsNotPlane()
+        return sketchFrameOf(patch) to null
+    }
+
+    /**
+     * [patch] restated in the **sketching frame** (OP-17's intrinsic rule, the one [Geom3.sideFace] writes for
+     * a prism's side): its first boundary piece on the x axis from the origin, `v` into the face, and the
+     * normal still out of the material.
+     *
+     * *Why not the frame the face list already carries.* That one is free — whatever the emitter found
+     * convenient — and this one is what a user's coordinates are measured in, so it has to be a function of
+     * the face's own boundary and nothing else. The two rotations that put the first piece on the x axis and
+     * the interior at `+v` are a **180° pair**, which preserves orientation, so the normal never turns over:
+     * where the interior lands at `−v` the piece is walked the other way instead of `v` being mirrored.
+     */
+    private fun sketchFrameOf(patch: FacePatch): FacePatch? {
+        val plane = patch.plane ?: return null
+        val first = patch.outline.firstOrNull() ?: return null
+        val a = GeomMath.startOf(first)
+        val b = GeomMath.endOf(first)
+        if ((b - a).length() <= Vec2.EPS) return null
+        val pts = patch.outline.flatMap { GeomMath.tessellatePiece(it) }
+        if (pts.isEmpty()) return null
+        val mid = pts.fold(Vec2(0.0, 0.0)) { acc, q -> acc + q } * (1.0 / pts.size)
+        var o = a
+        var ux = (b - a).normalized()
+        var uy = ux.perp()
+        if ((mid - o).dot(uy) < 0.0) {
+            o = b
+            ux = ux * -1.0
+            uy = uy * -1.0
+        }
+        val map = Affine(ux.x, uy.x, ux.y, uy.y, -o.dot(ux), -o.dot(uy))
+        val frame = Plane3(plane.toWorld(o), plane.u * ux.x + plane.v * ux.y, plane.u * uy.x + plane.v * uy.y)
+        return patch.copy(plane = frame, outline = patch.outline.map { GeomMath.transform(it, map) })
+    }
 
     /**
      * The faces of [fs] the address space puts **past** the footprint's own pieces — the flat ends.
@@ -1439,8 +1515,15 @@ object Section3 {
         name: FaceName,
     ): Int? {
         // A dressed part is addressed exactly as its base is (session 71, slice 3): the blend keeps every base
-        // index, so the address of a surviving base face is the base's own.
-        if (feature is Feature3.Blend) return addressOfFace(feature.base, name)
+        // index, so the address of a surviving base face is the base's own — and the faces it **adds** take
+        // the addresses past the base's own count, in the dressed list's order (see [dressedFacePatch]).
+        if (feature is Feature3.Blend) {
+            val below = faces(feature.base).first?.size ?: return null
+            val fs = faces(feature).first ?: return null
+            val at = fs.indexOfFirst { it.name == name }
+            if (at >= below) return faceAddressCount(feature.base) + (at - below)
+            return addressOfFace(feature.base, name)
+        }
         if (name is FaceName.BlendBand) return null
         val n = Geom3.boundaryPieces(feature).size
         if (name is FaceName.Side) return name.piece.takeIf { it in 0 until n }

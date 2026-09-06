@@ -15,6 +15,7 @@ import constructit.geom.BlendSection
 import constructit.geom.Curve3Element
 import constructit.geom.EdgeName
 import constructit.geom.Geom3
+import constructit.geom.Plane3
 import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Vec3
@@ -459,6 +460,83 @@ class BlendMatrixTest {
         val bracket = assertNotNull(predict(dressed, listOf(on)), "the band over the rail's own run")
         assertTrue(v in bracket, "the fillet on rail ${rails.first()} built $v, outside $bracket")
         println("script2 class | built | $v | $bracket over the crease's own ${L.block.length(13) - c} mm")
+    }
+
+    // ---- 5b. the face list: a level section through every corner the matrix builds ----
+
+    /**
+     * **Every corner the matrix builds must state its faces, and a level section through its own height must
+     * close** (OP-31, item 3b).
+     *
+     * The consumer's question rather than the volume's: a band whose patch is still drawn over the whole of
+     * its crease where a corner has taken part of it away puts a piece in the section that the body does not
+     * have, and the loop cannot close — which is what a face space, a section input and the panel's own
+     * readout all meet. Two heights per cell, taken at the corner's **own** setbacks rather than at a round
+     * number: half the rounding's size below the shared face, and half-way down the upright. The exact
+     * boundary — the plane through the very station a corner ends a band at — is left out on purpose: a
+     * plane through a vertex of the body is a degenerate cut and a different question (`z = 16` on the
+     * reporter's own corner refuses by name and `z = 16.1` closes).
+     *
+     * **Sampled**: the thirty-six pairs at one size in **one dressing**, both kinds — seventy-two cells
+     * rather than the pair class's full 288, because the stacked route and the gesture orders reach the same
+     * body (`theGestureOrderDoesNotDecideTheBody`) and this asks about the *drawing* of that body, not about
+     * how it was reached.
+     */
+    @Test
+    fun everyBuiltCornerStatesItsFacesAndSectionsThroughItsOwnHeight() {
+        var stated = 0
+        var closed = 0
+        var cuts = 0
+        var refused = 0
+        val open = ArrayList<String>()
+        for ((a, b, at) in L.block.pairs) {
+            for (k in kinds) {
+                val name = "faces(e$a,e$b,${tag(k)})"
+                val (stages, why) = L.run(listOf(Rounding(a, k, 4.0), Rounding(b, k, 4.0)), Route.ONE_PASS)
+                if (stages == null) {
+                    assertTrue(namesSomething(why ?: ""), "$name was refused without naming anything: '$why'")
+                    refused++
+                    continue
+                }
+                val solid = Evaluator().solid(stages.last())
+                val faces = assertNotNull(Section3.faces(solid.feature).first, "$name names its faces")
+                for (f in faces) {
+                    val reason = f.reason?.render() ?: ""
+                    assertTrue(
+                        "Exception" !in reason && "kotlin." !in reason && "java." !in reason,
+                        "$name: ${f.name.label.render()} carries a fault where a reason should be: '$reason'",
+                    )
+                }
+                stated++
+                // the corner's own two heights, each a *setback* off the shared vertex rather than a round
+                // number, and each nudged off the exact station where a band ends (a plane through a vertex
+                // of the body is a degenerate cut, not a defect of the drawing)
+                for (z in listOf(at.z + (if (at.z < L.height / 2.0) 2.1 else -2.1), at.z + (if (at.z < L.height / 2.0) 4.1 else -4.1))) {
+                    if (z <= 0.01 || z >= L.height - 0.01) continue
+                    val cut = Plane3(Vec3(0.0, 0.0, z), Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0))
+                    val (regions, whyCut) = Section3.regionsOf(solid.feature, cut)
+                    cuts++
+                    if (regions == null) {
+                        assertTrue(namesSomething(whyCut?.render() ?: ""), "$name: the section at z = $z refuses without naming anything")
+                        open.add("$name z=$z")
+                    } else {
+                        assertTrue(regions.isNotEmpty(), "$name: …into at least one area at z = $z")
+                        closed++
+                    }
+                }
+            }
+        }
+        assertEquals(36 * 2, stated + refused, "thirty-six pairs, two kinds")
+        assertEquals(72, stated, "every pair states its faces, with no fault standing where a reason should")
+        // **The residue this item leaves, asserted as its own inverse.** Of the 144 cuts, 108 close and 36
+        // do not — every one of them at a corner where a band's **free end** stands in a face another band
+        // has taken away, which is the free end's own notch (session 81) and not the band's extent. It is
+        // pinned exactly so that closing one of them fails this test and the number is looked at, exactly as
+        // a named residue class is (and every one of the 36 still refuses **by name**, which is asserted
+        // above rather than assumed).
+        assertEquals(144, cuts, "two heights per built cell")
+        assertEquals(108, closed, "the cuts that close; the 36 that do not are the free end's own notch: $open")
+        println("== faces at a corner: ${stated + refused} cells — $stated state their faces, $closed of $cuts cuts close, ${open.size} refuse by name")
     }
 
     // ---- 6. the reporter's three scripts, verbatim ----

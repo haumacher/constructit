@@ -17010,6 +17010,102 @@ own bracket. `BlendChainEdgeProbeTest` (3) is the orchestrator's own probe, kept
 of both shapes, a 2 mm rounding along the chain with its sections, and the mitre fillet whose bevel is then
 taken away. `BlendMatrixTest` keeps its 1300 cells with an **empty** residue.
 
+#### Implementation status (as built — the band's face outline at a corner, item 3b, session 83)
+
+**The face list's half of what item 3 did for the edge list, and two causes rather than one.**
+
+*Cause one: the patch was still the full sweep.* Session 79's cut (5) read *"the band's own face outline is
+still the full sweep"*. Session 81 retired it for a section's **rulings** — `bandStrip` and `parallelBandCut`
+both ask `spanOf` — and **not** for the **patch**, so `Section3.sweptFace` handed a bevel's band a rectangle
+`len × depth` over the whole of its crease however much of it a corner had taken away. On GitHub #36's own
+three-bevel corner the upright's band was drawn over its whole 20 mm where the walk ends it at 16, and a level
+section above that height met a piece the body does not have. `Blend3.bandToItsCorners` states it instead: a
+planar band is a straight section carried along a straight crease, so its outline is the quadrilateral between
+the two **stations** `spanOf` gives at each end of that section. It is **exact**, and that is provable rather
+than hoped — every corner in the catalogue ends a band on an *affine* placement (a crossing's mitre ring, a
+walk's end ring, a ball's), so the two end edges are straight, which the midpoint against the chord checks in
+one line. Where a band instead simply **runs into** one no corner joins it to (session 79's cut (2)) the
+station travels along the neighbour's own section and the edge is a curve this drawing has no word for: it is
+then a **fitted** chain and the patch says so (`FacePatch.fitted`, OP-31's Tier B). A band **no corner
+touches** keeps the rectangle it had, bit for bit, so no existing body's outline moves by a float's worth for
+nothing. The correction is applied where the band patch is **built**, so it composes with the strip a rounding
+of that band's own rail takes off it one level up (`correctedOutline`) instead of overwriting it.
+
+*Cause two, and it was the one that mattered: the walk read the section in the frame it was drawn in.*
+`walkAxisFrame` mapped the travelling section into a leg's `(s, r)` through `piece.crease.e1/e2` — the frame
+the *crease* was stated in. A walk **turns the section with it**: after a bevelled upright's first quarter-turn
+the section stands 45° round, so the second turn's own cone was stated 45° out of true. The mesh was never
+wrong (its rings are placements), only the *drawing* — which is why every volume in the suite held while the
+level section could not close. The frame is now the leg's **own first ring**, which for a single-turn walk *is*
+the crease's frame, so session 80's and 81's corners are unmoved to the last bit; and the offset from the pivot
+is split into its radial and axial parts, which is zero-axial for a walk that runs in a plane and right for one
+that does not.
+
+**What closes now.** The reporter's own three-bevel corner sections at **every** height — `19.5, 19.0, 18.0,
+17.0, 16.5, 16.1, 15, 10, 5` — where it used to close only below the walk's own end at 16; and so do the same
+corner rounded, the one-ended pivot of item 2, a crossing, the ball at a convex vertex, and a rounded crease on
+a **fused** body (the general boolean's own faces, OP-31 item 4). The plane through the *exact* station a
+corner ends a band at is left out on purpose and said so: a plane through a vertex of the body is a degenerate
+cut, a different question, and `z = 16` refuses by name where `z = 16.1` closes.
+
+**The matrix asks it of every corner it builds.** `everyBuiltCornerStatesItsFacesAndSectionsThroughItsOwnHeight`
+runs the thirty-six pairs at one size in one dressing, both kinds — **72 cells, sampled** from the pair class's
+288 because the stacked route and both gesture orders reach the same body
+(`theGestureOrderDoesNotDecideTheBody`) and this asks about the *drawing* of that body, not about how it was
+reached. All **72 state their faces**, every face named and not one carrying a fault where a reason should be.
+Two cuts per cell at the corner's own setbacks: **108 of 144 close** and **36 refuse by name**, pinned exactly
+so that closing one fails the test and the number is looked at.
+
+**Cuts, each whole, each named and none silent.** (1) **The 36 open cuts** are a class and not a scatter: each
+is a corner where a band's **free end** stands in a face another band has taken away, which is the free end's
+own notch (session 81) and not the band's extent — the notch is spliced above the trim while the strip is taken
+below it, and the two do not compose there yet. Every one of them refuses **by name**; none draws a stale
+curve. (2) **A rounding whose target is a *corner curve*** — item 3's own chain — takes a strip off the
+corner's own faces, and a strip on a **cone** is a surface offset this vocabulary has no word for
+(`correctedOutline`'s standing honesty line), so above the ribbon the corner keeps its whole turn and the
+section refuses by name; below it, it closes. (3) A **bevelled three-edge vertex** states no face for its apex
+(item 3's own cut, read here for the faces), so a level section through it refuses by name. (4) The
+**bevelled** one-ended pivot's cap chain is spliced above the trim, so its section refuses through the corner
+where the rounded one closes.
+
+**And the demand the first delivery left standing: a face space on a dressing's own face.** A dressed body was
+addressable *"exactly where its base was"* (session 71, slice 3) and no further, so a bevel's **band** and the
+flat **slide** of a walk — planes with exact outlines and no reason, and honest ones since the correction
+above — could not carry a sketch: `sketchspace el=e14 piece=12` refused with *"has no planar side face #13"*.
+That sentence stays true of the base's own addresses; what was owed is the extension the convention already
+makes twice, for a **shell**'s inner faces and for a **revolution**'s caps
+(`Section3.FACE_ADDRESS_CONVENTION`): **base-then-added**, *"every one of which was a refusal before, so no
+stored byte changes meaning"* (OP-18).
+
+*The address rule.* An address below `faceAddressCount(base)` resolves through the base exactly as it did, bit
+for bit. An address at or past it is the **dressed list's own entry**, counted from where the base's faces end
+— one band per rounded edge in entry order, then the corner patches, which is the order
+`Section3.faces(feature)` already hands out and which item 3b made honest. It **composes level by level** for a
+chain, because a dressed base's own count already includes what *it* added; and it is stated in terms of the
+base's face *count* rather than of its indices, so a base whose address space is not its list order (a loft's)
+is carried unchanged. `Section3.addressOfFace` answers the same rule backwards, so the **3D click** on a band
+or a corner face records the very address a space opens on — nothing new had to be written in the pick, which
+has always asked `addressOfFace`.
+
+*The frame is the sketching one, not the emitter's.* A face patch's own plane is free — whatever the emitter
+found convenient — and a space's is what a user's coordinates are measured in, so `Section3.sketchFrameOf`
+restates it by OP-17's intrinsic rule, the one `Geom3.sideFace` writes for a prism's side: the face's **first
+boundary piece on the x axis from the origin**, `v` into the face, and the normal still out of the material.
+The two rotations that do it are a **180° pair**, which preserves orientation, so the normal never turns over
+— where the interior would land at `−v` the piece is walked the other way instead of `v` being mirrored.
+
+*What refuses, and in whose words.* A fillet's band is a cylinder, a walk's turning leg a cone or a torus, a
+ball's patch a sphere: each refuses **by name** in the sentence `Blend3` already writes for it — *"…is a cone
+and not a plane — it is where the rounding's own ball stands, so there is nothing to sketch on there; put a
+datum plane where you want to sketch"* — and a face carrying any other reason refuses in that reason. On the
+reporter's own bevelled pivot that is **four spaces opened** (three bevel bands and the walk's slide) and
+**two refused**.
+
+Tests: `BandOutlineAtCornerTest` (7) — the bevelled pivot and the rounded one at nine heights each, the
+one-ended pivot, the ball at a convex vertex, a crossing, a rounded crease on a fused cross-bar, and the
+band's own outline asserted structurally (the upright's bevel band is a rectangle 16 mm long, exact and not
+fitted). `BlendMatrixTest` gains the face class above.
+
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
 **Closed in four slices, and what each of them was.** (1) *The words leave the code* — `l10n/app_en.arb` as
@@ -21598,7 +21694,10 @@ on the cap's own quartic; see the as-built note under OP-31*; ~~(3) edges as cha
 the mitre crease named~~ — *retired in session 83: a rail is stated over its crease's own run, the corner's own
 curves are edges beside it, one pick takes the whole ribbon, and the fitted carrier item (2) owed is a field on
 the value; the matrix's last two residue classes go with it; see the as-built note under OP-31*; ~~(4) face provenance through the general boolean, so a fused part has faces and creases
-to round~~ — *retired in session 83, see below*; (3b) **the band's face outline at a corner** — found by item 3's probe: a level section through a bevelled pivot refuses by name on the plain three-bevel corner of script 2, because the upright's band *patch* is still drawn over its whole edge where the walk ends it (session 79's cut (5), retired for a section's rulings in session 81 but not for the patch a corner *walk* stands on), so `bandPatchOf` and the walk's own faces must state their outlines to the corner as the rail now states its run; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
+to round~~ — *retired in session 83, see below*; ~~(3b) **the band's face outline at a corner**~~ — *retired in session 83: a planar band's outline is bounded by
+`spanOf` at every corner kind, the walk's own frame is read at the leg it stands on rather than at the frame its
+crease was drawn in, and a level section through a bevelled pivot closes at every height; see the as-built note
+under OP-31*; then (5) the fitted tier — the general rolling ball with tolerant spines and vertex patches, designed
 against the matrix's remaining residue. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 

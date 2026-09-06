@@ -1679,7 +1679,13 @@ object Blend3 {
     ): Pair<Revolve3.Frame, Affine>? {
         val pivot = leg.pivot ?: return null
         val axis = n * -1.0
-        val off = leg.rings.first().origin - pivot
+        val start = leg.rings.first()
+        // **the radial offset is radial**: the axial part of the offset is the frame's own `s`, not part of
+        // the radius. On a walk that runs *in* a plane the axial part is zero and this is session 81's own
+        // number unchanged; stating it makes the frame right for a walk that does not (OP-31, item 3b).
+        val full = start.origin - pivot
+        val axial = full.dot(axis)
+        val off = full - axis * axial
         val rho = off.length()
         val p = if (rho <= Geom3.WELD_TOL) leg.dir else off * (1.0 / rho)
         val frame =
@@ -1695,11 +1701,17 @@ object Blend3 {
                 max(0.0, -leg.turn),
                 false,
             )
-        val e1 = piece.crease.e1
-        val e2 = piece.crease.ref.e2
+        // **the section's axes as they stand at *this* leg's start, not as they were drawn** (OP-31, item
+        // 3b). A walk turns the section with it: after a bevelled upright's first quarter-turn the section
+        // stands 45° round from the frame its crease was stated in, and reading the *original* `e1, e2` here
+        // placed the second turn's own cone 45° out of true. Its rings are placements ([Placement]), so the
+        // frame it actually stands in is the leg's own first ring — which for a single-turn walk *is* the
+        // crease's frame, so session 80's and 81's corners are unmoved.
+        val e1 = start.cx
+        val e2 = start.cy
         // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius,
-        // the whole section standing `rho` out from the axis it turns about
-        return frame to Affine(e1.dot(axis), e1.dot(p), e2.dot(axis), e2.dot(p), 0.0, rho)
+        // the whole section standing `rho` out from the axis it turns about and `axial` along it
+        return frame to Affine(e1.dot(axis), e1.dot(p), e2.dot(axis), e2.dot(p), axial, rho)
     }
 
     /**
@@ -4317,6 +4329,92 @@ object Blend3 {
     }
 
     /**
+     * A **planar band's own outline, bounded by the corners at its ends** (OP-31, item 3b) — the face list's
+     * half of what item 3 did for the edge list.
+     *
+     * Session 79's cut (5) read *"the band's own face outline is still the full sweep"*, and session 81
+     * retired it for a section's **rulings** ([bandStrip], [parallelBandCut], both of which ask [spanOf])
+     * and not for the **patch**. So a bevel's band was a rectangle over the whole of its crease however much
+     * of it a corner had taken away: on the reporter's own three-bevel corner the upright's band was drawn
+     * over its whole 20 mm where the walk ends it at 16, and a level section above that height met a piece
+     * the body does not have and could not close its loop.
+     *
+     * The correction is the rail's own, read one dimension over: a planar band is a straight section carried
+     * along a straight crease, so its outline is the quadrilateral between the two **stations** [spanOf]
+     * gives at each end of that section. Every corner in the catalogue ends a band on an *affine* placement
+     * — a crossing's mitre ring, a walk's end ring, a ball's — so the two end edges are straight and the
+     * answer is **exact**; where a band instead simply *runs into* one no corner joins it to (session 79's
+     * cut (2), [endsRunInto]) the station moves along the neighbour's own section and the edge is a curve
+     * this drawing has no word for, so it is stated as a **fitted** chain and the patch says so
+     * ([FacePatch.fitted], OP-31's Tier B).
+     *
+     * Asked at the **tip**, like every other reading of a band's extent ([bandOf]): a corner can be made by a
+     * later gesture than the one that made the band.
+     */
+    private fun bandToItsCorners(
+        f: Feature3.Blend,
+        patch: FacePatch,
+    ): FacePatch {
+        val name = patch.name as? FaceName.BlendBand ?: return patch
+        // a **curved** band states no outline at all — it is a cylinder or a torus and its cut is analytic
+        // ([bandCut], [parallelBandCut]) — so there is nothing here to bound
+        val plane = patch.plane ?: return patch
+        if (patch.reason != null) return patch
+        val (pieces, at) = bandOf(f, name.edge) ?: return patch
+        val piece = pieces[at]
+        val el = piece.seg ?: return patch
+        val section = orientedSections(piece).getOrNull(name.piece) as? ProfileElement.Seg ?: return patch
+        val v = el.end - el.start
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return patch
+        val u = v * (1.0 / len)
+        val span = spanOf(pieces, at, cornersOf(pieces).list)
+
+        fun corner(
+            t: Double,
+            far: Boolean,
+        ): Vec2? {
+            val q = sectionPointAt(section, t) ?: return null
+            val (s0, s1) = span(q)
+            if (s1 - s0 <= Geom3.WELD_TOL) return null
+            return plane.toLocal(worldOnStraight(piece.crease, el.start, u, q, if (far) s1 else s0))
+        }
+        // **a band no corner touches keeps the rectangle it had**, bit for bit: the outline is already right
+        // and re-deriving it would move it by a float's worth for nothing (OP-15's own discipline).
+        val whole =
+            listOf(0.0, 0.5, 1.0).all { t ->
+                val q = sectionPointAt(section, t)
+                q != null && span(q).let { abs(it.first) <= Geom3.WELD_TOL && abs(it.second - len) <= Geom3.WELD_TOL }
+            }
+        if (whole) return patch
+        val a0 = corner(0.0, false) ?: return patch.copy(reason = Msgs.refusalBlendRailTakenByCorner(name = patch.name.label, name2 = patch.name.label))
+        val a1 = corner(1.0, false) ?: return patch.copy(reason = Msgs.refusalBlendRailTakenByCorner(name = patch.name.label, name2 = patch.name.label))
+        val b1 = corner(1.0, true) ?: return patch
+        val b0 = corner(0.0, true) ?: return patch
+        // **exact where the end is a placement, fitted where it is a run into a neighbour.** The midpoint
+        // against the chord of the two ends is the whole test: an affine end is on it to the last bits.
+        val m0 = corner(0.5, false)
+        val m1 = corner(0.5, true)
+        val straight =
+            m0 != null && m1 != null &&
+                (m0 - (a0 + a1) * 0.5).length() <= SAME_CURVE_TOL && (m1 - (b0 + b1) * 0.5).length() <= SAME_CURVE_TOL
+        if (straight) {
+            val ring =
+                listOf(
+                    ProfileElement.Seg(Segment(a0, a1)),
+                    ProfileElement.Seg(Segment(a1, b1)),
+                    ProfileElement.Seg(Segment(b1, b0)),
+                    ProfileElement.Seg(Segment(b0, a0)),
+                )
+            return patch.copy(outline = ring)
+        }
+        val near = fittedChain(Combine3.FIT_TOL_MM) { t -> corner(t, false) } ?: return patch
+        val far = fittedChain(Combine3.FIT_TOL_MM) { t -> corner(1.0 - t, true) } ?: return patch
+        val ring = near + listOf(ProfileElement.Seg(Segment(a1, b1))) + far + listOf(ProfileElement.Seg(Segment(b0, a0)))
+        return patch.copy(outline = ring, fitted = Combine3.FIT_TOL_MM)
+    }
+
+    /**
      * The trimmed list and the notches the tip owes, derived at most **once per feature instance** behind
      * the memo on [Feature3.Blend.trimmedFaces] — GitHub #35's first cause (OP-5). The seam stays where it
      * was: [Section3.faces] still asks [dressedFaces], and what changed is only how often the answer has to
@@ -4393,7 +4491,10 @@ object Blend3 {
                 for (piece in 0 until f.bandsAt(k)) out.add(FacePatch(FaceName.BlendBand(f.targets[k], piece), null, emptyList(), why))
                 continue
             }
-            out.addAll(bandPatchesOf(d))
+            // …each of them **bounded by the corners at its ends** (OP-31, item 3b) before the level above
+            // trims its own strips off it, so the two compose: this level says how far the band runs, the
+            // next says what a rounding of its rail took off it.
+            out.addAll(bandPatchesOf(d).map { bandToItsCorners(f, it) })
         }
         // …and the corners this blend's own bands make, **appended last** ([FaceName.BlendCorner]): the ball
         // at a convex vertex and the surface its pivot sweeps at an inside one are new surfaces, and a
