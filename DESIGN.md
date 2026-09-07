@@ -17134,9 +17134,13 @@ rounding along the **elliptical mitre** between two rounds (its section would ch
 whose ~~**free end stands in a face another band has taken away** (36 face-class cuts: the notch is spliced above
 the trim and the strip taken below it)~~ *(slice 5d, session 83: all 144 cuts close, and the causes were three
 others)*, a general boolean over an operand with a **curved face** (item 4's cut
-1), ~~the **bevelled vertex's apex** faces~~ *(slice 5d: the apex is the three bands themselves)*, the corner between a **curved and a straight edge** and the corner of
+1), ~~the **bevelled vertex's apex** faces~~ *(slice 5d: the apex is the three bands themselves)*, ~~the corner between a **curved and a straight edge** and the corner of
 **two wedges that are not congruent** (session 79's cuts 1 and 2, a loft's inside corner and a revolve's cap
-among them), and the two upright shapes the pivot cannot follow (parked in session 81). Not in the inventory,
+among them), and the two upright shapes the pivot cannot follow (parked in session 81)~~ *(slice 5e, session
+83: a curved edge is a corner participant, and the other three are **one** case — the two wedges at a sharp
+square upright are congruent by construction, so an incongruent inside corner is either slice 5a's ledge or
+an upright the pivot cannot follow, and the slanted one and the ring are refused in one sentence naming
+(5f)'s canal)*. Not in the inventory,
 and not to be looked for: a rounding of a *round's* rail (36 cells) — a tangent hand-over has no crease, and the
 refusal is the answer.
 
@@ -17191,16 +17195,26 @@ as a tool.
   apex needs no face at all: its three triangles lie in the three bevel planes, so each band runs on to the
   apex. All 144 face-class cuts close, no volume moves, nothing appends, and a face space on a dressed base
   face at last draws the outline the body has. See the as-built note below.
-- **(5e) Session 79's two cuts** — the corner between a curved and a straight edge (a medial surface, fitted
-  spine) and two wedges that are not congruent (a loft's inside corner, a revolve's cap), which also unparks
-  session 81's slanted and ring uprights.
+- ~~**(5e) Session 79's two cuts**~~ — **delivered in session 83, and the two were one case and a proof**.
+  A **circular** crease is a corner participant: the ball's own reading of the pivot is the **horn torus** it
+  sweeps about the upright, on which a straight run's end section and an arc's are both arcs of one meridian
+  circle. The corner between a curved and a straight edge at an **inside** corner therefore builds exactly
+  (a keyhole's boss meeting its stem), and at a **convex** one the two tools overlap and the boolean trims
+  them as they always did — the medial surface is curved, so no mitre is owed and none is built; what is not
+  stated is the crease's own **name**, and that is the slice's one cut. *Two wedges that are not congruent*
+  turns out to be impossible at a **sharp** upright square to the shared face, so it is either slice 5a's
+  ledge or an upright the pivot cannot follow — session 81's **slanted** and **ring** uprights, refused in
+  one sentence that names (5f)'s canal. See the as-built note below.
 - **(5f) The ball along an elliptical crease** — slice 5b's own cut, and its design is written: the spine is
   the mitre's own ellipse scaled by `(R + r)/R` about the point the two axes cross, in the mitre's own plane,
   and it is exact; what it carries is a section that changes along the run, so the tool is a variable-section
   loft and the band a **canal** surface. It needs three structural things, each of them the size of a slice: a
   `Dressing` whose section is not rigid, a fourth carrier in the face list for a canal band, and a **sampled**
   reader for its cut in `Section3` (a `RuledStrip` is a family of straight rulings and a canal band has none).
-  The concave twin — two fills crossing — is the same case one sign over.
+  The concave twin — two fills crossing — is the same case one sign over. **And it owes one more thing since
+  slice 5e**: the ball pivoting about a **slanted** upright at an inside corner runs on an ellipse too — a
+  plane against a cylinder about an axis not square to it — so the same canal machinery is what unparks
+  session 81's slanted upright, and until it exists slice 5e refuses that corner in a sentence naming it.
 - ~~**(5g) A corner curve's slot count, recorded**~~ — **delivered in session 83, and it was two defects
   rather than one**: a corner *made or unmade* by an edit moved the shared curves after it, and a rounding
   merely **added** to the dressing moved *all* of them, because the new entry's block goes in ahead of the
@@ -17835,6 +17849,154 @@ pivot sectioning through its own corner, a face space carrying the composed outl
 bodies a byte-equal fixed point that reaches the same body through the file as through the DSL, and the volume
 of every one of them pinned to what the build gave before the slice. `BlendMatrixTest`'s face class re-pinned
 to 144 of 144.
+
+#### Implementation status (as built — the curved participant and the two uprights, slice 5e, session 83)
+
+**Session 79's two cuts were one case and a proof, and the case is the ball's own reading of the pivot.**
+Session 80 wrote the inside corner as the band's *own section revolved* about the sharp upright. The ball's
+own statement is more general and still exact: the corner surface is the **horn torus** the ball sweeps
+about that upright — tube `r`, centre circle `r`, so its hole closes to the single point where the ball
+touches the upright's edge — and each band's end section is an **arc of that torus's own meridian circle**
+between its two tangencies. Nothing about the two *runs* enters it, and the reason is worth writing down
+because it is what makes a circular crease a corner participant. Project the shared face's plan: the
+neighbour's own face becomes a curve through the corner, the ball's centre runs on that curve's offset at
+`r`, and the point of the offset that stands exactly `r` from the upright is the one whose foot on the face
+is the corner itself — so the offset's tangent there is parallel to the face's, which is square to the
+radial. A band's end plane is square to its spine, so it **is** the meridian plane, and the characteristic
+circle a constant-radius canal surface carries in that plane is the ball's own great circle. Straight run or
+circular one, both ends land on the same torus.
+
+**And session 79's cut (2) is retired by an argument rather than by a construction — which is the slice's
+own finding.** *"Two wedges that are not congruent"* cannot happen at a **sharp** upright square to the face
+the two roundings share, at one size and one kind. Each wedge's plane is the meridian plane through the
+upright's own axis; in it the shared face cuts a line square to that axis, and the other face — which
+contains the whole axis, since the upright is where the two other faces cross — cuts the axis itself. So
+both wedges are the same two straight legs at the same dihedral. An incongruent **inside** corner is
+therefore exactly one of two things and never a third: two roundings of **unlike size or kind** (slice 5a's
+ledge, built) or an upright that is **not** one straight run square to the shared face. Which is to say:
+session 79's cut (2) and session 81's two parked uprights are the same cut, and closing one closes both.
+
+**The two uprights are refused by name, in one sentence, and the sentence names the canal.** The ball at an
+inside corner keeps its centre on the shared face's own offset plane *and* at `r` from the upright. Square
+and straight, those two are a plane and a cylinder about that plane's normal and meet in a **circle** —
+session 80's pivot, exact. **Slanted**, they meet in an **ellipse**, and the corner is a swept sphere along
+it: the canal surface slice (5f) owes the elliptical mitre, needing the same three structural things (a
+`Dressing` whose section is not rigid, a fourth carrier, a sampled reader), so it is left whole to (5f)
+rather than half-built. A **ring** upright — a revolve's circular edge at an inside corner of its cap — is
+worse than (5f)'s ellipse: the centre's locus is a plane against a *torus*, a spiric quartic. Both are
+`Blend3.uprightRefusal`, and the question is asked of the two **faces** rather than hunted for among the
+edges, which is what makes it structural: the upright *is* where the pair's other two faces cross, so it is
+straight and square exactly when each of those faces contains the whole axis through the corner along the
+shared face's normal (`axisLiesIn` — a plane holds it when its normal is square to it, a **cylinder** when
+it is one of its own rulings, and no other surface this drawing names holds a straight line at all). That
+last clause is not a nicety: a keyhole's inside corner has a **cylinder** for one of its two faces and
+builds, and it is the fixture the whole slice turns on.
+
+*And the refusal is asked **first**.* A revolve's cap corner used to come back with slice 5a's *"they are
+not congruent"*, which names the symptom — at a ring upright the two wedges are **bound** to differ, by the
+proof above — and offers a cure (give both edges the same rounding) that cannot work. `ledgeOf` asks the
+upright before it asks about containment.
+
+**What a circular crease had to gain to take part, and every piece of it is a generalization rather than a
+special case.** `outOf` leaves along the tangent, `endPointOf` is the arc's own end, `stationOf` is the arc
+**length** read from the arc's own angle about the run's middle, and `placeAt`/`endPlacement` state the
+section frame `(e1, t × e1)` at any station — which for a straight run is the constant `ref.e2` it always
+was, character for character, so no straight band's triangles move. On those, `cornersOf` drops its
+precondition that both runs be straight, `turnOf` reads each side's frame at its own end, `toolMesh` carries
+a circular run's tube round its own arc by the same sag rule every band here is stepped by (`tubeStations`,
+which returns **nothing** for a straight run, so its two rings are its whole tube exactly as before), and
+`spanOf` ends such a band at the corner it pivots at.
+
+**A curved band's free end had to stop being a hole in the drawing, and that was the defect that made the
+whole fixture unreachable.** A band along an arc ends on the meridian plane. For a pie slice that plane
+**is** the radial face, so the tool's flat cap and that face were two sheets facing against each other and
+the general boolean answered with a zero-thickness flap rather than a body: *rounding the rim of a sector
+did not work at all*. The cure is the step-off a straight band's cap has had since GitHub #33, said for a
+circular run too and **only where it is owed** (`capInFace`): where the cap stands in a face of the body the
+tube overshoots it by the same micron, and everywhere else a circular run states no step at all. That last
+half is not caution but geometry — a curved band's own continuation is its *circle*, while at a tangent
+hand-over the boundary runs on along the **tangent**, so a micron of the circle carried past the hand-over
+leaves the neighbour's band tangentially instead of crossing it, which is the worst-conditioned contact
+there is (GitHub #29's rasped rim, whose three pieces are one ribbon, refuses outright if it is taken).
+
+**And the end **notches** that face, exactly.** Session 81's cut read *"only a straight run has a cap that
+stands in one plane at all"*, and it does not hold: the meridian plane is square to the run, so the map from
+the wedge's own frame into it is **rigid** and the notch is exact — the same splice, the same arithmetic
+(`notchesOf`, `notchFrame` now taking the end's own frame). Both radial faces of a rounded sector gain it,
+and the flat-end slots say in their own words that the notch owns their end rather than claiming the body
+has no face there (`refusal.blend.capStandsInAFace`). What the notch curve does **not** get is an
+**address**: how many notch slots an entry owns is a function of its base edge alone (`notchSlotsAt`,
+slice 5g), so stating one for a curved crease would move every appended address after it. That is a stated
+cut and not an oversight — closing it is a slot-count change and a format version, which this slice does not
+spend.
+
+**Nothing is fitted, and one thing is left unnamed.** Every surface this slice adds is exact: the corner is
+a horn torus with `Revolve3`'s whole table behind it, the notch is a rigid map of the wedge, the band along
+an arc is the revolution slice 5b proved it to be. What is *not* stated is the **crease** where a torus band
+and a cylinder band cross at a **convex** corner. There the two tools overlap and the boolean trims them
+exactly, as it always did — the body is right, and the surface equidistant from a straight edge and a
+circular one is a curved medial one, so there is no mitre to build and none is built — but the quartic
+between the two surfaces is in no list. Slice 5a named that crease for two *straight* runs
+(`runInEdges`/`runsInto`, a fitted `EdgeGeom.InSpace` chain), and both of those read a straight ruling
+against a straight run's wedge; a circle against a torus is a different solve. The drawing is silent there
+rather than wrong, which is the honesty class session 79 left it in, and it is the slice's own recorded cut.
+
+**The figures.** A band along the sector's rim is Pappus' `w·φ·ρ`, bracketed by containment as every
+rounding along a circular crease is — the exact section carried at the nearest radius it reaches below, the
+chorded one at the farthest above: a 3 mm fillet on a 90° sector of radius 30, 20 deep, builds
+**14027.677 mm³** out of `14119.230` inside `[14026.07, 14037.33]`. The keyhole's inside corner — a 15 mm
+disc on a 10 mm stem, whose plan turns a reflex corner of `70.53°` where the two meet — builds
+**15000.063 mm³** out of `15171.887`, with the pivot **adding** `w·φ·δ̄ = 1.593 mm³` to the two bands' own
+sum, and the corner face is the horn torus the ball says it is: `Torus(rc = 3, minor = 3)` to the last bits.
+Both of the keyhole's corners build and the two are one body mirrored (`1e-6`), and the two gesture orders
+of one corner agree to `1e-9`.
+
+**A vertex with a curved edge among the three is refused by name.** The ball still stands still there and
+its patch is still the spherical triangle between the three band ends; what has no statement is the
+**solve**, which crosses two tangency *lines* on each shared face and has no line to cross where a face is
+curved (`vertexOf`). Left alone the three tubes butt and the boolean answers with a tangent contact rather
+than a body — which is exactly what the sector's own top rim vertex did — so the trio is named, with the
+cure that works: round two of the three.
+
+**One defect found and not fixed, recorded with its cure.** A band along a **straight** edge one of whose
+faces is a **cylinder** — a sector's own rim uprights — has a wedge with a **circular leg**, and
+`sectionOf`'s step-off has no offset for one (session 81 wrote that down: *"a round leg has no straight
+offset in this vocabulary"*). So such a tool still shares a face with the body, and on one of the sector's
+two rim uprights the coin comes up tails: the boolean names a zero-thickness flap and the rounding cannot be
+had. The cure is small and is not this slice's: **a circle's offset is a circle**, so a round leg steps to a
+concentric one of radius `R ∓ 1 µm` exactly as a straight leg steps to a parallel line. It would move every
+volume in the drawing that has a plane-against-cylinder band in it by a micron's worth, which is why it is a
+change of its own rather than a rider here. It is queued below.
+- **(5i) An extruded arc's side face states no outline for a dressed section** — found by slice 5e and its probe: a level section through the *band region* of a rounded D-shape or sector refuses by name ("one of the faces it crosses is cut in a way this drawing states only as curves"), because an extrusion's cylindrical side face carries a carrier but no outline in that carrier's frame, so `Section3` cannot assemble the dressed cut across it. Slice 5c states exactly such an outline for a boolean result's curved face (turn × meridian, rings and rulings exact); the same statement is owed to an extrusion's own arc side face, and to a revolution's bands where a dressing crosses them. Predates 5e; refuses by name today.
+
+**Nothing recorded changed.** No slot is appended, none renumbered, no format version rose and no step
+writes anything new: a curved crease's notch is a boundary piece and not an address, and the corner face a
+curved pair makes is the very `BlendCorner` slot the catalogue already had. Every volume in the suite is
+unmoved. What moved from *no body at all* to a body: a rounding along an arc whose end stands in a face
+(every sector, every radial slot, every pie slice), and every inside corner between a circular edge and a
+straight one. What moved from a **broken shell** to a **named refusal**: a three-band vertex with a curved
+edge among them, and a revolve's cap corner (which moved from the wrong refusal to the right one).
+
+**The matrix gains a sector class.** `BlendMatrixTest.theSectorsOwnEdgesAndPairs` enumerates the sector's
+own edges exactly as the L-block's are — every single edge in both kinds, then every pair that shares a
+vertex in both kinds, at 2 mm — and **34 cells build, every one inside a bracket the algebra derives, none
+refused and none in the residue**. `Body` reads a circular edge for the first time (its arc **length** as
+its run, its **tangent** as the direction it leaves a corner in, and the radius its wedge's centroid runs
+on, asked of the solid rather than tabulated), `predict` states a circular band as Pappus' revolution rather
+than as `w·L`, and a pair with a curved participant at a convex corner takes the containment bracket an
+overlapping pair takes. The two rim uprights are **out of the class** by a stated rule — their wedge has a
+circular leg and this algebra states no figure for one — which is the same gap the defect above names. Every
+other class is unmoved in tally and in value.
+
+Tests: `BlendCurvedCornerTest` (11) — the sector's rim as a revolution with its band named as the torus it
+is; its two free ends notching both radial faces with the wedge's own arc in each outline and the flat-end
+slots saying who owns them; the convex hand-over to a radius edge bracketed by containment, with no corner
+face and no crease (the cut, pinned); the apex still the exact mitre it was; the keyhole's inside corner as
+the horn torus with its two bands a cylinder and a torus; its figure with Pappus' pivot adding; both of its
+corners and their mirror agreement; the loft's **slanted** upright and the revolve's **ring** upright each
+refused in the one sentence that names the canal, each healing when one of the two edges is left sharp; the
+curved vertex refused with its cure; and the same dressing built twice as one body in both gesture orders.
+`BlendMatrixTest` gains the sector class (34 cells). The suite is **2951** tests, from 2939.
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -20125,12 +20287,25 @@ face is too sharp for a fillet of radius 16 mm — the corner the two roundings 
 an edge than the edge is long. The largest that fits there is about 15 mm"* (a 40 × 30 plate, whose 30 mm
 edges have two corners to host) — and it heals when the size comes down (`aCornerWithNoRoomSaysSoAndHeals`).
 
-**Cuts, each whole, each named and none silent.** (1) **The corner between two edges that are not both
+**Cuts, each whole, each named and none silent.** (1) ~~**The corner between two edges that are not both
 straight** — the equidistant surface is then a curved medial one, not a plane, so an arc handing over to
 another edge at a sharp corner is left to overlap and be trimmed exactly as before; a future extension with
-offset-curve intersections behind it. (2) **The corner between two wedges that are not congruent** — two
+offset-curve intersections behind it.~~ *(Retired in session 83, OP-31 slice 5e, and the ruling is half
+right: at a **convex** corner the equidistant surface **is** a curved medial one, so no mitre is built there
+to this day and the boolean trims the two tools exactly as this cut says — what was missing is only the
+crease's **name**, which is still the cut. At an **inside** corner there is no equidistant surface to find
+at all: the two bands never overlap, and what stands between them is the ball's own pivot about the upright,
+which asks nothing of the two runs but their ends and their directions. So an arc takes part in a corner
+now.)* (2) ~~**The corner between two wedges that are not congruent** — two
 edges whose faces stand at different dihedrals put their tangencies at different distances, the two sides do
-not land on one ring, and the pair is left as it was; the same future extension. (3) **The inside (reflex)
+not land on one ring, and the pair is left as it was; the same future extension.~~ *(Retired in session 83,
+OP-31 slice 5e, by a **proof** rather than by a construction: at a **sharp** upright square to the face the
+two roundings share, both wedges lie in the meridian plane through that upright's axis, in which the shared
+face cuts a line square to the axis and the other face — which contains the whole axis — cuts the axis
+itself. Two roundings of one size and kind are therefore congruent there **by construction**, and an
+incongruent inside corner is either two roundings of unlike size or kind (slice 5a's ledge, built) or an
+upright that is not straight and square — session 81's slanted and ring uprights, refused by name. This cut
+and those two parked cases are one cut.)* (3) **The inside (reflex)
 corner** — there the two bands do not overlap at all but leave a wedge between them, and the ball that would
 round it pivots about the upright, which is a different construction; that corner keeps exactly what it kept,
 and the two bands butting at it are pulled a micron apart along their own edges so the one tool they share is
@@ -20246,8 +20421,11 @@ fill is the one thing the construction guesses rather than derives, so it is lef
 guessed. (2) **A chamfer vertex whose three faces turn through different angles** has no single station where
 its three bands' setback points agree, so it is left as it was; the round has no such condition. (3) **Four or
 more bands at one vertex** — a ring is shared by two tubes, and the ball's patch is bounded by three arcs;
-that stays a future extension. (4) **A corner where the two edges are not both straight** is still left to the
-boolean (session 79's cut, unchanged): the equidistant surface is then a curved medial one. (5) **The band's
+that stays a future extension. (4) ~~**A corner where the two edges are not both straight** is still left to the
+boolean (session 79's cut, unchanged): the equidistant surface is then a curved medial one.~~ *(Session 83,
+OP-31 slice 5e: at an **inside** corner there is no equidistant surface to find — the ball pivots about the
+upright and the corner is built; at a **convex** one the boolean still trims the two, and only the crease's
+own name is owed.)* (5) **The band's
 own face outline is still the full sweep**, so a working plane's section through a corner still draws the
 bands crossing where the solid has a crease or a patch — the *surfaces* are each exact and now each named, and
 only their own boundaries are unstated, which is the same honesty class as slice 3's curved-face trim. (6)
@@ -22392,6 +22570,15 @@ one chunk every session downloads; the cure is a chunk per language fetched on d
 in the right place to emit and which no slice has yet been given.
 
 
+**~~Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide
+them.~~** *(Retired in session 83, OP-31 slice 5e. Both limits fell and both uprights are reached: a loft's
+inside corner and a revolve's cap corner are the **same** case as session 79's cut (2) rather than two
+limits hiding it — the two wedges at a sharp upright square to the shared face are congruent by
+construction, so an incongruent inside corner **is** an upright the pivot cannot follow. Neither is guessed
+at: the slanted upright's pivot runs on an **ellipse** and is the canal surface slice (5f) owes, the ring
+upright's on a **spiric quartic**, and both refuse in one sentence that names what does work. The paragraph
+below is what it said.)*
+
 **Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide them.**
 `Blend3` now refuses by name where the upright a pair pivots about is **not square** to the face they share, or
 is **not one straight run** (a revolve's ring at an inside corner of its cap). Both are guards this build's
@@ -22432,8 +22619,23 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, ~~(5d) the drawing's two composition gaps~~ — *delivered in session 83, and there were **three** of them rather than two, none of them where item 3b's cut list said: the composition rule — every strip first, composing down the chain, then every splice against the trimmed outline — was already what the drawing said, and what stood in the way was a splice standing **past** the corner it is spliced at (a free end's cap at the L's reflex plan corner *grows* the face rather than biting it), a sampled run of a band's cut ending at the last **sample** the plane crossed rather than at the station where the band's own ruling ends, and a turning leg's run handing its end back on the dead side of its own bracket. The bevelled vertex' apex needs no face at all — its three triangles lie in the three bevel planes, so each band simply runs on to the apex — and a face space on a dressed base face at last draws the outline the body has. All 144 face-class cuts close, no volume moves and nothing appends; see the as-built note under OP-31* —, (5e) session 79's two cuts, (5f) the ball along an elliptical crease, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, ~~(5d) the drawing's two composition gaps~~ — *delivered in session 83, and there were **three** of them rather than two, none of them where item 3b's cut list said: the composition rule — every strip first, composing down the chain, then every splice against the trimmed outline — was already what the drawing said, and what stood in the way was a splice standing **past** the corner it is spliced at (a free end's cap at the L's reflex plan corner *grows* the face rather than biting it), a sampled run of a band's cut ending at the last **sample** the plane crossed rather than at the station where the band's own ruling ends, and a turning leg's run handing its end back on the dead side of its own bracket. The bevelled vertex' apex needs no face at all — its three triangles lie in the three bevel planes, so each band simply runs on to the apex — and a face space on a dressed base face at last draws the outline the body has. All 144 face-class cuts close, no volume moves and nothing appends; see the as-built note under OP-31* —, ~~(5e) session 79's two cuts~~ — *delivered in session 83, and one of the two is retired by a **proof** rather than by a construction: at a **sharp** upright square to the face two roundings share the two wedges are congruent by construction, so *"two wedges that are not congruent"* at an inside corner is either slice 5a's ledge or an upright the pivot cannot follow — session 79's cut (2) and session 81's two parked uprights are one cut. A **circular** crease is a corner participant now: the ball's own reading of the pivot is the **horn torus** it sweeps about the upright, on which a straight run's end section and an arc's are both arcs of one meridian circle, so a keyhole's inside corner between a boss and a wall builds exactly. A curved band's free end steps through the face it stands in (rounding a sector's rim did not work at all before) and **notches** it exactly, session 81's cut about that map not being rigid being wrong at a circular edge. The **slanted** upright a loft's inside corner has and the **ring** a revolve's cap corner has are refused in one sentence naming (5f)'s canal; a vertex with a curved edge among the three is refused with its cure rather than left to break the shell; the matrix gains a sector class of 34 cells, all built. The one cut is the **name** of the crease where a torus band and a cylinder band cross at a convex corner — the body is right and the boolean trims it, and the quartic between them is in no list; see the as-built note under OP-31* —, (5f) the ball along an elliptical crease — *and slice 5e refuses the slanted and the ring upright in its own words until this is built, so closing (5f) is what unparks them*, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
+
+**Queued in session 83 — a wedge with a *circular* leg has no step-off, so a band between a plane and a
+cylinder still shares a face with the body.** `Blend3.sectionOf` grows a tool's two legs a micron out of
+their own faces so that no tool ever shares a face with the body (GitHub #33), and it can only do so where
+both legs are **lines**: session 81 recorded that *"a round leg (a fillet against a cylinder) has no
+straight offset in this vocabulary, so it is swept as it always was"*. A band along a **straight** edge one
+of whose faces is a cylinder has exactly such a leg — a sector's own rim uprights are the ordinary case —
+and where the coin comes up tails the general boolean names a zero-thickness flap and the rounding cannot be
+had at all. The cure is one sentence and it is not a new vocabulary: **a circle's offset is a circle**, so a
+round leg steps to a concentric one of radius `R ∓ GROW_MM` exactly as a straight leg steps to a parallel
+line, with the sign read off the material the way `outwardAt` already reads it. It is queued rather than
+ridden along with OP-31's slice 5e because it moves every volume in the drawing that has a
+plane-against-cylinder band in it by a micron's worth, which is a change that wants its own pass and its own
+re-pinning. Found by slice 5e (session 83), where it is the one thing that keeps two of the sector fixture's
+nine edges out of the matrix's own class.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
 refused by name, 117 in a residue of four named classes, which is now the specification items (2) and (3) are

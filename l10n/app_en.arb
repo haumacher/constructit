@@ -5360,6 +5360,48 @@
     },
     "x-translated": "b041f483"
   },
+  "refusal.blend.capStandsInAFace": "{name} is no face of this body — the band's free end there stands in a face the body already has, so what the drawing says about that end is the notch in that face's own outline rather than a face of its own",
+  "@refusal.blend.capStandsInAFace": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.curvedVertexNotStated": "the vertex where {name}, {name2} and {name3} meet has a curved edge among them, and the ball that stands still there is stated only where all three faces are planes — its three tangency stations are solved on those planes, and a curved face puts them on a curve instead, which is a future extension. Round two of the three edges rather than all three, or leave the curved one sharp",
+  "@refusal.blend.curvedVertexNotStated": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.sharpUprightIsNotStraightSquare": "{what} turns about the edge where {name} meets {name2}, and that edge is neither one straight run nor square to {name3} — the ball pivoting there runs on an ellipse or on a curve of its own rather than on a circle, so the corner it sweeps is a canal surface this drawing has no word for yet. Leave one of the two edges sharp, or round that corner on a body whose upright stands straight and square to the face the two roundings share",
+  "@refusal.blend.sharpUprightIsNotStraightSquare": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "what": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
+  },
   "refusal.blend.isNotSquareSoCannot": "{name} is not square to {name2}, so {what} cannot be turned about it — the roundings there are a future extension. Leave that upright sharp, or round it on a body whose upright stands square to that face",
   "@refusal.blend.isNotSquareSoCannot": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",

@@ -118,10 +118,11 @@ class BlendMatrixTest {
         entries: List<Rounding>,
         route: Route,
         together: Boolean = false,
+        fixture: Fixture = L,
     ) {
-        val on = L.block
+        val on = fixture.block
         val res = residueOf(on, entries)
-        val (stages, why) = L.run(entries, route, together)
+        val (stages, why) = fixture.run(entries, route, together)
         if (stages == null) {
             val reason = why ?: ""
             assertTrue(namesSomething(reason), "$name was refused without naming an edge or a face: '$reason'")
@@ -366,6 +367,61 @@ class BlendMatrixTest {
      */
     private fun railsOf(dressed: Body): List<Int> =
         (L.block.count until dressed.count).filter { dressed.edges[it].name is EdgeName.BlendRail }
+
+    // ---- 4b. the sector: a circular crease among straight ones (OP-31, slice 5e) ----
+
+    private val S = Sector()
+
+    /**
+     * **The sector class** — a 90° pie slice of a 30 mm disc, 20 mm deep, whose nine edges hold the drawing's
+     * first **circular** crease beside straight ones (OP-31, slice 5e).
+     *
+     * Enumerated exactly as the L-block's are: every single edge in both kinds, then every pair that shares a
+     * vertex in both kinds, at one size. What it covers that no other fixture does: a band along an arc
+     * (Pappus, not `w·L`), the **convex** corner where that arc hands over to a radius edge — no mitre there,
+     * since the surface equidistant from a straight edge and a curved one is a curved medial one, so the two
+     * tools overlap and the boolean trims them — the **apex** where two straight edges meet at the sector's
+     * own angle, which is the crossing it always was, and the three-band vertices where an upright joins an
+     * arc, which refuse by name because the ball standing still there is stated only between planes.
+     *
+     * The rule is the matrix's own and is not relaxed for it: built inside a bracket the algebra derives, or
+     * refused by name.
+     */
+    @Test
+    fun theSectorsOwnEdgesAndPairs() {
+        val mine = (0 until S.block.count).filter { straightLegged(it) }
+        assertEquals(7, mine.size, "seven of the nine: the two uprights standing on the cylinder are not in the class")
+        for (k in kinds) {
+            for (i in mine) cell("sector-single(e$i,${tag(k)}2)", listOf(Rounding(i, k, 2.0)), Route.ONE_PASS, fixture = S)
+        }
+        val pairs = S.block.pairs.filter { (a, b, _) -> a in mine && b in mine }
+        for ((a, b, _) in pairs) {
+            for (k in kinds) {
+                cell("sector-pair(e$a,e$b,${tag(k)}2)", listOf(Rounding(a, k, 2.0), Rounding(b, k, 2.0)), Route.ONE_PASS, fixture = S)
+            }
+        }
+        tally("the sector")
+        assertEquals((mine.size + pairs.size) * 2, built + refused + residual, "every edge of the class and every pair of them, both kinds")
+        assertEquals(0, residual, "no cell of the sector is in the residue")
+    }
+
+    /**
+     * Whether edge [i] of the sector has a wedge with **two straight legs**, which is what the algebra above
+     * states a figure for.
+     *
+     * A *circular* crease coaxial with the cylinder beside it has one: its normal section is the meridian
+     * plane, in which a cylinder cuts its own **ruling** ([Blend3]'s `creaseOf` proves exactly this). A
+     * *straight* one standing on the cylinder — the sector's two rim uprights — does not: its normal section
+     * cuts the cylinder in a **circle**, so the wedge is bounded by an arc of radius 30 rather than by a line
+     * and is a fifth of a square millimetre wider per millimetre of run than `wedgeArea` says. The figure for
+     * that wedge is a closed form and is not written here; the two cells are out of the class rather than
+     * bracketed loosely, and the omission is recorded under OP-31's fitted tier.
+     */
+    private fun straightLegged(i: Int): Boolean =
+        S.block.arc(i) != null ||
+            listOf(S.block.edges[i].between.a, S.block.edges[i].between.b).all { n ->
+                S.block.faces.firstOrNull { it.name == n }?.plane != null
+            }
 
     // ---- 5. stacked roundings: a rounding on a rail ----
 

@@ -8,10 +8,12 @@ import constructit.dsl.solid
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
+import constructit.geom.Curve3Element
 import constructit.geom.FaceName
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Mesh3
+import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Solid3
 import constructit.geom.Vec2
@@ -343,27 +345,65 @@ class Body(val solid: Solid3) {
 
     val count get() = edges.size
 
-    private val paths =
+    private val elements =
         edges.indices.map { i ->
             val p = Blend3.edgePath(edges[i]).first ?: return@map null
-            val el = p.elements.singleOrNull() ?: return@map null
-            el.start to el.end
+            p.elements.singleOrNull()
         }
 
-    /** Whether edge [i] is a straight run the matrix can state a figure for. */
+    private val paths = elements.map { el -> el?.let { it.start to it.end } }
+
+    /** The circle edge [i] runs on, or null where it is a straight run (OP-31, slice 5e). */
+    fun arc(i: Int): Curve3Element.Arc3? = elements[i] as? Curve3Element.Arc3
+
+    /** Whether edge [i] is one run — straight or circular — the matrix can state a figure for. */
     fun straight(i: Int): Boolean = paths[i] != null && edges[i].reason == null
 
-    fun length(i: Int): Double = paths[i]!!.let { (it.second - it.first).length() }
+    /** How long edge [i] runs: a segment's length, and a circular edge's own **arc** length. */
+    fun length(i: Int): Double = arc(i)?.arcLength ?: paths[i]!!.let { (it.second - it.first).length() }
 
     fun ends(i: Int): List<Vec3> = paths[i]!!.let { listOf(it.first, it.second) }
 
-    /** The direction edge [i] runs in, starting from its end at [at]. */
+    /** The direction edge [i] runs in, starting from its end at [at] — an arc leaves along its tangent. */
     fun away(
         i: Int,
         at: Vec3,
     ): Vec3 {
         val (s, e) = paths[i]!!
-        return if ((s - at).length() <= 1e-6) (e - s).normalized() else (s - e).normalized()
+        val atStart = (s - at).length() <= 1e-6
+        val a = arc(i)
+        if (a != null) {
+            val t = a.tangentAt(if (atStart) 0.0 else 1.0).normalized()
+            return if (atStart) t else t * -1.0
+        }
+        return if (atStart) (e - s).normalized() else (s - e).normalized()
+    }
+
+    /**
+     * Where the **centroid** of a wedge of reach [reach] on edge [i] stands from that edge's own axis, for
+     * the Pappus figure of a band along a circular crease — the arc's radius less the reach where the
+     * material lies inward of the arc, plus it where it lies outward.
+     *
+     * Which way is asked of the **solid**, never tabulated: a hair inward of the crease and a hair along its
+     * own axis is inside the body exactly when the material is on that side.
+     */
+    fun bandRadius(
+        i: Int,
+        reach: Double,
+    ): Double? {
+        val a = arc(i) ?: return null
+        val mid = a.at(0.5)
+        val radial = (mid - a.center).let { it - a.normal.normalized() * it.dot(a.normal.normalized()) }
+        if (radial.length() <= 1e-9) return null
+        val u = radial.normalized()
+        val axis = a.normal.normalized()
+        val eps = 1e-3
+
+        fun holds(s: Double): Boolean = listOf(1.0, -1.0).any { t -> Geom3.encloses(mesh, mid + u * (s * eps) + axis * (t * eps)) }
+        val inward = holds(-1.0)
+        val outward = holds(1.0)
+        if (inward == outward) return null
+        return if (inward) a.radius - reach else a.radius + reach
     }
 
     private val convexity = HashMap<Int, Boolean?>()
@@ -381,12 +421,31 @@ class Body(val solid: Solid3) {
      * side the material is on. `π/2` at a box edge, `3π/4` at the rail of a bevel.
      */
     fun wedgeAngle(i: Int): Double? {
-        val ns =
-            listOf(edges[i].between.a, edges[i].between.b).map { n ->
-                faces.firstOrNull { it.name == n }?.plane?.normal?.normalized() ?: return null
-            }
+        val mid = arc(i)?.at(0.5) ?: paths[i]?.let { (it.first + it.second) * 0.5 } ?: return null
+        val ns = listOf(edges[i].between.a, edges[i].between.b).map { n -> outwardAt(n, mid) ?: return null }
         val d = ns[0].dot(ns[1]).coerceIn(-1.0, 1.0)
         return PI - acos(d)
+    }
+
+    /**
+     * The **outward** normal of face [name] at [p] — a plane's own, and a cylinder's radial, turned to point
+     * out of the material (OP-31, slice 5e: a curved crease lies between a plane and a cylinder as often as
+     * not, and its wedge stands at the angle between the two *tangent* planes there).
+     */
+    private fun outwardAt(
+        name: FaceName,
+        p: Vec3,
+    ): Vec3? {
+        val face = faces.firstOrNull { it.name == name } ?: return null
+        face.plane?.let { return it.normal.normalized() }
+        val s = face.surface ?: return null
+        if (s.band !is Revolve3.Band.Cylinder) return null
+        val rel = p - s.origin
+        val radial = rel - s.axis.normalized() * rel.dot(s.axis.normalized())
+        if (radial.length() <= 1e-9) return null
+        val u = radial.normalized()
+        val eps = 1e-3
+        return if (Geom3.encloses(mesh, p - u * eps)) u else u * -1.0
     }
 
     /** The body's vertices: every point more than one edge stands at, with those edge indices. */
@@ -457,7 +516,19 @@ class Body(val solid: Solid3) {
  * what interior angle the face two edges share turns at their common vertex. Nothing is tabulated, so the
  * fixture cannot drift away from what `Section3` says it is.
  */
-class LBlock {
+interface Fixture {
+    /** The undressed body, as it says what it is. */
+    val block: Body
+
+    /** Round [entries] by [route] and hand back the stages, or the reason the body was refused. */
+    fun run(
+        entries: List<Rounding>,
+        route: Route,
+        together: Boolean = false,
+    ): Pair<List<SolidRef>?, String?>
+}
+
+class LBlock : Fixture {
     /** The reporter's six corners, in his own order. */
     val plan =
         listOf(
@@ -476,7 +547,7 @@ class LBlock {
     val base: SolidRef = prism(cx, plan, height)
 
     /** The undressed block, as it says what it is. */
-    val block = Body(Evaluator().solid(base))
+    override val block = Body(Evaluator().solid(base))
 
     val baseVolume get() = block.volume
 
@@ -503,11 +574,69 @@ class LBlock {
      * before it made, which is what addressing a **rail** is. [together] puts every entry into a single
      * `BlendRun`, which is what one whole-face gesture is; it needs one kind and one size.
      */
-    fun run(
+    override fun run(
         entries: List<Rounding>,
         route: Route,
-        together: Boolean = false,
-    ): Pair<List<SolidRef>?, String?> {
+        together: Boolean,
+    ): Pair<List<SolidRef>?, String?> = runOn(cx, base, entries, route, together)
+}
+
+/**
+ * **A 90° sector of a disc, 30 mm in radius and 20 mm deep** — the fixture OP-31's slice 5e adds, and the
+ * smallest body whose edge list holds a **circular** crease beside straight ones.
+ *
+ * Nine edges: three uprights (two of them between a radial plane and the cylinder), three on each cap, and
+ * on each cap one of the three is the rim's own arc. Its corners cover the three the slice is about — the
+ * convex crossing between an arc and a straight edge at the rim, the apex where two straight ones meet at
+ * the sector's own angle, and the three-band vertices where an upright joins them.
+ */
+class Sector : Fixture {
+    val radius = 30.0
+
+    val height = 20.0
+
+    val sweep = PI / 2.0
+
+    val cx = Construction()
+
+    val base: SolidRef =
+        run {
+            val c = cx.freePoint("sc", 0.0.mm, 0.0.mm)
+            val arc =
+                cx.arc(
+                    c,
+                    cx.const(radius.mm),
+                    cx.const(constructit.units.Quantity(0.0, constructit.units.Dimension.ANGLE)),
+                    cx.const(constructit.units.Quantity(sweep, constructit.units.Dimension.ANGLE)),
+                    true,
+                )
+            val p0 = cx.freePoint("sp0", radius.mm, 0.0.mm)
+            val p1 = cx.freePoint("sp1", (radius * cos(sweep)).mm, (radius * sin(sweep)).mm)
+            val loop = cx.loop(cx.segment(c, p0), arc, cx.segment(p1, c))
+            cx.extrude(cx.sketchOn(cx.planeXY(), cx.region(loop)), cx.const(height.mm))
+        }
+
+    override val block = Body(Evaluator().solid(base))
+
+    val baseVolume get() = block.volume
+
+    override fun run(
+        entries: List<Rounding>,
+        route: Route,
+        together: Boolean,
+    ): Pair<List<SolidRef>?, String?> = runOn(cx, base, entries, route, together)
+}
+
+/** One cell, run on [base] in [cx] — the same routes for every fixture (OP-31, slice 5e). */
+private fun runOn(
+    cx: Construction,
+    base: SolidRef,
+    entries: List<Rounding>,
+    route: Route,
+    together: Boolean,
+): Pair<List<SolidRef>?, String?> {
+    run {
+        @Suppress("NAME_SHADOWING")
         val sizes = HashMap<Double, constructit.dsl.ScalarRef>()
 
         fun sizeOf(mm: Double) = sizes.getOrPut(mm) { cx.const(mm.mm) }
@@ -625,8 +754,14 @@ fun predict(
             // **two convex bands.** The face they share settles which corner it is.
             here.size == 2 && concave.isEmpty() -> {
                 val theta = b.sharedAngle(here[0].edge, here[1].edge, at) ?: return null
+                // **a curved participant builds no mitre** (OP-31, slice 5e): the surface equidistant from a
+                // straight edge and a circular one is a curved medial one, so at a *convex* corner the two
+                // tools simply overlap and the boolean trims them — the incongruent reading below, which is
+                // a containment bracket and not a closed form. At an **inside** corner the ball's pivot is
+                // the same revolution whatever the two runs are, so nothing there changes.
+                val curvedPair = here.any { b.arc(it.edge) != null }
                 if (theta < PI) {
-                    if (congruent) {
+                    if (congruent && !curvedPair) {
                         val take = Figures.crossingTakes(size, kind, theta)
                         cornerLo -= take + slack
                         cornerHi -= take - slack
@@ -710,15 +845,32 @@ fun predict(
     for (e in entries) {
         val run = b.length(e.edge) - (setback[e.edge] ?: 0.0)
         if (run <= 0.0) return null
-        val w = Figures.wedgeArea(e.size, e.kind, b.wedgeAngle(e.edge)!!)
+        val theta = b.wedgeAngle(e.edge)!!
+        val w = Figures.wedgeArea(e.size, e.kind, theta)
         if (w <= 0.0) return null
-        val surplus = if (e.kind == BlendKind.CHAMFER) 0.0 else Figures.chordSurplus(e.size, b.length(e.edge))
+        // **a band along a circular crease is Pappus' revolution, not `w·L`** (OP-31, slice 5e). The
+        // section's own centroid runs on a circle of radius `ρ`, not on the crease, so the sweep is
+        // `w·φ·ρ` — and the bracket is the containment one slice 5b's own rounding takes: the *exact*
+        // section carried at the nearest radius it reaches below, the *chorded* one at the farthest above.
+        val arc = b.arc(e.edge)
+        val figure: Pair<Double, Double> =
+            if (arc == null) {
+                val surplus = if (e.kind == BlendKind.CHAMFER) 0.0 else Figures.chordSurplus(e.size, b.length(e.edge))
+                (w * run) to (w * run + surplus)
+            } else {
+                val reach = if (e.kind == BlendKind.CHAMFER) e.size else e.size / kotlin.math.tan(theta / 2.0)
+                val rho = b.bandRadius(e.edge, reach) ?: return null
+                val near = kotlin.math.min(rho, arc.radius)
+                val far = kotlin.math.max(rho, arc.radius)
+                val phi = run / arc.radius
+                (w * phi * near) to (Figures.wedgeAreaByChords(e.size, e.kind, theta) * phi * far)
+            }
         if (b.convex(e.edge) == true) {
-            lo += w * run
-            hi += w * run + surplus
+            lo += figure.first
+            hi += figure.second
         } else {
-            lo += -(w * run + surplus)
-            hi += -w * run
+            lo += -figure.second
+            hi += -figure.first
         }
     }
     lo += cornerLo
