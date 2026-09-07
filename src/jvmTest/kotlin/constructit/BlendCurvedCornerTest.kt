@@ -428,9 +428,9 @@ class BlendCurvedCornerTest {
     fun theSameDressingIsTheSameBodyAndBothOrdersAgree() {
         val (_, once) = built(::keyhole, listOf(STEM_TOP, DISC_TOP), 3.0, what = "once")
         val (_, twice) = built(::keyhole, listOf(STEM_TOP, DISC_TOP), 3.0, what = "twice")
-        assertClose(once, twice, 1e-9, "the same construction is the same body")
+        assertClose(once, twice, 1e-9 * once, "the same construction is the same body — to the general engine's own ULP noise, which slice 5g measured at a part in 1e12 between two evaluations")
         val (_, other) = built(::keyhole, listOf(DISC_TOP, STEM_TOP), 3.0, what = "the other order")
-        assertClose(once, other, 1e-9, "and the corner does not care which edge was picked first")
+        assertClose(once, other, 1e-9 * once, "and the corner does not care which edge was picked first — to the same ULP noise")
     }
 
     private companion object {

@@ -22637,6 +22637,8 @@ plane-against-cylinder band in it by a micron's worth, which is a change that wa
 re-pinning. Found by slice 5e (session 83), where it is the one thing that keeps two of the sector fixture's
 nine edges out of the matrix's own class.
 
+**Queued in session 83 — the general boolean is deterministic only to an ULP.** Two evaluations of one construction give volumes that differ by a part in 10¹² (slice 5g measured it under a re-stamp; slice 5e's gate met it between two fresh evaluations of the keyhole corner, `15000.06280217351` against `15000.062802156805`). `MeshBool`'s stated contract is bit-for-bit determinism after canonicalisation; the canonical form sorts triangles but cannot repair coordinates that Manifold's own parallel reductions round differently from run to run. Either the engine is pinned to a deterministic execution policy (and the contract is asserted by a test that evaluates one boolean twice and compares bytes), or the contract is restated as *deterministic to the engine's ULP* and every same-body assertion in the suite says so, as `BlendCurvedCornerTest` now does. Undo/reload equality (OP-4) is the reason it matters.
+
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
 refused by name, 117 in a residue of four named classes, which is now the specification items (2) and (3) are
 written against. See the OP-31 entry's implementation status.
