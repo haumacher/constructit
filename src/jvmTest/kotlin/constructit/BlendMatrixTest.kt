@@ -631,6 +631,20 @@ class BlendMatrixTest {
         size: Double,
     ): Bracket? {
         val e = dressed.edges[at]
+        // **a crease with no rigid section is a canal band** (OP-31, slice 5f), and its own figure is the
+        // quadrature the algebra states for one: `∫ A(s)(1 − κx̄) ds` along the spine, bracketed by the
+        // loft's own chord terms and by the walls' own tessellation. It is asked of the construction because
+        // the section changes along the run — there is no one wedge to carry.
+        if (Blend3.edgePath(e).first == null) {
+            val sec = BlendSection(BlendKind.FILLET, size)
+            val choice = Blend3.choicesFor(dressed.solid, listOf(at), sec).first?.firstOrNull() ?: return null
+            val (lo, hi) = Blend3.canalRemoval(dressed.solid.feature, at, sec, choice) ?: return null
+            val sign = if (choice.convex) 1.0 else -1.0
+            val a = dressed.volume - sign * hi
+            val b = dressed.volume - sign * lo
+            val slack = 1e-5 * dressed.volume
+            return Bracket(kotlin.math.min(a, b) - slack, kotlin.math.max(a, b) + slack)
+        }
         val theta =
             when (e.name) {
                 is EdgeName.BlendNotch -> PI / 2.0

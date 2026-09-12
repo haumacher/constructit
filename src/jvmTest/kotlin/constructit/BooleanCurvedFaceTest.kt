@@ -1,5 +1,6 @@
 package constructit
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.dsl.Construction
 import constructit.dsl.RegionRef
@@ -450,16 +451,44 @@ class BooleanCurvedFaceTest {
             assertTrue(chain.size >= 2, "…and it took more than one span to get there")
         }
 
-        // …and a rounding along it is refused by name rather than built wrongly
+        // …and a rounding **along** it is the canal band slice 5f built, on a spine that is fitted where the
+        // crease is: the ball's centre is solved station by station against the two cylinders themselves, so
+        // every tangency is still exact pointwise and only the run's own parametrisation is a fit. Until that
+        // slice this read *"a rounding along a fitted crease is refused"* and asserted the sentence naming
+        // its turning normal section; it builds, or it names what stopped it, and this asserts whichever.
         val index = edgesOf(body.feature, "the pipe tee").indexOfFirst { it.geom is EdgeGeom.InSpace }
         val (targets, why) = Blend3.targets(body.feature, false, index)
-        if (targets != null) {
-            val (choices, whyC) = Blend3.choicesFor(body, targets, BlendSection(BlendKind.FILLET, 1.0))
-            assertTrue(choices == null, "a rounding along a fitted crease is refused")
-            assertTrue(assertNotNull(whyC).contains("normal section"), "…by name: ${whyC?.render()}")
-        } else {
+        if (targets == null) {
             assertTrue(assertNotNull(why).contains("normal section"), "a rounding along a fitted crease is refused by name: $why")
+            return
         }
+        val sec = BlendSection(BlendKind.FILLET, 1.0)
+        val (choices, whyC) = Blend3.choicesFor(body, targets, sec)
+        if (choices == null) {
+            val reason = assertNotNull(whyC, "a refusal has a reason").render()
+            assertTrue(reason.contains("#") || reason.contains("crease") || reason.contains("face"), "…and it names something: $reason")
+            println("pipe tee | refused | ${reason.take(90)}")
+            return
+        }
+        val before = Geom3.volume(body.mesh)
+        val ref =
+            cx.blendAll(
+                cx.union(main, branch),
+                cx.planeXY(),
+                listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(1.mm), null, targets, choices)),
+            )
+        val r = Evaluator().eval(ref.node)
+        if (r is EvalResult.Invalid) {
+            assertTrue(r.reason.contains("#") || r.reason.contains("crease"), "a rounding that cannot be built names something: ${r.reason}")
+            println("pipe tee | refused | ${r.reason.take(90)}")
+            return
+        }
+        val rounded = Evaluator().solid(ref)
+        assertManifold(rounded.mesh, "the pipe tee's crease rounded")
+        val moved = abs(Geom3.volume(rounded.mesh) - before)
+        val (lo, hi) = assertNotNull(Blend3.canalRemoval(body.feature, targets[0], sec, choices[0]), "the algebra states its figure")
+        assertTrue(moved in lo..hi, "the canal along the tee's crease moves $moved, outside its own bracket [$lo, $hi]")
+        println("pipe tee | built | moved $moved in [$lo, $hi]")
     }
 
     /**

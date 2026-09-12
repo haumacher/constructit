@@ -4866,26 +4866,6 @@
     },
     "x-translated": "38630160"
   },
-  "refusal.blend.isEllipseWhichThisDrawing": "{name} is an ellipse, which this drawing carries no exact curve in space for — blend a straight or circular edge",
-  "@refusal.blend.isEllipseWhichThisDrawing": {
-    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
-    "placeholders": {
-      "name": {
-        "type": "message"
-      }
-    },
-    "x-translated": "4086b1e1"
-  },
-  "refusal.blend.isSplineWhoseNormalSection": "{name} is a spline, whose normal section turns along it — blend a straight or circular edge",
-  "@refusal.blend.isSplineWhoseNormalSection": {
-    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
-    "placeholders": {
-      "name": {
-        "type": "message"
-      }
-    },
-    "x-translated": "c163edee"
-  },
   "refusal.blend.hasNoLengthSoThere": "{name} has no length, so there is no crease along it to blend",
   "@refusal.blend.hasNoLengthSoThere": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
@@ -5384,7 +5364,7 @@
       }
     }
   },
-  "refusal.blend.sharpUprightIsNotStraightSquare": "{what} turns about the edge where {name} meets {name2}, and that edge is neither one straight run nor square to {name3} — the ball pivoting there runs on an ellipse or on a curve of its own rather than on a circle, so the corner it sweeps is a canal surface this drawing has no word for yet. Leave one of the two edges sharp, or round that corner on a body whose upright stands straight and square to the face the two roundings share",
+  "refusal.blend.sharpUprightIsNotStraightSquare": "{what} turns about the edge where {name} meets {name2}, and that edge is neither one straight run nor square to {name3} — the ball pivoting there runs on an ellipse or on a curve of its own rather than on a circle, so the corner it sweeps is a canal surface between two band ends, which this drawing carries along a crease but not yet between the two ends of a run. Leave one of the two edges sharp, or round that corner on a body whose upright stands straight and square to the face the two roundings share",
   "@refusal.blend.sharpUprightIsNotStraightSquare": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
@@ -19291,15 +19271,83 @@
     },
     "x-translated": "a67f060c"
   },
-  "refusal.blend.mitreSectionChanges": "{name} is an ellipse arc — the mitre where two equal roundings cross — and a rounding carried along it would have a section that changes from one end of the arc to the other, which this drawing does not state. The mitre between two chamfers is a straight crease and can be rounded.",
-  "@refusal.blend.mitreSectionChanges": {
+  "refusal.blend.canalWallNotStatable": "{name} lies between {name2} and {name3}, and {name2} is neither a plane nor a cylinder this drawing can roll a ball on, so no rounding can be carried along that crease",
+  "@refusal.blend.canalWallNotStatable": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalNotSimpleCrease": "{name} is no simple crease for a rolling ball — the two faces it stands between do not cut the material into one sector a ball can roll in, so there is nothing there to round",
+  "@refusal.blend.canalNotSimpleCrease": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "name": {
         "type": "message"
       }
-    },
-    "x-translated": "c241f5eb"
+    }
+  },
+  "refusal.blend.canalDoesNotFitAlong": "a rounding {sizePhrase} does not fit along {name} — a ball of that size leaves one of the two faces it must roll on before it reaches the end of the crease",
+  "@refusal.blend.canalDoesNotFitAlong": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalBandIsNotPlane": "{name} is the canal band a ball {sizePhrase} sweeps along {name2} — its section changes from one end of the run to the other, so it is neither a plane nor a surface of revolution and there is nothing to sketch on there; put a datum plane where you want to sketch",
+  "@refusal.blend.canalBandIsNotPlane": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalRunsRightRound": "{name} closes on itself, so the rounding along it runs right round and has no flat end at all",
+  "@refusal.blend.canalRunsRightRound": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalTapersToNothing": "the rounding of {name} tapers to nothing at this end, where the two faces it stands between run tangent to one another, so it has no flat end there",
+  "@refusal.blend.canalTapersToNothing": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalSpineNotFollowed": "the rounding of {name} cannot be carried along it — the path its ball would roll on could not be followed from one end of the crease to the other",
+  "@refusal.blend.canalSpineNotFollowed": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
   },
   "refusal.blend.cornerCurveNotStated": "{name} is a curve this drawing has no exact name for, so it carries no rounding of its own.",
   "@refusal.blend.cornerCurveNotStated": {
@@ -19433,5 +19481,35 @@
       }
     },
     "x-translated": "d9b771ba"
+  },
+  "refusal.blend.carriesNoRigidSection": "{name} carries no rigid section — the shape carried along it changes from one end of the run to the other — so the rounding this drawing states there is the ball's own canal band, and a chamfer or a drawn profile is not stated along it",
+  "@refusal.blend.carriesNoRigidSection": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolCanalBand": "this solid is a general boolean, and {name} of one of the two solids it was made from is a canal band — the surface a rolling ball leaves, whose section changes along its run — which this drawing states exactly but cannot yet trace a boolean's own triangles back to, so this body's faces stay emergent; make the boolean first and put the rounding on its result",
+  "@refusal.section.boolCanalBand": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean (a union, a difference or an intersection computed by the mesh engine) cannot name its own faces: one of the faces of one of the two solids that went into it is neither flat nor one of the curved surfaces this program can state exactly (a cylinder, a cone, a sphere, a ring), so there is nothing exact to trace the result back to. {name} is that face's own name and is itself a translated message.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.canalBallLargerThanBend": "a ball {sizePhrase} is larger than the bend of {name}: rolled along it, its own contact turns back before the end of the crease, so there is no one band along it — round the crease smaller, or round the two faces larger",
+  "@refusal.blend.canalBallLargerThanBend": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
   }
 }

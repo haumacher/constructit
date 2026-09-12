@@ -48,7 +48,9 @@ import kotlin.test.assertTrue
  * therefore either two roundings of **unlike size or kind** (slice 5a's ledge, built) or an upright that is
  * **not** one straight run square to the shared face — the slanted one a loft's inside corner has and the
  * **ring** a revolve's cap corner has, which session 81 parked and which this slice refuses by name, in one
- * sentence, with the canal surface slice (5f) owes named in it.
+ * sentence naming the canal surface such a corner would be. Slice 5f built the canal band a ball leaves
+ * **along a crease**; a canal *between two band ends* — a corner rather than a run — is the piece still
+ * owed, and the sentence says exactly that.
  *
  * *What is exact and what is not.* The corner is exact — a horn torus, cut by `Revolve3`'s own table. A
  * curved band's **free end** notches the face it stands in, exactly, through the rigid map the meridian
@@ -362,8 +364,9 @@ class BlendCurvedCornerTest {
      * upright. Where the upright stands square to that face those two are a plane and a cylinder about its
      * normal, meeting in a **circle** — the pivot, exact. A loft's side faces slant, so the upright between
      * two of them slants too, the two conditions meet in an **ellipse**, and the corner is a swept sphere
-     * along it: the canal surface slice (5f) owes the elliptical mitre, and this drawing has no carrier for
-     * one. So it is refused whole, in one sentence, naming the two faces whose crossing the upright is.
+     * along it. Slice 5f carries a ball along a **crease** and states the band it leaves; carrying one
+     * between two **band ends** is a corner and not a run, and it is the piece still owed. So the pair is
+     * refused whole, in one sentence, naming the two faces whose crossing the upright is.
      */
     @Test
     fun aLoftsInsideCornerRefusesByNamingItsSlantedUpright() {
@@ -381,7 +384,7 @@ class BlendCurvedCornerTest {
      *
      * The upright at an inside corner of a revolve's cap is the **ring** the profile's own corner traces, so
      * the ball's centre stands at `r` from a circle rather than from a line: a plane against a torus, a
-     * spiric quartic, and not even (5f)'s ellipse. Before this slice the pair was refused with slice 5a's
+     * spiric quartic, and not even the ellipse a slanted upright gives. Before this slice the pair was refused with slice 5a's
      * *"they are not congruent"* — which names the symptom, since two wedges at a ring upright are **bound**
      * to differ, and offers a cure (give both edges the same rounding) that cannot work. The upright is
      * asked about first now.

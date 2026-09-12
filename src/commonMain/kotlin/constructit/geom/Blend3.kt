@@ -6,6 +6,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -456,22 +457,15 @@ object Blend3 {
             }
             is EdgeGeom.OnPlane -> {
                 when (g.piece) {
-                    is ProfileElement.EllipseE, is ProfileElement.EllipticArcE ->
-                        // …and where that ellipse is a **mitre**, the refusal says which ellipse it is and
-                        // what does work (OP-31, item 3, Tier B item 5): two equal rounds crossing meet in a
-                        // plane ellipse, exactly and by construction, and a rounding carried along it would
-                        // have a section that changes from one end of the arc to the other — which this
-                        // drawing states for no edge. Two equal *bevels* meet in a straight crease, and that
-                        // one rounds with the machinery already here.
-                        null to
-                            if (edge.name is EdgeName.BlendMitre) {
-                                Msgs.refusalBlendMitreSectionChanges(name = edge.name.label)
-                            } else {
-                                Msgs.refusalBlendIsEllipseWhichThisDrawing(name = edge.name.label)
-                            }
-                    is ProfileElement.BezierE ->
-                        null to
-                            Msgs.refusalBlendIsSplineWhoseNormalSection(name = edge.name.label)
+                    is ProfileElement.EllipseE, is ProfileElement.EllipticArcE, is ProfileElement.BezierE ->
+                        // …and neither an ellipse nor a fitted curve carries a **rigid** section, which is
+                        // what this reading is for. Since OP-31 slice 5f that is no longer a dead end: a
+                        // crease whose section changes along the run is a **canal** band ([canalOf]), and
+                        // every caller asks the catalogue first and the canal after it — so what this
+                        // sentence has to say is which of the two the crease is, and it says exactly that
+                        // (session 84: it used to advise *"blend a straight or circular edge"*, which the
+                        // canal made false — this drawing does round the crease, and only rounds it).
+                        null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
                     else -> {
                         val closed = g.piece is ProfileElement.CircleE
                         val path = Intersect3.liftedRun(listOf(g.piece), g.plane, closed).first
@@ -486,7 +480,7 @@ object Blend3 {
             // **a fitted crease is not a carrier to blend along** (OP-31, Tier B): its own normal section
             // turns along it, which is the very thing this vocabulary states for no edge — and it is said
             // in the same words a drawn spline's crease is refused in, because it is one.
-            is EdgeGeom.InSpace -> null to Msgs.refusalBlendIsSplineWhoseNormalSection(name = edge.name.label)
+            is EdgeGeom.InSpace -> null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
         }
 
     /** The frame reference the sweep is stated with — the edge's own plane normal where it has one. */
@@ -4503,7 +4497,14 @@ object Blend3 {
         for (i in targets) {
             val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge2(i = i + 1)
             val (crease, why) = creaseOf(feature, edge)
-            if (crease == null) return null to why
+            if (crease == null) {
+                // **a crease with no rigid section is scored as a canal's** (OP-31, slice 5f) — the material
+                // side of each face and the one reading that says subtract or add, both stored as signs
+                val (canal, whyCanal) = canalChoice(feature, base.mesh, edge, sec) ?: return null to why
+                if (canal == null) return null to (whyCanal ?: why)
+                out.add(canal)
+                continue
+            }
             val (sector, whySector) = sectorOf(crease, base.mesh, reach)
             if (sector == null) return null to whySector
             val (s1, s2, convex) = sector
@@ -4630,13 +4631,22 @@ object Blend3 {
         // before this session and its triangles are the same triangles. A **tombstoned** target is skipped
         // outright: it keeps a slot in the dressed lists and nothing else (OP-30).
         val pieces = ArrayList<Piece>()
+        // **the canal bands of this pass** (OP-31, slice 5f) — a ball along a crease whose section changes,
+        // which is a tool of its own and takes part in no corner: it is applied after the catalogue's groups,
+        // in the step's own order, and where another rounding meets it the boolean trims the two.
+        val canals = ArrayList<Canal>()
         for ((k, i) in targets.withIndex()) {
             if (k in absent) continue
             val sec = sections[k]
             val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge3(i = i + 1, count = edges.size)
-            val (crease, why) = creaseOf(feature, edge)
-            if (crease == null) return null to why
             val choice = choices[k]
+            val (crease, why) = creaseOf(feature, edge)
+            if (crease == null) {
+                val (canal, whyCanal) = canalOf(feature, edge, i, sec, choice) ?: return null to why
+                if (canal == null) return null to (whyCanal ?: why)
+                canals.add(canal)
+                continue
+            }
             val (wedge, whyWedge) = wedgeOf(crease, sec, choice)
             if (wedge == null) return null to whyWedge
             if (!tangenciesFit(crease, wedge)) {
@@ -4655,11 +4665,25 @@ object Blend3 {
             if (piece == null) return null to whyPiece
             pieces.add(piece)
         }
+
+        // …and the canal bands of this pass, each its own tool and its own boolean (OP-31, slice 5f)
+        fun applyCanals(body: Solid3): Pair<Solid3?, Msg?> {
+            var result = body
+            for (canal in canals) {
+                val (tool, whyTool) = canalTool(canal)
+                if (tool == null) {
+                    return null to Msgs.refusalQualified(name = canal.edge.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
+                }
+                val (next, whyBool) = Geom3.combine(if (canal.convex) BoolOp.SUBTRACT else BoolOp.UNION, result, tool)
+                result = next ?: return null to Msgs.refusalQualified(name = canal.edge.name.label, reason = whyBool ?: Msgs.refusalBlendCannotBeAppliedToBody())
+            }
+            return result to null
+        }
         // **A dressing whose every rounding has been removed is its own base** — nothing fresh is cut, so
         // there is no tool, no corner and no boolean, and the bands under it (if any) are already off
         // (OP-30's tombstone). Stated here rather than reached through [cornersOf], which would answer the
         // same body the long way round.
-        if (pieces.isEmpty()) return applyTo to null
+        if (pieces.isEmpty()) return applyCanals(applyTo)
         // …and the bands already under this one, so a blend of a blend on an adjacent edge builds the same
         // corner a one-gesture chain would (GitHub #27, [chainPieces]).
         pieces.addAll(chainPieces(feature))
@@ -4761,7 +4785,7 @@ object Blend3 {
                 val (next, why) = apply(result, group)
                 result = next ?: return null to why
             }
-            return result to null
+            return applyCanals(result)
         }
         // …and where this is the chain's **first** rounding the body addressed *is* the undressed root, so
         // there is nothing to look up: the operand is only ever needed one rounding further along
@@ -4776,7 +4800,7 @@ object Blend3 {
             val (next, why) = apply(result, group)
             result = next ?: return null to why
         }
-        return result to null
+        return applyCanals(result)
     }
 
     /**
@@ -5022,10 +5046,16 @@ object Blend3 {
     private class Dressing(
         val index: Int,
         val edge: SolidEdge,
-        val crease: Crease,
-        val wedge: Wedge,
+        /**
+         * The rigid crease this entry runs along — **null for a canal band** (OP-31, slice 5f), whose
+         * section changes from one end of the run to the other and whose whole statement is [canal].
+         */
+        val crease: Crease?,
+        val wedge: Wedge?,
         val choice: BlendChoice,
         val sec: BlendSection,
+        /** The canal this entry is, where its crease carries no rigid section — null for every other. */
+        val canal: Canal? = null,
     ) {
         /** The band's own name — one per piece of the section, since a drawn profile has several. */
         fun nameAt(piece: Int): FaceName = FaceName.BlendBand(index, piece)
@@ -5051,9 +5081,16 @@ object Blend3 {
             }
             val sec = f.sections.getOrNull(k) ?: return null to Msgs.refusalBlendThisBlendRecordedNoSection(i = i + 1)
             val edge = edges.getOrNull(i) ?: return null to Msgs.refusalBlendThisSolidHasNoEdge3(i = i + 1, count = edges.size)
-            val (crease, why) = creaseOf(f.base, edge)
-            if (crease == null) return null to why
             val choice = f.choices.getOrNull(k) ?: return null to Msgs.refusalBlendThisBlendRecordedNoChoice(i = i + 1)
+            val (crease, why) = creaseOf(f.base, edge)
+            if (crease == null) {
+                // **a crease with no rigid section is a canal band** (OP-31, slice 5f): the catalogue is
+                // asked first and this is reached only where it declines, so nothing it already builds moves
+                val (canal, whyCanal) = canalOf(f.base, edge, i, sec, choice) ?: return null to why
+                if (canal == null) return null to (whyCanal ?: why)
+                out.add(Dressing(i, edge, null, null, choice, sec, canal))
+                continue
+            }
             val (wedge, whyWedge) = wedgeOf(crease, sec, choice)
             if (wedge == null) return null to whyWedge
             out.add(Dressing(i, edge, crease, wedge, choice, sec))
@@ -5196,7 +5233,7 @@ object Blend3 {
         if (len <= Geom3.WELD_TOL) return patch
         val u = v * (1.0 / len)
         val corners = cornersOf(pieces).list
-        val span = spanOf(pieces, at, corners)
+        val span = spanOf(pieces, at, corners, canalsOf(f))
 
         fun corner(
             t: Double,
@@ -5313,7 +5350,13 @@ object Blend3 {
         if (dressings == null) return null to whyDress
         val trims = HashMap<FaceName, MutableList<Pair<SolidEdge, Double>>>()
         for (d in dressings.filterNotNull()) {
-            for ((patch, t) in listOf(d.crease.face1 to d.wedge.t1, d.crease.face2 to d.wedge.t2)) {
+            // **a canal takes no strip off a face's own outline**, and the reason is what its two walls
+            // are: a canal band lies between two *curved* faces, whose statement is a surface and not an
+            // outline at all, so what it takes off them is stated where their own extent is — the band's
+            // run, ended by the canal's rail exactly as a crossing's mitre ends it ([canalSetbacks]).
+            val crease = d.crease ?: continue
+            val wedge = d.wedge ?: continue
+            for ((patch, t) in listOf(crease.face1 to wedge.t1, crease.face2 to wedge.t2)) {
                 trims.getOrPut(patch.name) { ArrayList() }.add(d.edge to t.length())
             }
         }
@@ -5403,6 +5446,9 @@ object Blend3 {
     ): List<FacePatch> {
         val slots = capSlotsAt(f, baseEdges, k)
         if (slots == 0) return emptyList()
+        // **a canal band's own two flat ends** (OP-31, slice 5f): the section standing in the plane square
+        // to its spine, or the sentence that says the run tapers to nothing there
+        d.canal?.let { return canalCapFaces(it) }
         val pieces = piecesOf(f)
         val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
         val piece = if (pieces != null && at >= 0) pieces[at] else null
@@ -5507,7 +5553,10 @@ object Blend3 {
             if (f.isAbsent(k)) continue
             val sec = f.sections.getOrNull(k) ?: return null
             val edge = edges.getOrNull(i) ?: return null
-            val crease = creaseOf(f.base, edge).first ?: return null
+            // **a canal entry contributes no piece**, and that is not a failure to read this body: its
+            // crease carries no rigid section, so it is in no corner and no band-among-bands (OP-31, slice
+            // 5f). Skipping it is what lets every *other* entry's band still state its own extent.
+            val crease = creaseOf(f.base, edge).first ?: if (canalPath(edge) != null) continue else return null
             val choice = f.choices.getOrNull(k) ?: return null
             val wedge = wedgeOf(crease, sec, choice).first ?: return null
             out.add(pieceOf(i, false, crease, wedge, choice, sec).first ?: return null)
@@ -5814,16 +5863,38 @@ object Blend3 {
                 for (slot in f.corners.edgesAt(k)) out.add(pool.take(slot) ?: goneEdge(slot))
                 continue
             }
+            // **a canal band's two rails** are the curves its ball's contact traces on the two walls,
+            // fitted chains through points exact on both the sphere and the wall (OP-31, slice 5f)
+            val canal = d.canal
+            if (canal != null) {
+                for (side in 0..1) {
+                    val (geom, tol) = canalRail(canal, side)
+                    val wall = (if (side == 0) canal.w1 else canal.w2).patch.name
+                    out.add(
+                        SolidEdge(
+                            EdgeName.BlendRail(d.index, side),
+                            geom ?: EdgeGeom.Straight(canal.stations.first().p1, canal.stations.first().p1),
+                            FacePair(wall, d.name),
+                            if (geom == null) Msgs.refusalBlendCanalSpineNotFollowed(name = d.edge.name.label) else null,
+                            tol,
+                        ),
+                    )
+                }
+                for (slot in f.corners.edgesAt(k)) out.add(pool.take(slot) ?: goneEdge(slot))
+                continue
+            }
+            val crease = d.crease ?: continue
+            val wedge = d.wedge ?: continue
             val at = pieces?.indexOfFirst { it.index == d.index } ?: -1
-            val span = if (pieces != null && at >= 0) spanOf(pieces, at, corners) else null
+            val span = if (pieces != null && at >= 0) spanOf(pieces, at, corners, canalsOf(f)) else null
             for (side in 0..1) {
-                val face = if (side == 0) d.crease.face1 else d.crease.face2
-                val t = if (side == 0) d.wedge.t1 else d.wedge.t2
+                val face = if (side == 0) crease.face1 else crease.face2
+                val t = if (side == 0) wedge.t1 else wedge.t2
                 val (geom, why) = railGeom(d, t, span)
                 out.add(
                     SolidEdge(
                         EdgeName.BlendRail(d.index, side),
-                        geom ?: EdgeGeom.Straight(d.crease.ref.at, d.crease.ref.at),
+                        geom ?: EdgeGeom.Straight(crease.ref.at, crease.ref.at),
                         FacePair(face.name, d.name),
                         why,
                     ),
@@ -6175,7 +6246,7 @@ object Blend3 {
             out.add(
                 made ?: SolidEdge(
                     name,
-                    EdgeGeom.Straight(d.crease.ref.at, d.crease.ref.at),
+                    EdgeGeom.Straight(d.crease?.ref?.at ?: Vec3.ZERO, d.crease?.ref?.at ?: Vec3.ZERO),
                     FacePair(d.name, d.name),
                     if ((at to atStart) in claimed) {
                         Msgs.refusalBlendFreeEndNowCorner(name = name.label)
@@ -6727,8 +6798,12 @@ object Blend3 {
      * drawing instead of three.
      */
     private fun bandPatchesOf(d: Dressing): List<FacePatch> {
+        // **a canal band is the one face this list states no carrier for** (OP-31, slice 5f): it is
+        // neither a plane, nor a revolution, nor a ruled strip, and it says so where it is read
+        d.canal?.let { return listOf(canalBandPatch(it)) }
         val sections = orientedSections(d)
-        val el = soleElement(d.crease)
+        val crease = d.crease ?: return emptyList()
+        val el = soleElement(crease)
         return sections.mapIndexed { k, piece ->
             val name = d.nameAt(k)
             when {
@@ -6759,6 +6834,7 @@ object Blend3 {
         piece: ProfileElement,
         name: FaceName,
     ): FacePatch {
+        val crease = d.crease ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendIsChainSeveralPiecesSo(name = d.edge.name.label))
         return when (el) {
             is Curve3Element.Seg3 -> {
                 val v = el.end - el.start
@@ -6767,12 +6843,12 @@ object Blend3 {
                     FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLengthSoIts(name = d.edge.name.label))
                 } else {
                     val u = v * (1.0 / len)
-                    Section3.sweptFace(Plane3(el.start, d.crease.e1, u.cross(d.crease.e1)), u, len, piece, name)
+                    Section3.sweptFace(Plane3(el.start, crease.e1, u.cross(crease.e1)), u, len, piece, name)
                 }
             }
             is Curve3Element.Arc3 -> {
                 val (frame, sr) =
-                    revolvedBand(d.crease, el, piece) ?: return FacePatch(
+                    revolvedBand(crease, el, piece) ?: return FacePatch(
                         name,
                         null,
                         emptyList(),
@@ -6863,7 +6939,8 @@ object Blend3 {
         t: Vec2,
         span: ((Vec2) -> Pair<Double, Double>)? = null,
     ): Pair<EdgeGeom?, Msg?> {
-        val el = soleElement(d.crease) ?: return null to Msgs.refusalBlendIsChainSeveralPiecesSo2(name = d.edge.name.label)
+        val crease = d.crease ?: return null to Msgs.refusalBlendIsChainSeveralPiecesSo2(name = d.edge.name.label)
+        val el = soleElement(crease) ?: return null to Msgs.refusalBlendIsChainSeveralPiecesSo2(name = d.edge.name.label)
         return when (el) {
             is Curve3Element.Seg3 -> {
                 val v = el.end - el.start
@@ -6880,16 +6957,16 @@ object Blend3 {
                     // outline has taken since session 81, asked here for the rail as well.
                     val (s0, s1) = span?.invoke(t) ?: (0.0 to len)
                     if (s1 - s0 <= Geom3.WELD_TOL) {
-                        EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, s0), worldOnStraight(d.crease, el.start, u, t, s0)) to
+                        EdgeGeom.Straight(worldOnStraight(crease, el.start, u, t, s0), worldOnStraight(crease, el.start, u, t, s0)) to
                             Msgs.refusalBlendRailTakenByCorner(name = EdgeName.BlendRail(d.index, 0).label, name2 = d.name.label)
                     } else {
-                        EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, s0), worldOnStraight(d.crease, el.start, u, t, s1)) to null
+                        EdgeGeom.Straight(worldOnStraight(crease, el.start, u, t, s0), worldOnStraight(crease, el.start, u, t, s1)) to null
                     }
                 }
             }
             is Curve3Element.Arc3 -> {
                 val axis = el.normal.normalized()
-                val w = d.crease.ref.at + d.crease.e1 * t.x + d.crease.ref.e2 * t.y
+                val w = crease.ref.at + crease.e1 * t.x + crease.ref.e2 * t.y
                 val rel = w - el.center
                 val s = rel.dot(axis)
                 val r = (rel - axis * s).length()
@@ -6970,6 +7047,11 @@ object Blend3 {
         pieces: List<Piece>,
         at: Int,
         corners: List<Corner>,
+        /**
+         * The **canal bands** standing on this chain (OP-31, slice 5f) — a canal along the mitre two bands
+         * cross in ends both of them, nearer the run's middle than the mitre itself, and its rail is where.
+         */
+        canals: List<Canal> = emptyList(),
     ): (Vec2) -> Pair<Double, Double> {
         val piece = pieces[at]
         val len = piece.length
@@ -7001,6 +7083,9 @@ object Blend3 {
         // it as surely as a corner does and is not one: the notch curve is the band's end circle, so the
         // band that rounds it stands square to this band's run and its tangency *is* the setback along it.
         val notched = notchSetbacks(pieces, at)
+        // …and where a **canal band** runs along the mitre this band makes with a neighbour: the canal's
+        // own rail is this band's end there, and it stands before the mitre the crossing left (slice 5f)
+        val bitten = canalSetbacks(pieces, at, canals)
         val sections = orientedSections(piece)
         return { p ->
             var from = lo?.let { stationOf(piece, it.at(p)) } ?: 0.0
@@ -7014,6 +7099,10 @@ object Blend3 {
                 val on = sections.getOrNull(k)
                 if (sections.size > 1 && (on == null || !onSpanOf(on, p))) continue
                 if (atStart) from = max(from, back) else to = min(to, len - back)
+            }
+            for ((atStart, qs, ss) in bitten) {
+                val s = setbackAt(p, qs, ss) ?: continue
+                if (atStart) from = max(from, s) else to = min(to, s)
             }
             from to to
         }
@@ -7175,7 +7264,7 @@ object Blend3 {
         val len = v.length()
         if (len <= Geom3.WELD_TOL) return null
         val u = v * (1.0 / len)
-        val span = spanOf(pieces, at, cornersOf(pieces).list)
+        val span = spanOf(pieces, at, cornersOf(pieces).list, canalsOf(f))
         val steps =
             when (section) {
                 is ProfileElement.ArcE ->
@@ -7224,7 +7313,7 @@ object Blend3 {
         val depth = (here - cut.origin).dot(n)
         val hits = sectionOnPlane(section, Vec2(e1.dot(n), e2.dot(n)), -depth)
         if (hits.isEmpty()) return null
-        val span = spanOf(pieces, at, cornersOf(pieces).list)
+        val span = spanOf(pieces, at, cornersOf(pieces).list, canalsOf(f))
         val out = ArrayList<ProfileElement>(hits.size)
         for (p in hits) {
             val (s0, s1) = span(p)
@@ -7311,7 +7400,7 @@ object Blend3 {
             if (outward == null) null else materialLeft(e, outward)
         }
 
-    private fun orientedSections(d: Dressing): List<ProfileElement?> = orientedSections(d.wedge, d.choice)
+    private fun orientedSections(d: Dressing): List<ProfileElement?> = d.wedge?.let { orientedSections(it, d.choice) } ?: emptyList()
 
     private fun orientedSections(p: Piece): List<ProfileElement?> = orientedSections(p.wedge, p.choice)
 
@@ -8159,6 +8248,1247 @@ object Blend3 {
             is ProfileElement.CircleE -> plane.toWorld(e.circle.center) to e.circle.radius
             else -> null
         }
+
+    // ---- the canal band: a ball along a crease whose section changes (OP-31, slice 5f) ----
+
+    /**
+     * **What a constant-radius ball leaves behind, in one sentence**: the envelope of the spheres of radius
+     * `r` centred on a curve is a **pipe surface**, and in the plane normal to that curve at any station the
+     * envelope's own characteristic is the **circle of radius `r` about the station** — exact, whatever the
+     * spine does. The proof is one line and it is what makes this slice's tool exact rather than fitted: the
+     * characteristic of the family `|x − c(s)| = r` is where the sphere meets its own derivative, which for a
+     * constant `r` is the plane `(x − c)·c' = 0`, and a sphere cut through its centre is a great circle.
+     *
+     * So a rounding along a crease whose section **changes** — the elliptic mitre where two equal roundings
+     * cross, and its concave twin where two fills do — needs only two things stated: the **spine**, which is
+     * the locus of ball centres, and the two **tangency points** at each station, which are where the sphere
+     * touches each of the two faces. Both are exact pointwise:
+     *
+     * - the spine is `{ c : dist(c, F₁) = r and dist(c, F₂) = r }`, two equations in the plane normal to the
+     *   crease, solved to machine precision by Newton on the surfaces' own signed distances ([centreAt]).
+     *   Where the two faces are equal cylinders whose axes cross it is again a **plane ellipse** — the
+     *   mitre's own ellipse scaled by `(R + r)/R` about the point the axes cross, because a homothety about
+     *   a point of an axis scales the distance to that axis — and [exactSpine] states it, which is what says
+     *   the marched stations are points of an exact curve rather than a fit;
+     * - a tangency is the **nearest point of the face to the centre** — a foot on an axis stepped out by the
+     *   radius, a foot on a plane — and it lies **in the station's own normal plane** exactly, which is the
+     *   second line of the proof: `|p(s) − c(s)| = r` differentiated is `(p − c)·(p' − c') = 0`, and `p − c`
+     *   is the face's own normal at `p`, so `(p − c)·p' = 0` and `(p − c)·c' = 0` follows.
+     *
+     * What the *drawing* is asked to name is fitted and says so (OP-31's Tier B): the two rails are chains of
+     * cubics through points every one of which is exact on both the sphere and the face, and the band's own
+     * cut is sampled. The **tool** is not: it is the loft of the exact sections, stepped by the loft's own
+     * warp rule, and the boolean applies it as it applies every other.
+     */
+    private class Wall(
+        val patch: FacePatch,
+        /** The plane this wall is — null for a cylinder. */
+        val plane: Plane3?,
+        val origin: Vec3,
+        val axis: Vec3,
+        val radius: Double,
+    ) {
+        /**
+         * The signed distance from [c] to this wall, in the surface's **own** orientation — a plane's own
+         * normal, a cylinder's own outward radial. Which of the two sides the material is on is no business
+         * of the surface's: it is a **sign scored once from the body** and carried in the step
+         * ([canalChoice]), exactly as every other side-of-the-crease reading in this drawing is.
+         */
+        fun out(c: Vec3): Double {
+            plane?.let { return it.distanceTo(c) }
+            val rel = c - origin
+            return (rel - axis * rel.dot(axis)).length() - radius
+        }
+
+        /** The gradient of [out] at [c] — unit, and the direction a point leaves the surface along. */
+        fun grad(c: Vec3): Vec3? {
+            plane?.let { return it.normal.normalized() }
+            val rel = c - origin
+            val radial = rel - axis * rel.dot(axis)
+            if (radial.length() <= Geom3.WELD_TOL) return null
+            return radial.normalized()
+        }
+
+        /** The point of this wall's own surface nearest [c] — the ball's tangency, exact. */
+        fun nearest(c: Vec3): Vec3? {
+            plane?.let { return c - it.normal.normalized() * it.distanceTo(c) }
+            val rel = c - origin
+            val along = rel.dot(axis)
+            val radial = rel - axis * along
+            if (radial.length() <= Geom3.WELD_TOL) return null
+            return origin + axis * along + radial.normalized() * radius
+        }
+    }
+
+    /** The wall [patch] is — null where it names no surface a ball can be carried along. */
+    private fun wallOf(patch: FacePatch): Wall? {
+        patch.plane?.let { return Wall(patch, it, it.origin, it.normal.normalized(), 0.0) }
+        val s = patch.surface ?: return null
+        val band = s.band as? Revolve3.Band.Cylinder ?: return null
+        if (band.r <= Geom3.WELD_TOL) return null
+        return Wall(patch, null, s.origin, s.axis.normalized(), band.r)
+    }
+
+    /**
+     * One **station** of a canal band: the ball's centre, the frame of its own normal plane, the two
+     * tangencies, and the section the tool carries there.
+     */
+    private class CanalStation(
+        val at: Vec3,
+        val t: Vec3,
+        val ax: Vec3,
+        val ay: Vec3,
+        val p1: Vec3,
+        val p2: Vec3,
+        /** The section's own polygon in `(ax, ay)`, the two tangencies first and the ball's arc last. */
+        val poly: List<Vec2>,
+        /** How far the ball's arc turns here — zero where the two faces run tangent and the rounding ends. */
+        val sweep: Double,
+        /** Where the ball's own arc begins, as an angle in `(ax, ay)`. */
+        val a1: Double,
+        /** Where the crease's own point stands in this plane — the section's apex, on both walls exactly. */
+        val apex: Vec2,
+        /** How far along the spine this station stands, as a length from the run's start. */
+        val s: Double,
+        /**
+         * Whether the run **tapers to nothing** here: the two walls run tangent, the ball touches both at
+         * one point, and the section is shorter than the step-off itself. Measured on the arc's own length
+         * rather than on its angle, so the reading is the same at every size.
+         */
+        val tip: Boolean,
+    ) {
+        fun world(q: Vec2): Vec3 = at + ax * q.x + ay * q.y
+    }
+
+    /** A canal band, ready to be swept, named and cut. */
+    private class Canal(
+        val index: Int,
+        val edge: SolidEdge,
+        val sec: BlendSection,
+        val choice: BlendChoice,
+        val r: Double,
+        val stations: List<CanalStation>,
+        val w1: Wall,
+        val w2: Wall,
+        /** The crease's own carrier and its pieces' lengths — what a rail and a cut resample the run on. */
+        val path: Path3,
+        val lens: List<Double>,
+        /**
+         * Whether the crease **closes on itself** — a pipe tee's weld line, a bored rim's own crossing.
+         * A closed run has no free end at all: nothing is capped, the loft wraps, and the two flat-end slots
+         * say so rather than claiming a face the body has not got.
+         */
+        val closed: Boolean,
+        /** How many chords the ball's own arc is carried on — one count for every station, so rings stitch. */
+        val arcSteps: Int,
+        /** How far the fitted rails stand from the truth. */
+        val fitted: Double,
+        /**
+         * How far this canal's tool steps off the two walls it rolls on — **a tessellation-safe micron**
+         * (OP-31, slice 5f). See [canalGrow].
+         */
+        val grow: Double,
+    ) {
+        val name: FaceName get() = FaceName.BlendBand(index, 0)
+
+        val convex: Boolean get() = choice.convex
+    }
+
+    /** How far a canal band's fitted rail or sampled cut may stand from the truth, in mm. */
+    private const val CANAL_FIT_TOL_MM = 1e-4
+
+    /**
+     * **How far a canal's tool steps off the walls it rolls on** (OP-31, slice 5f) — and why it is not the
+     * micron every other tool in this drawing uses.
+     *
+     * [sectionOf]'s rule is *a tool never shares a face with the body*, and a micron settles it for an
+     * ordinary rounding because an ordinary tool's legs lie in **planar** faces, which a mesh states
+     * exactly. A canal's legs lie on *curved* ones, whose triangles stand **inside** the true surface by as
+     * much as [GeomMath.effectiveTol] — twenty times the micron. A leg only a micron proud of the true
+     * surface is therefore still a fifth of a tessellation tolerance short of where the body's own skin
+     * actually is, and the tool's own leg and the body's own facets cross each other in a band as wide as
+     * the chords are: the tool's face and the body's face come within microns of each other over a whole
+     * strip, and what the boolean answers there is a coincident pair of triangles rather than a crossing.
+     *
+     * So the step-off is the **body's own skin**: twice the worst tessellation tolerance of the two walls,
+     * never less than [GROW_MM]. Twice, because both surfaces are chorded and either may stand a whole
+     * tolerance inside its own truth. It is the same number the figure's own bracket already states for the
+     * skin ([canalRemoval]), read once and used by both.
+     */
+    private fun canalGrow(
+        w1: Wall,
+        w2: Wall,
+    ): Double = max(GROW_MM, 2.0 * max(wallSkin(w1), wallSkin(w2)))
+
+    /** How far [w]'s own triangles may stand inside its true surface — nothing at all where it is a plane. */
+    private fun wallSkin(w: Wall): Double =
+        if (w.plane != null) 0.0 else GeomMath.effectiveTol(max(w.radius, Geom3.WELD_TOL), GeomMath.TESS_TOL_MM)
+
+    /**
+     * The crease as a **curve in space** for a canal — the two carriers [pathOf] refuses, lifted.
+     *
+     * Null where the edge is a straight run or has no carrier at all: a straight crease between two named
+     * faces has a rigid section and is the catalogue's own business, never this one's.
+     */
+    private fun canalPath(edge: SolidEdge): Path3? =
+        when (val g = edge.geom) {
+            is EdgeGeom.OnPlane ->
+                when (g.piece) {
+                    is ProfileElement.EllipseE, is ProfileElement.EllipticArcE, is ProfileElement.BezierE -> {
+                        val closed = g.piece is ProfileElement.EllipseE
+                        Intersect3.liftedRun(listOf(g.piece), g.plane, closed).first.takeIf { it.elements.isNotEmpty() }
+                    }
+                    else -> null
+                }
+            is EdgeGeom.InSpace -> Path3(g.chain).takeIf { g.chain.isNotEmpty() }
+            is EdgeGeom.Straight -> null
+        }
+
+    /** A point of [path] at [u] over the whole chain, by the pieces' own lengths. */
+    private fun alongPath(
+        path: Path3,
+        lens: List<Double>,
+        u: Double,
+    ): Vec3 {
+        val total = lens.sum()
+        if (total <= Geom3.WELD_TOL) return path.elements.first().start
+        var want = u.coerceIn(0.0, 1.0) * total
+        for ((k, el) in path.elements.withIndex()) {
+            if (want <= lens[k] || k == path.elements.size - 1) {
+                return Frames3.pointAt(el, if (lens[k] <= Geom3.WELD_TOL) 0.0 else (want / lens[k]).coerceIn(0.0, 1.0))
+            }
+            want -= lens[k]
+        }
+        return path.elements.last().end
+    }
+
+    /** One piece's length, sampled — only ever used to spread the stations along the crease. */
+    private fun pieceLength(el: Curve3Element): Double {
+        if (el is Curve3Element.Seg3) return (el.end - el.start).length()
+        if (el is Curve3Element.Arc3) return el.arcLength
+        var len = 0.0
+        var prev = Frames3.pointAt(el, 0.0)
+        for (i in 1..16) {
+            val p = Frames3.pointAt(el, i / 16.0)
+            len += (p - prev).length()
+            prev = p
+        }
+        return len
+    }
+
+    /**
+     * The **ball's centre** over crease point [m]: the point of the plane through [m] normal to [tau] that
+     * stands `r` from both walls, on the air side of each. Newton on the two signed distances, to machine
+     * precision — null where no such point can be reached, which is what says the ball does not fit.
+     */
+    private fun centreAt(
+        w1: Wall,
+        w2: Wall,
+        m: Vec3,
+        tau: Vec3,
+        r1: Double,
+        r2: Double,
+    ): Vec3? {
+        val g1 = (w1.grad(m) ?: return null) * (if (r1 >= 0.0) 1.0 else -1.0)
+        val g2 = (w2.grad(m) ?: return null) * (if (r2 >= 0.0) 1.0 else -1.0)
+        var seed = g1 + g2
+        seed -= tau * seed.dot(tau)
+        if (seed.length() <= Vec3.EPS) return null
+        val ax = seed.normalized()
+        val ay = tau.cross(ax).normalized()
+        // **where the two faces run tangent the two equations are one**, and the answer is closed: the
+        // crease point stepped `r` along their common normal stands `r` from both. That is the run's own
+        // **tip** — the rounding tapers to nothing there — and it is stated rather than solved for, because
+        // a Newton on two identical equations has no answer to give (OP-31, slice 5f).
+        if (g1.cross(g2).length() <= TANGENT_TOL) return m + seed.normalized() * abs(r1)
+        var x = 0.0
+        var y = 0.0
+        repeat(60) {
+            val c = m + ax * x + ay * y
+            val f1 = w1.out(c) - r1
+            val f2 = w2.out(c) - r2
+            if (abs(f1) <= 1e-13 && abs(f2) <= 1e-13) return c
+            val d1 = w1.grad(c) ?: return null
+            val d2 = w2.grad(c) ?: return null
+            val a11 = d1.dot(ax)
+            val a12 = d1.dot(ay)
+            val a21 = d2.dot(ax)
+            val a22 = d2.dot(ay)
+            val det = a11 * a22 - a12 * a21
+            if (abs(det) <= 1e-12) return null
+            var dx = (a22 * f1 - a12 * f2) / det
+            var dy = (-a21 * f1 + a11 * f2) / det
+            // …and the step is held to the ball's own size, so an ill-conditioned station near the tip
+            // walks in rather than flying off
+            val step = Vec2(dx, dy).length()
+            val cap = 2.0 * max(abs(r1), abs(r2))
+            if (step > cap) {
+                dx *= cap / step
+                dy *= cap / step
+            }
+            x -= dx
+            y -= dy
+        }
+        val c = m + ax * x + ay * y
+        return if (abs(w1.out(c) - r1) <= 1e-9 && abs(w2.out(c) - r2) <= 1e-9) c else null
+    }
+
+    /** [q] pulled back **onto** [w]'s own surface within the station's plane — Newton on the signed distance. */
+    private fun onWall(
+        w: Wall,
+        place: Placement,
+        q0: Vec2,
+    ): Vec2? {
+        var q = q0
+        repeat(20) {
+            val f = w.out(place.at(q))
+            if (abs(f) <= 1e-12) return q
+            val g = w.grad(place.at(q)) ?: return null
+            val gp = Vec2(g.dot(place.cx), g.dot(place.cy))
+            val n2 = gp.dot(gp)
+            if (n2 <= 1e-18) return null
+            q = q - gp * (f / n2)
+        }
+        return if (abs(w.out(place.at(q))) <= 1e-9) q else null
+    }
+
+    /** The point of the station's plane that lies on **both** walls — the crease's own point there, exact. */
+    private fun apexAt(
+        w1: Wall,
+        w2: Wall,
+        place: Placement,
+        seed: Vec2,
+    ): Vec2? {
+        var q = seed
+        repeat(40) {
+            val p = place.at(q)
+            val f1 = w1.out(p)
+            val f2 = w2.out(p)
+            if (abs(f1) <= 1e-12 && abs(f2) <= 1e-12) return q
+            val d1 = w1.grad(p) ?: return null
+            val d2 = w2.grad(p) ?: return null
+            val a11 = d1.dot(place.cx)
+            val a12 = d1.dot(place.cy)
+            val a21 = d2.dot(place.cx)
+            val a22 = d2.dot(place.cy)
+            val det = a11 * a22 - a12 * a21
+            if (abs(det) <= 1e-12) return null
+            q = Vec2(q.x - (a22 * f1 - a12 * f2) / det, q.y - (-a21 * f1 + a11 * f2) / det)
+        }
+        val p = place.at(q)
+        return if (abs(w1.out(p)) <= 1e-9 && abs(w2.out(p)) <= 1e-9) q else null
+    }
+
+    /**
+     * One **leg** of a station's section: the wall's own trace from the tangency to the apex, sampled at
+     * points that are exactly on the surface and each stepped [GROW_MM] off it into the air.
+     *
+     * *Why the leg is the trace and not a straight line to the apex.* The wall is curved, so a chord between
+     * two of its points lies **inside** the material, and a tool whose leg lies inside the body leaves a
+     * ridge of material as thick as the chord's own sagitta — a tenth of a millimetre on a 4 mm band, which
+     * is not a micron-scale sliver but a visible remnant. So the leg is the trace itself, chorded finely
+     * enough that its own sag is under half the step-off ([legStepsFor]) and then stepped out, which is the
+     * curved-face reading of the very rule [sectionOf] states for a straight one: *a tool never shares a
+     * face with the body*, and it stands **outside** it at a convex crease and inside at a concave one.
+     */
+    private fun legOf(
+        w: Wall,
+        place: Placement,
+        from: Vec2,
+        apex: Vec2,
+        steps: Int,
+        /** How far to step off the wall, **signed** in the wall's own orientation — see [canalSectionAt]. */
+        grow: Double,
+    ): List<Vec2>? {
+        val out = ArrayList<Vec2>(steps)
+        for (i in 1 until steps) {
+            val q = onWall(w, place, from + (apex - from) * (i.toDouble() / steps)) ?: return null
+            if (grow == 0.0) {
+                out.add(q)
+            } else {
+                val g = w.grad(place.at(q)) ?: return null
+                out.add(q + Vec2(g.dot(place.cx), g.dot(place.cy)).normalized() * grow)
+            }
+        }
+        return out
+    }
+
+    /** One station's geometry before its section is stated — what the station count is refined on. */
+    private class CanalRaw(
+        val at: Vec3,
+        val t: Vec3,
+        val place: Placement,
+        val p1: Vec3,
+        val p2: Vec3,
+        val a1: Double,
+        val sweep: Double,
+        val apex: Vec2,
+    )
+
+    /**
+     * The ball's own station over crease parameter [u] — its centre, the frame of its normal plane, the two
+     * tangencies and the turn of the arc between them.
+     */
+    private fun canalRawAt(
+        w1: Wall,
+        w2: Wall,
+        path: Path3,
+        lens: List<Double>,
+        u: Double,
+        r: Double,
+        /** Which side of each wall the ball's centre stands on — the crease's own scored sector. */
+        s1: Int,
+        s2: Int,
+    ): CanalRaw? {
+        val h = 1e-5
+        val m = alongPath(path, lens, u)
+        val mA = alongPath(path, lens, (u - h).coerceIn(0.0, 1.0))
+        val mB = alongPath(path, lens, (u + h).coerceIn(0.0, 1.0))
+        var tau = mB - mA
+        if (tau.length() <= Vec3.EPS) return null
+        tau = tau.normalized()
+        val c = centreAt(w1, w2, m, tau, s1 * r, s2 * r) ?: return null
+        // **the spine's own tangent, and not the crease's**: the characteristic circle of a pipe surface
+        // stands square to the *spine*, which is where the two tangencies lie exactly (see [Wall])
+        val cA = centreAt(w1, w2, mA, tau, s1 * r, s2 * r) ?: c
+        val cB = centreAt(w1, w2, mB, tau, s1 * r, s2 * r) ?: c
+        var t = cB - cA
+        t = if (t.length() <= Vec3.EPS) tau else t.normalized()
+        val p1 = w1.nearest(c) ?: return null
+        val p2 = w2.nearest(c) ?: return null
+        var ax = p1 - c
+        ax -= t * ax.dot(t)
+        if (ax.length() <= Vec3.EPS) return null
+        ax = ax.normalized()
+        val place = Placement(c, ax, t.cross(ax))
+        val q1 = Vec2((p1 - c).dot(place.cx), (p1 - c).dot(place.cy))
+        val q2 = Vec2((p2 - c).dot(place.cx), (p2 - c).dot(place.cy))
+        val seed = Vec2((m - c).dot(place.cx), (m - c).dot(place.cy))
+        val apex = apexAt(w1, w2, place, seed) ?: return null
+        val a1 = atan2(q1.y, q1.x)
+        val a2 = atan2(q2.y, q2.x)
+        var d = a2 - a1
+        while (d <= -PI) d += 2.0 * PI
+        while (d > PI) d -= 2.0 * PI
+        val other = if (d >= 0.0) d - 2.0 * PI else d + 2.0 * PI
+        // **which of the two arcs is the rounding**: the one that faces the crease, which is the one whose
+        // own midpoint stands on the apex's side of the centre
+        val toward = if (apex.length() <= Geom3.WELD_TOL) q1 else apex.normalized()
+
+        fun facing(s: Double): Double {
+            val a = a1 + s / 2.0
+            return Vec2(cos(a), sin(a)).dot(toward)
+        }
+        val sweep = if (facing(d) >= facing(other)) d else other
+        // the sign is kept: which way the ball's arc runs from tangency to tangency is what the cap's own
+        // arc and the section's winding are stated with
+        return CanalRaw(c, t, place, p1, p2, a1, sweep, apex)
+    }
+
+    /**
+     * How many chords a leg needs for its own **sag** to stay under half the step-off — measured on the
+     * worst station rather than tabulated, so a flat wall takes one chord and a tight one takes what it
+     * needs. A chord's sag falls as `1/n²`, which is what the square root reads.
+     */
+    private fun legStepsFor(
+        w1: Wall,
+        w2: Wall,
+        raws: List<CanalRaw>,
+    ): Int {
+        var worst = 0.0
+        for (raw in raws) {
+            for ((w, from) in listOf(w1 to Vec2((raw.p1 - raw.at).dot(raw.place.cx), (raw.p1 - raw.at).dot(raw.place.cy)), w2 to Vec2((raw.p2 - raw.at).dot(raw.place.cx), (raw.p2 - raw.at).dot(raw.place.cy)))) {
+                val mid = (from + raw.apex) * 0.5
+                val on = onWall(w, raw.place, mid) ?: continue
+                worst = max(worst, (on - mid).length())
+            }
+        }
+        if (worst <= GROW_MM / 2.0) return 1
+        return min(64, max(1, ceil(sqrt(worst / (GROW_MM / 2.0))).toInt()))
+    }
+
+    /** The section [raw] carries: the two legs off the two walls, the apex between them, the ball's arc. */
+    private fun canalSectionAt(
+        w1: Wall,
+        w2: Wall,
+        raw: CanalRaw,
+        r: Double,
+        legSteps: Int,
+        arcSteps: Int,
+        s1: Int,
+        s2: Int,
+        /**
+         * How far the section steps off its two walls — **a tool never shares a face with the body**
+         * ([sectionOf]). The region is on the `s` side of each wall, so the step is to the *other* side of
+         * it: out of the material where the canal is subtracted, into it where it is added. Zero reads the
+         * section exactly, which is what the figure's own quadrature integrates.
+         */
+        grow: Double,
+    ): List<Vec2>? {
+        val q1 = Vec2(r * cos(raw.a1), r * sin(raw.a1))
+        val q2 = Vec2(r * cos(raw.a1 + raw.sweep), r * sin(raw.a1 + raw.sweep))
+        val out = ArrayList<Vec2>(2 * legSteps + arcSteps + 2)
+        out.add(q1)
+        out.addAll(legOf(w1, raw.place, q1, raw.apex, legSteps, -s1 * grow) ?: return null)
+        val g1 = w1.grad(raw.place.at(raw.apex)) ?: return null
+        val g2 = w2.grad(raw.place.at(raw.apex)) ?: return null
+        val outward =
+            (
+                Vec2(g1.dot(raw.place.cx), g1.dot(raw.place.cy)) * -s1.toDouble() +
+                    Vec2(g2.dot(raw.place.cx), g2.dot(raw.place.cy)) * -s2.toDouble()
+            ).normalized()
+        out.add(raw.apex + outward * grow)
+        out.addAll((legOf(w2, raw.place, q2, raw.apex, legSteps, -s2 * grow) ?: return null).reversed())
+        out.add(q2)
+        for (i in arcSteps - 1 downTo 1) {
+            val a = raw.a1 + raw.sweep * i / arcSteps
+            out.add(Vec2(r * cos(a), r * sin(a)))
+        }
+        return out
+    }
+
+    /**
+     * The whole **canal band** along [edge] — the stations refined until the section's own change between
+     * two of them is inside the tessellation tolerance, which is the loft's warp rule and never a fixed
+     * count.
+     *
+     * Null where this edge is no canal case at all (a straight crease, or no carrier), so every rounding the
+     * catalogue already builds reaches it unchanged; a pair with a reason is a canal case that cannot be
+     * built, and the reason names what stopped it.
+     */
+    private fun canalOf(
+        feature: Feature3,
+        edge: SolidEdge,
+        index: Int,
+        sec: BlendSection,
+        choice: BlendChoice,
+    ): Pair<Canal?, Msg?>? {
+        val path = canalPath(edge) ?: return null
+        if (sec.kind != BlendKind.FILLET) return null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
+        val r = sec.size
+        if (r <= Geom3.WELD_TOL) return null
+        val faces = Section3.faces(feature).first ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val f1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val f2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val w1 =
+            wallOf(f1) ?: return null to
+                Msgs.refusalBlendCanalWallNotStatable(name = edge.name.label, name2 = f1.name.label, name3 = f2.name.label)
+        val w2 =
+            wallOf(f2) ?: return null to
+                Msgs.refusalBlendCanalWallNotStatable(name = edge.name.label, name2 = f2.name.label, name3 = f1.name.label)
+        val s1 = choice.a
+        val s2 = choice.b
+        val lens = path.elements.map { pieceLength(it) }
+        val notFitting = Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+
+        fun raws(n: Int): List<CanalRaw>? = (0..n).map { canalRawAt(w1, w2, path, lens, it.toDouble() / n, r, s1, s2) ?: return null }
+        var n = 8
+        var set = raws(n) ?: return null to notFitting
+        while (n < 128) {
+            val fine = raws(2 * n) ?: return null to notFitting
+            var worst = 0.0
+            for (k in 0 until n) {
+                val mid = fine[2 * k + 1]
+                worst = max(worst, (mid.at - (set[k].at + set[k + 1].at) * 0.5).length())
+                worst = max(worst, (mid.p1 - (set[k].p1 + set[k + 1].p1) * 0.5).length())
+                worst = max(worst, (mid.p2 - (set[k].p2 + set[k + 1].p2) * 0.5).length())
+            }
+            set = fine
+            n *= 2
+            if (worst <= GeomMath.TESS_TOL_MM) break
+        }
+        val arcSteps = max(1, GeomMath.chordSteps(r, set.maxOf { abs(it.sweep) }, GeomMath.TESS_TOL_MM))
+        val legSteps = legStepsFor(w1, w2, set)
+        // **a closed crease states its last station only once** — the run comes back to where it began, so
+        // a station at `u = 1` would be the one at `u = 0` said twice and the loft would close on a
+        // zero-length step (OP-31, slice 5f)
+        val grow = canalGrow(w1, w2)
+        val closed = (path.start != null && path.end != null && (path.start!! - path.end!!).length() <= Geom3.WELD_TOL)
+        val used = if (closed) set.dropLast(1) else set
+        val stations = ArrayList<CanalStation>(used.size)
+        var s = 0.0
+        for ((k, raw) in used.withIndex()) {
+            if (k > 0) s += (raw.at - used[k - 1].at).length()
+            val tip = abs(raw.sweep) * r <= GROW_MM
+            val poly =
+                if (tip) {
+                    List(2 * legSteps + arcSteps) { Vec2(r * cos(raw.a1), r * sin(raw.a1)) }
+                } else {
+                    canalSectionAt(w1, w2, raw, r, legSteps, arcSteps, s1, s2, grow) ?: return null to notFitting
+                }
+            stations.add(CanalStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2, poly, raw.sweep, raw.a1, raw.apex, s, tip))
+        }
+        if (stations.count { !it.tip } < 2) return null to notFitting
+        // **and the run has to go forward** (OP-31, slice 5f; session 84) — the one thing the crease's own
+        // parameterisation does not guarantee.
+        //
+        // A station is solved in the plane through the crease point square to the **crease's** tangent, and
+        // the ball's centre it finds is a point of the spine. That correspondence is a bijection only while
+        // the spine stands nearer the crease than the crease's own centre of curvature; past that the
+        // crease's normal planes stop foliating the spine, and `u` walks forward along the spine, turns at
+        // a cusp and comes back over ground it has already covered. The loft then sweeps the same band
+        // twice: the tool still cuts (a set union does not care that it was covered twice), so nothing in
+        // the mesh says anything is wrong, while the figure the algebra states integrates the run twice
+        // over and stands at very nearly double what the body actually loses — which is how this was found.
+        //
+        // It is the geometric statement of *the ball is too large for this corner to carry it*, and it is
+        // measured on the construction's own stations rather than tabulated: where two consecutive steps of
+        // the centre oppose each other, there is no one band along the crease and the drawing says so.
+        for (k in 1 until stations.size - 1) {
+            val back = stations[k].at - stations[k - 1].at
+            val on = stations[k + 1].at - stations[k].at
+            if (back.length() <= Vec3.EPS || on.length() <= Vec3.EPS) continue
+            if (back.normalized().dot(on.normalized()) <= 0.0) {
+                return null to Msgs.refusalBlendCanalBallLargerThanBend(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+            }
+        }
+        return Canal(index, edge, sec, choice, r, stations, w1, w2, path, lens, closed, arcSteps, CANAL_FIT_TOL_MM, grow) to null
+    }
+
+    /**
+     * The canal's **tool**: the loft of its stations, closed at each end.
+     *
+     * A **tip** station — where the two faces run tangent and the rounding tapers to nothing — is one point
+     * and needs no cap: the quads that collapse with it are dropped and what comes out is a cone's apex
+     * ([Geom3.MeshBuilder.triangle], which exists for exactly this). The point is drawn back [GROW_MM] along
+     * the ball's own normal so that the tool does not *touch* the body there, which is the one contact a
+     * general boolean has no answer for. An end that is **not** a tip is capped with its section
+     * triangulated, and the cap is stepped a micron past the crease's own end so that it crosses the body
+     * transversally instead of standing on the body's own vertex — [endSteps]' rule, said for a loft.
+     */
+    private fun canalMesh(canal: Canal): Mesh3? {
+        val rings = ArrayList<List<Vec3>>()
+        val first = canal.stations.first()
+        val last = canal.stations.last()
+        for ((k, st) in canal.stations.withIndex()) {
+            // **each end is stepped a micron past the crease's own end**, and the end station is *moved*
+            // there rather than doubled: a ring standing exactly at the end stands on the very point where
+            // the ball's own contact runs off the wall it rolls on — a vertex of the body, and a tool
+            // vertex on a body vertex is the one contact the general boolean has no answer for
+            // ([endSteps]' rule, said for a loft's two ends).
+            // …and the step is the canal's **own** step-off ([canalGrow]) and not the bare micron: the
+            // vertex the ring would stand on is a vertex of two *curved* faces, whose triangles stand as
+            // much as a tessellation tolerance off the truth, so a micron does not clear it (session 84 —
+            // a second canal on the same body folded a flap there, and only where the first one had
+            // re-triangulated the body's own tangency line)
+            val step =
+                if (canal.closed) {
+                    0.0
+                } else if (k == 0) {
+                    -canal.grow
+                } else if (k == canal.stations.size - 1) {
+                    canal.grow
+                } else {
+                    0.0
+                }
+            rings.add(
+                if (st.tip) {
+                    // the tip steps to the tool's own safe side, the same way every leg does: away from
+                    // the region, so the tool does not *touch* the body where it has nothing left to take
+                    val tip = st.p1 - (st.at - st.p1) * (canal.grow / canal.r)
+                    List(st.poly.size) { tip }
+                } else {
+                    st.poly.map { st.world(it) + st.t * step }
+                },
+            )
+        }
+        if (rings.size < 2) return null
+        val tris = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        for (l in 0 until (if (canal.closed) rings.size else rings.size - 1)) {
+            val lo = rings[l]
+            val hi = rings[(l + 1) % rings.size]
+            if (lo.size != hi.size) return null
+            for (m in lo.indices) {
+                val nx = (m + 1) % lo.size
+                tris.add(Triple(lo[m], lo[nx], hi[nx]))
+                tris.add(Triple(lo[m], hi[nx], hi[m]))
+            }
+        }
+        if (!canal.closed && !first.tip) {
+            val place = Placement(first.at - first.t * canal.grow, first.ax, first.ay)
+            for (t in sectionCaps(first.poly)) tris.add(Triple(place.at(t.c), place.at(t.b), place.at(t.a)))
+        }
+        if (!canal.closed && !last.tip) {
+            val place = Placement(last.at + last.t * canal.grow, last.ax, last.ay)
+            for (t in sectionCaps(last.poly)) tris.add(Triple(place.at(t.a), place.at(t.b), place.at(t.c)))
+        }
+        // **the winding is measured rather than argued**: the section's own frame may be a reflection of the
+        // world's either way round the run, so the shell is built once and turned inside out if its own
+        // signed volume says it is (the one reading a closed mesh always has)
+        var six = 0.0
+        for (t in tris) six += t.first.dot(t.second.cross(t.third))
+        val b = Geom3.MeshBuilder()
+        for (t in tris) {
+            if (six >= 0.0) b.triangle(t.first, t.second, t.third) else b.triangle(t.first, t.third, t.second)
+        }
+        return b.build()
+    }
+
+    /**
+     * A canal section triangulated as a cap, its **boundary running in the polygon's own index order** —
+     * which is what makes the cap close on the side quads whichever way round the section's own frame is.
+     * [capsOf] states a counter-clockwise ring's triangles, so a clockwise one is triangulated reversed and
+     * its triangles turned back.
+     */
+    private fun sectionCaps(poly: List<Vec2>): List<Geom3.Tri3> {
+        var twice = 0.0
+        for (k in poly.indices) {
+            val a = poly[k]
+            val b = poly[(k + 1) % poly.size]
+            twice += a.x * b.y - b.x * a.y
+        }
+        if (twice >= 0.0) return widestEars(poly) ?: capsOf(poly)
+        val back = reversedFromFirst(poly)
+        return (widestEars(back) ?: capsOf(back)).map { Geom3.Tri3(it.c, it.b, it.a) }
+    }
+
+    /**
+     * A counter-clockwise ring triangulated by **clipping the widest ear there is** (OP-31, slice 5f) —
+     * and the reason a canal's cap needs its own reading rather than the general triangulator's.
+     *
+     * A canal's section carries its two legs as chords of the walls' own traces, one count for the whole
+     * run so that every ring stitches ([legStepsFor]); at the **end** of a run the ball's contact and the
+     * crease's own point stand on one ruling of the wall it rolls on, so that station's leg is *straight*
+     * and its chords are exactly collinear. An ear clipped at a collinear vertex has no area at all, and a
+     * cap of slivers is a mesh no boolean accepts — while a triangulation with no sliver in it always
+     * exists as long as the ring is not one straight line, because the collinear run can be spanned from a
+     * vertex off it. So each ear is taken by **area**, largest first, rather than in index order; null
+     * where no ear can be found at all, and then the general triangulator answers as before.
+     */
+    private fun widestEars(poly: List<Vec2>): List<Geom3.Tri3>? {
+        val ring = ArrayList<Vec2>(poly.size)
+        for (q in poly) if (ring.isEmpty() || (q - ring.last()).length() > Geom3.WELD_TOL) ring.add(q)
+        while (ring.size > 1 && (ring.first() - ring.last()).length() <= Geom3.WELD_TOL) ring.removeAt(ring.size - 1)
+        if (ring.size < 3) return emptyList()
+        val live = ArrayList<Int>(ring.indices.toList())
+        val out = ArrayList<Geom3.Tri3>(ring.size)
+        while (live.size > 3) {
+            var at = -1
+            var widest = 0.0
+            for (k in live.indices) {
+                val a = ring[live[(k + live.size - 1) % live.size]]
+                val b = ring[live[k]]
+                val c = ring[live[(k + 1) % live.size]]
+                val twice = (b - a).cross(c - a)
+                if (twice <= 0.0 || twice <= widest) continue
+                var clear = true
+                for (j in live.indices) {
+                    if (j == k || j == (k + live.size - 1) % live.size || j == (k + 1) % live.size) continue
+                    if (inside(ring[live[j]], a, b, c)) {
+                        clear = false
+                        break
+                    }
+                }
+                if (clear) {
+                    widest = twice
+                    at = k
+                }
+            }
+            if (at < 0) return null
+            out.add(
+                Geom3.Tri3(
+                    ring[live[(at + live.size - 1) % live.size]],
+                    ring[live[at]],
+                    ring[live[(at + 1) % live.size]],
+                ),
+            )
+            live.removeAt(at)
+        }
+        out.add(Geom3.Tri3(ring[live[0]], ring[live[1]], ring[live[2]]))
+        return out
+    }
+
+    /** Whether [q] lies within the counter-clockwise triangle `abc`, its own edges counting as within. */
+    private fun inside(
+        q: Vec2,
+        a: Vec2,
+        b: Vec2,
+        c: Vec2,
+    ): Boolean =
+        (b - a).cross(q - a) >= 0.0 &&
+            (c - b).cross(q - b) >= 0.0 &&
+            (a - c).cross(q - c) >= 0.0
+
+    /** The canal's tool as a solid, or the reason there is none. */
+    private fun canalTool(canal: Canal): Pair<Solid3?, Msg?> {
+        val mesh = canalMesh(canal) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = canal.edge.name.label)
+        return Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
+    }
+
+    /**
+     * One **rail** of a canal band: the curve the ball's contact traces on wall [side], stated as a chain of
+     * cubics through points that are every one of them **exact** on both the sphere and the wall.
+     *
+     * The knots are exact and the spans between are fitted, which is [fittedChain3]'s own contract and
+     * OP-31's Tier B: the value is stated with the tolerance it reached rather than left out of the list.
+     */
+    private fun canalRail(
+        canal: Canal,
+        side: Int,
+    ): Pair<EdgeGeom?, Double?> {
+        val (chain, tol) =
+            fittedChain3(canal.fitted) { u ->
+                val raw = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b)
+                if (raw == null) {
+                    null
+                } else if (side == 0) {
+                    raw.p1
+                } else {
+                    raw.p2
+                }
+            } ?: return null to null
+        return EdgeGeom.InSpace(chain) to tol
+    }
+
+    /**
+     * The **tool** a canal band is cut with, as a mesh — the seam a test asserts the tool itself on
+     * (OP-31, slice 5f). Null where this edge carries no canal at all.
+     */
+    internal fun canalToolMesh(
+        feature: Feature3,
+        edgeIndex: Int,
+        sec: BlendSection,
+        choice: BlendChoice,
+    ): Mesh3? {
+        val edge = Section3.edges(feature).first?.getOrNull(edgeIndex) ?: return null
+        val canal = canalOf(feature, edge, edgeIndex, sec, choice)?.first ?: return null
+        return canalMesh(canal)
+    }
+
+    /**
+     * **What a canal band takes off the body**, bracketed by the loft's own chord terms (OP-31, slice 5f).
+     *
+     * The removal is `∫ A(s)·(1 − κ(s)·x̄(s)) ds` along the spine — Pappus' own factor, written for a section
+     * that changes: `A(s)` is the section's **exact** area at each station (the region inside both walls and
+     * outside the ball, whose boundary is the ball's own arc and the two walls' own traces, every point of it
+     * exact), `κ` is the spine's own curvature and `x̄` the section's centroid measured toward the centre of
+     * that curvature. The factor is not a refinement but the volume element itself: a tube swept along a
+     * **plane** spine has `dV = (1 − κx) dA ds`, and on this fixture it is worth a fifth of the figure,
+     * because the section stands a whole ball-radius out on the *convex* side of a spine whose radius of
+     * curvature falls to 2 mm.
+     *
+     * The tool reaches that integral twice over and in opposite directions: the ball's arc arrives as
+     * **chords**, which is *more* area than the section has (the disc inscribed in its own polygon is
+     * smaller, so the corner region outside it is bigger), and the run arrives as chords too. So the figure
+     * is bracketed between the exact quadrature and the chorded one, each read both as a trapezoid over the
+     * tool's own stations and as Simpson's over them — a containment bound in the matrix's own style, never
+     * widened to admit a body.
+     */
+    internal fun canalRemoval(
+        feature: Feature3,
+        edgeIndex: Int,
+        sec: BlendSection,
+        choice: BlendChoice,
+    ): Pair<Double, Double>? {
+        val edge = Section3.edges(feature).first?.getOrNull(edgeIndex) ?: return null
+        val canal = canalOf(feature, edge, edgeIndex, sec, choice)?.first ?: return null
+        val fineLegs = 256
+        val fineArcs = 512
+        val h = 1e-4
+
+        fun centre(u: Double): Vec3? = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b)?.at
+
+        fun sliceAt(
+            u: Double,
+            legs: Int,
+            arcs: Int,
+        ): Double {
+            val raw = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b) ?: return 0.0
+            if (abs(raw.sweep) * canal.r <= GROW_MM) return 0.0
+            val poly = canalSectionAt(canal.w1, canal.w2, raw, canal.r, legs, arcs, canal.choice.a, canal.choice.b, 0.0) ?: return 0.0
+            var twice = 0.0
+            var mx = 0.0
+            var my = 0.0
+            for (k in poly.indices) {
+                val a = poly[k]
+                val b = poly[(k + 1) % poly.size]
+                val cross = a.x * b.y - b.x * a.y
+                twice += cross
+                mx += (a.x + b.x) * cross
+                my += (a.y + b.y) * cross
+            }
+            if (abs(twice) <= 1e-18) return 0.0
+            val area = abs(twice) / 2.0
+            val centroid = Vec2(mx / (3.0 * twice), my / (3.0 * twice))
+            // the spine's own curvature and which way it bends — the circle through three of its points
+            val p0 = centre((u - h).coerceIn(0.0, 1.0)) ?: return area
+            val p2 = centre((u + h).coerceIn(0.0, 1.0)) ?: return area
+            val v1 = p0 - raw.at
+            val v2 = p2 - raw.at
+            val n = v1.cross(v2)
+            if (n.length() <= 1e-18) return area
+            val towards = (v2 * v1.dot(v1) - v1 * v2.dot(v2)).cross(n) * (1.0 / (2.0 * n.dot(n)))
+            val rho = towards.length()
+            if (rho <= Geom3.WELD_TOL) return area
+            val dir = towards * (1.0 / rho)
+            val x = centroid.x * dir.dot(raw.place.cx) + centroid.y * dir.dot(raw.place.cy)
+            return area * (1.0 - x / rho)
+        }
+
+        fun quadrature(
+            legs: Int,
+            arcs: Int,
+            simpson: Boolean,
+        ): Double {
+            val n = canal.stations.size - 1
+            if (n < 2) return 0.0
+            var sum = 0.0
+            for (k in 0 until n) {
+                val len = canal.stations[k + 1].s - canal.stations[k].s
+                if (len <= 0.0) continue
+                val u0 = k.toDouble() / n
+                val u1 = (k + 1).toDouble() / n
+                val a0 = sliceAt(u0, legs, arcs)
+                val a1 = sliceAt(u1, legs, arcs)
+                sum +=
+                    if (simpson) {
+                        len * (a0 + 4.0 * sliceAt((u0 + u1) / 2.0, legs, arcs) + a1) / 6.0
+                    } else {
+                        len * (a0 + a1) / 2.0
+                    }
+            }
+            return sum
+        }
+
+        // **and the walls the ball rolls on reach the boolean as chords too**, which no other rounding in
+        // this drawing has to allow for: an ordinary tool's legs lie in **planar** faces, which a mesh
+        // states exactly, while a canal's lie on *curved* ones whose triangles stand inside the true
+        // surface by at most the tessellation's own tolerance ([GeomMath.effectiveTol], the number the
+        // chord count is chosen against). So the body's own skin gives back a strip as wide as that
+        // tolerance along each leg, and the bracket's lower bound is the exact figure less that strip —
+        // derived from the drawing's own rule, never a fudge factor.
+        fun strip(
+            t1: Double,
+            t2: Double,
+        ): Double {
+            var sum = 0.0
+            val n = canal.stations.size - 1
+            for (k in 0 until n) {
+                val len = canal.stations[k + 1].s - canal.stations[k].s
+                if (len <= 0.0) continue
+                sum += len * (legStrip(canal, k, t1, t2) + legStrip(canal, k + 1, t1, t2)) / 2.0
+            }
+            return sum
+        }
+        val exact = quadrature(fineLegs, fineArcs, true)
+        val chorded = quadrature(canal.stations.size, canal.arcSteps, true)
+        val skin = strip(wallSkin(canal.w1), wallSkin(canal.w2))
+        val stepped = strip(canal.grow, canal.grow)
+        return (min(exact, chorded) - skin) to (max(exact, chorded) + stepped)
+    }
+
+    /** The area one station's two legs stand to gain or lose to a strip [t1]/[t2] wide along each wall. */
+    private fun legStrip(
+        canal: Canal,
+        k: Int,
+        t1: Double,
+        t2: Double,
+    ): Double {
+        val st = canal.stations[k]
+        if (st.tip) return 0.0
+        val legs = (st.poly.size - canal.arcSteps) / 2
+        var l1 = 0.0
+        var l2 = 0.0
+        for (j in 0 until legs) l1 += (st.poly[j + 1] - st.poly[j]).length()
+        for (j in legs until 2 * legs) l2 += (st.poly[j + 1] - st.poly[j]).length()
+        return l1 * t1 + l2 * t2
+    }
+
+    /** The band a canal leaves, as a face of the dressed body — no plane, no revolution, and it says so. */
+    private fun canalBandPatch(canal: Canal): FacePatch =
+        FacePatch(
+            canal.name,
+            null,
+            emptyList(),
+            Msgs.refusalBlendCanalBandIsNotPlane(name = canal.name.label, sizePhrase = canal.sec.sizePhrase(), name2 = canal.edge.name.label),
+            null,
+            canal.fitted,
+        )
+
+    /**
+     * The two **flat ends** of a canal band: the section standing in the plane square to the spine, or —
+     * where the run tapers to nothing because the two faces run tangent there — no face at all, said so.
+     */
+    private fun canalCapFaces(canal: Canal): List<FacePatch> =
+        listOf(true, false).map { atStart ->
+            val name = FaceName.BlendCap(canal.index, atStart)
+            val st = if (atStart) canal.stations.first() else canal.stations.last()
+            if (canal.closed) {
+                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalRunsRightRound(name = canal.edge.name.label))
+            } else if (st.tip) {
+                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalTapersToNothing(name = canal.edge.name.label))
+            } else {
+                val origin = st.at + st.t * (if (atStart) -GROW_MM else GROW_MM)
+                // the normal runs **out of the material**, which at a free end is back along the run
+                val plane = if (atStart) Plane3(origin, st.ax, -st.ay) else Plane3(origin, st.ax, st.ay)
+                val flip = if (atStart) -1.0 else 1.0
+                val poly = st.poly.map { Vec2(it.x, it.y * flip) }
+                val legs = (poly.size - canal.arcSteps) / 2
+                val out = ArrayList<ProfileElement>(2 * legs + 1)
+                for (k in 0 until 2 * legs) out.add(ProfileElement.Seg(Segment(poly[k], poly[k + 1])))
+                out.add(
+                    ProfileElement.ArcE(
+                        Arc(Vec2(0.0, 0.0), canal.r, (st.a1 + st.sweep * (if (canal.stations.first() === st) 1.0 else 1.0)) * flip, st.a1 * flip, flip * st.sweep < 0.0),
+                    ),
+                )
+                FacePatch(name, plane, out, null, null, null)
+            }
+        }
+
+    /**
+     * **Which way the body moves along a canal's crease, and which side of each face its material is on** —
+     * scored once from the body itself ([Geom3.encloses]) and stored in the step as signs (OP-1/OP-18).
+     *
+     * Three readings, each a containment question about one point and never asked again: the material side
+     * of each of the two faces (a cylinder alone needs it — a plane's own normal already states it), and
+     * whether the region between the ball and the crease is material or void, which is the whole of
+     * *subtract or add*. Null where this edge is no canal case at all.
+     */
+    private fun canalChoice(
+        feature: Feature3,
+        mesh: Mesh3,
+        edge: SolidEdge,
+        sec: BlendSection,
+    ): Pair<BlendChoice?, Msg?>? {
+        val path = canalPath(edge) ?: return null
+        // **only the ball rolls along a crease with no rigid section** (OP-31, slice 5f; session 84): a
+        // chamfer's setback and a drawn profile are stated in the crease's own normal section, and here
+        // there is no one section to state them in. The canal is the rounding, and it is said so rather
+        // than left to the catalogue's own sentence, which would advise a straight edge instead.
+        if (sec.kind != BlendKind.FILLET) return null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
+        val r = sec.size
+        if (r <= Geom3.WELD_TOL) return null
+        val faces = Section3.faces(feature).first ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val f1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val f2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        val w1 =
+            wallOf(f1) ?: return null to
+                Msgs.refusalBlendCanalWallNotStatable(name = edge.name.label, name2 = f1.name.label, name3 = f2.name.label)
+        val w2 =
+            wallOf(f2) ?: return null to
+                Msgs.refusalBlendCanalWallNotStatable(name = edge.name.label, name2 = f2.name.label, name3 = f1.name.label)
+        val lens = path.elements.map { pieceLength(it) }
+        val h = 1e-5
+        val m = alongPath(path, lens, 0.5)
+        var tau = alongPath(path, lens, 0.5 + h) - alongPath(path, lens, 0.5 - h)
+        if (tau.length() <= Vec3.EPS) return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
+        tau = tau.normalized()
+        val delta = r * PROBE_FRACTION
+        if (delta <= Geom3.WELD_TOL) return null to Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+        // **the sector the ball rolls in, scored once from the body** — [sectorOf]'s own reading, said for
+        // two curved walls: the two surfaces cut the normal plane into four sectors, and the one that is
+        // different from the other three is the one the rounding goes in (the lone **material** sector at a
+        // convex crease, where the ball is inside the material and the removal is what stands outside it;
+        // the lone **void** one at a concave crease, where the ball rolls in the air and the fill is added).
+        val found = ArrayList<Pair<Int, Int>>(4)
+        for (t1 in listOf(1, -1)) {
+            for (t2 in listOf(1, -1)) {
+                val q =
+                    centreAt(w1, w2, m, tau, t1 * delta, t2 * delta) ?: return null to
+                        Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+                if (Geom3.encloses(mesh, q)) found.add(t1 to t2)
+            }
+        }
+        val sector =
+            when (found.size) {
+                1 -> found[0]
+                3 -> listOf(1 to 1, 1 to -1, -1 to 1, -1 to -1).first { it !in found }
+                else -> return null to Msgs.refusalBlendCanalNotSimpleCrease(name = edge.name.label)
+            }
+        // …and the ball has to fit in it: its centre stands `r` from both walls, and the crease's own point
+        // has to lie **outside** the ball, or there is no material between the two to take away
+        val raw =
+            canalRawAt(w1, w2, path, lens, 0.5, r, sector.first, sector.second) ?: return null to
+                Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+        if ((raw.place.at(raw.apex) - raw.at).length() <= r + Geom3.WELD_TOL) {
+            return null to Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+        }
+        val choice = BlendChoice(sector.first, sector.second, 0, found.size == 1)
+        // **a gesture is declined where the band cannot be had, not left to fail at build time** (OP-3): the
+        // whole construction is cheap enough to ask here, and what it answers is the same sentence the
+        // build would have answered with — the ball too large for the crease's own bend above all.
+        val (_, whyCanal) = canalOf(feature, edge, 0, sec, choice) ?: return choice to null
+        if (whyCanal != null) return null to whyCanal
+        return choice to null
+    }
+
+    /** Every canal band of this level and of the chain under it — [chainPieces]' twin, one construction over. */
+    private fun canalsOf(feature: Feature3): List<Canal> {
+        val out = ArrayList<Canal>()
+        var f = feature
+        while (f is Feature3.Blend) {
+            val below = f.base
+            val (edges, _) = Section3.edges(below)
+            if (edges != null) {
+                for ((k, i) in f.targets.withIndex()) {
+                    if (f.isAbsent(k)) continue
+                    val sec = f.sections.getOrNull(k) ?: continue
+                    val edge = edges.getOrNull(i) ?: continue
+                    val choice = f.choices.getOrNull(k) ?: continue
+                    out.add(canalOf(below, edge, i, sec, choice)?.first ?: continue)
+                }
+            }
+            f = below
+        }
+        return out
+    }
+
+    /**
+     * **Where a canal band ends the band it runs along** — one table per end it bites into, read the way
+     * [runsInto] reads a band that runs into another: the canal's own rail *is* that band's new end, and it
+     * stands nearer the run's middle than the mitre the crossing left there.
+     *
+     * The pairing is structural (OP-21): a canal's two walls are named faces, so the band it ends is the one
+     * whose name a wall carries — never measured, never searched for among the triangles.
+     */
+    private fun canalSetbacks(
+        pieces: List<Piece>,
+        at: Int,
+        canals: List<Canal>,
+    ): List<Triple<Boolean, List<Vec2>, List<Double>>> {
+        val piece = pieces[at]
+        val out = ArrayList<Triple<Boolean, List<Vec2>, List<Double>>>()
+        val len = piece.length
+        for (canal in canals) {
+            for (side in 0..1) {
+                val name = (if (side == 0) canal.w1 else canal.w2).patch.name as? FaceName.BlendBand ?: continue
+                if (name.edge != piece.index) continue
+                val qs = ArrayList<Vec2>()
+                val ss = ArrayList<Double>()
+                for (st in canal.stations) {
+                    val p = if (side == 0) st.p1 else st.p2
+                    val s = stationOf(piece, p)
+                    val place = placeAt(piece, s) ?: continue
+                    val rel = p - place.origin
+                    qs.add(Vec2(rel.dot(place.cx), rel.dot(place.cy)))
+                    ss.add(s)
+                }
+                if (qs.size < 2) continue
+                out.add(Triple(ss.average() < len / 2.0, qs, ss))
+            }
+        }
+        return out
+    }
+
+    /** Where the table [qs] → [ss] stands at section point [p] — the nearest span of the rail, interpolated. */
+    private fun setbackAt(
+        p: Vec2,
+        qs: List<Vec2>,
+        ss: List<Double>,
+    ): Double? {
+        var best = -1
+        var bestD = Double.MAX_VALUE
+        for (k in qs.indices) {
+            val d = (qs[k] - p).length()
+            if (d < bestD) {
+                bestD = d
+                best = k
+            }
+        }
+        if (best < 0) return null
+        var answer = ss[best]
+        var span = Double.MAX_VALUE
+        for (k in listOf(best - 1, best)) {
+            if (k < 0 || k + 1 >= qs.size) continue
+            val a = qs[k]
+            val b = qs[k + 1]
+            val v = b - a
+            val l2 = v.dot(v)
+            if (l2 <= 1e-18) continue
+            val t = ((p - a).dot(v) / l2).coerceIn(0.0, 1.0)
+            val d = (a + v * t - p).length()
+            if (d < span) {
+                span = d
+                answer = ss[k] + (ss[k + 1] - ss[k]) * t
+            }
+        }
+        return answer
+    }
+
+    /**
+     * Where [cut] crosses a canal band — **sampled**, and the first reading in this drawing that has to be.
+     *
+     * A [Section3.RuledStrip] is a family of straight rulings and a canal band has none: its characteristic
+     * curves are the ball's own circles, one per station, and they lie in planes that turn along the run. So
+     * the cut is read the way the band is built — station by station, the ball's arc against the plane — and
+     * the runs come back as chords, flagged (OP-15). Every one of those points is **exact** on the band's own
+     * surface; only the chords between them are not, which is the same honesty class the rails are in.
+     */
+    internal fun canalCut(
+        f: Feature3.Blend,
+        edge: Int,
+        cut: Plane3,
+    ): Revolve3.BandCut? {
+        val canal = canalsOf(f).firstOrNull { it.index == edge } ?: return null
+        val n = cut.normal.normalized()
+        val d = cut.origin.dot(n)
+        // **the band is marched on its own chart**, station by station *and* along the ball's own arc, and
+        // that second axis is not a nicety: a canal band is a ribbon that travels, so a level plane crosses
+        // it **across** the run rather than along it, and a reader that only sampled the stations would find
+        // one point where the cut has a whole curve. The chart is `(station, arc)`, the crossing is the zero
+        // isoline of the plane's own signed distance on it, and the cells are walked as squares.
+        val arcs = max(8, canal.arcSteps)
+        val at = ArrayList<List<Vec3>>(canal.stations.size)
+        for (st in canal.stations) {
+            at.add(
+                (0..arcs).map { j ->
+                    val a = st.a1 + st.sweep * j / arcs
+                    st.at + st.ax * (canal.r * cos(a)) + st.ay * (canal.r * sin(a))
+                },
+            )
+        }
+        val segs = ArrayList<Pair<Vec2, Vec2>>()
+        for (k in 0 until (if (canal.closed) at.size else at.size - 1)) {
+            val next = (k + 1) % at.size
+            for (j in 0 until arcs) {
+                val corners = listOf(at[k][j], at[k][j + 1], at[next][j + 1], at[next][j])
+                val fs = corners.map { it.dot(n) - d }
+                val hits = ArrayList<Vec2>(4)
+                for (m in 0 until 4) {
+                    val a = fs[m]
+                    val b = fs[(m + 1) % 4]
+                    if ((a > 0.0 && b > 0.0) || (a < 0.0 && b < 0.0) || a == b) continue
+                    val t = (a / (a - b)).coerceIn(0.0, 1.0)
+                    hits.add(cut.toLocal(corners[m] + (corners[(m + 1) % 4] - corners[m]) * t))
+                }
+                if (hits.size >= 2) segs.add(hits[0] to hits[1])
+                if (hits.size >= 4) segs.add(hits[2] to hits[3])
+            }
+        }
+        val runs = chainSegments(segs)
+        return if (runs.isEmpty()) null else Revolve3.BandCut(null, runs)
+    }
+
+    /** Marched segments joined end to end into the fewest polylines — the cells share their crossings exactly. */
+    private fun chainSegments(segs: List<Pair<Vec2, Vec2>>): List<List<Vec2>> {
+        val left = segs.filter { (it.first - it.second).length() > Geom3.WELD_TOL }.toMutableList()
+        val out = ArrayList<List<Vec2>>()
+        while (left.isNotEmpty()) {
+            val run = ArrayList<Vec2>()
+            val seed = left.removeAt(0)
+            run.add(seed.first)
+            run.add(seed.second)
+            var grew = true
+            while (grew) {
+                grew = false
+                for (i in left.indices) {
+                    val (a, b) = left[i]
+                    when {
+                        (a - run.last()).length() <= Geom3.WELD_TOL -> run.add(b)
+                        (b - run.last()).length() <= Geom3.WELD_TOL -> run.add(a)
+                        (a - run.first()).length() <= Geom3.WELD_TOL -> run.add(0, b)
+                        (b - run.first()).length() <= Geom3.WELD_TOL -> run.add(0, a)
+                        else -> continue
+                    }
+                    left.removeAt(i)
+                    grew = true
+                    break
+                }
+            }
+            out.add(run)
+        }
+        return out
+    }
 
     val NO_FACE_UNDER_CLICK =
         Msgs.refusalBlendNoFlatFaceThisSolid()

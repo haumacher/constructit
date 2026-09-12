@@ -46,8 +46,10 @@ import kotlin.test.assertTrue
  * 3. **a rail, the corner curve beside it and the next rail are one chain**, so one pick rounds the whole
  *    ribbon exactly as one pick has rounded a tangent-continuous rim since GitHub #29.
  *
- * And the honesty line the tier moved: a rounding **along** an elliptical mitre is refused by name, because
- * its section would change from one end of the arc to the other.
+ * And the honesty line the tier moved: a rounding **along** an elliptical mitre builds since slice 5f — its
+ * section does change from one end of the arc to the other, and a crease with no rigid section is the canal
+ * band the ball's own envelope makes. Until then it was refused by name in a sentence that offered a
+ * chamfer's straight mitre instead.
  */
 class BlendChainEdgeTest {
     private val L = LBlock()
@@ -203,11 +205,16 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
      * in a plane ellipse (OP-24's own vocabulary), which is session 79's own prediction made a value: *"the
      * ellipse arc in the mitre plane, the wedge's own blend curve stretched by 1/sin(θ/2)"*.
      *
-     * And a rounding carried **along** it is refused by name, with what does work: its section would change
-     * from one end of the arc to the other, which this drawing states for no edge (OP-31, Tier B, item 5).
+     * And a rounding carried **along** it **builds**, which is the reversal slice 5f makes: its section does
+     * change from one end of the arc to the other, and since that slice a crease with no rigid section is a
+     * **canal band** — the pipe surface of a ball carried along the spine, whose sections are exact in their
+     * own normal planes. Until then this test read *"a rounding along an elliptical mitre may not build
+     * silently"* and asserted the sentence that named the ellipse, said the section would change and offered
+     * a chamfer's straight mitre instead; that sentence is retired with its case
+     * (`refusal.blend.mitreSectionChanges`, gone from the bundle).
      */
     @Test
-    fun theMitreBetweenTwoRoundsIsAnEllipseArcAndARoundingAlongItIsRefusedByName() {
+    fun theMitreBetweenTwoRoundsIsAnEllipseArcAndARoundingAlongItIsACanalBand() {
         val (stages, why) = L.run(listOf(12, 13).map { Rounding(it, BlendKind.FILLET, 4.0) }, Route.ONE_PASS)
         val b = Body(Evaluator().solid(assertNotNull(stages, why).last()))
         assertManifold(b.mesh, "two rounds crossing")
@@ -219,18 +226,15 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
         assertClose(el.minor, 4.0, 1e-9, "the tube's own radius across the mitre")
         assertClose(el.major, 4.0 * kotlin.math.sqrt(2.0), 1e-9, "…and the section stretched by 1/sin(θ/2) along it")
 
-        val (choices, whyChoice) = Blend3.choicesFor(b.solid, listOf(at), BlendSection(BlendKind.FILLET, 1.0))
-        val reason =
-            if (choices == null) {
-                assertNotNull(whyChoice, "a refusal has a reason").render()
-            } else {
-                val (out, whyOut) = L.run(listOf(12, 13).map { Rounding(it, BlendKind.FILLET, 4.0) } + Rounding(at, BlendKind.FILLET, 1.0), Route.STACKED)
-                assertTrue(out == null, "a rounding along an elliptical mitre may not build silently")
-                assertNotNull(whyOut, "a refusal has a reason")
-            }
-        assertTrue("ellipse" in reason, "the refusal names the curve: '$reason'")
-        assertTrue("mitre" in reason, "…and says it is a mitre: '$reason'")
-        assertTrue("chamfer" in reason, "…and says what does work: '$reason'")
+        val sec = BlendSection(BlendKind.FILLET, 1.0)
+        val (choices, whyChoice) = Blend3.choicesFor(b.solid, listOf(at), sec)
+        val choice = assertNotNull(choices, "the mitre is scored: ${whyChoice?.render()}")[0]
+        val (out, whyOut) = L.run(listOf(12, 13).map { Rounding(it, BlendKind.FILLET, 4.0) } + Rounding(at, BlendKind.FILLET, 1.0), Route.STACKED)
+        val body = Evaluator().solid(assertNotNull(out, whyOut).last())
+        assertManifold(body.mesh, "the canal band along the elliptical mitre")
+        val took = b.volume - Geom3.volume(body.mesh)
+        val (lo, hi) = assertNotNull(Blend3.canalRemoval(b.solid.feature, at, sec, choice), "the algebra states the canal's figure")
+        assertTrue(took in lo..hi, "the canal takes $took, outside its own bracket [$lo, $hi]")
     }
 
     /**

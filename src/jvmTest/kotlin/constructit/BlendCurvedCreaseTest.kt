@@ -64,10 +64,11 @@ import kotlin.test.assertTrue
  * notch; a curved one's stands on a meridian plane that is a face of nothing, so `facesAreWholeBoundary`'s
  * claim about a dressed part was false there and a level section through the cap could not close.
  *
- * *The one cut, whole and refused by name*: a rounding along the **elliptical** mitre between two equal
- * rounds. Its spine is exact and this session found it — the mitre's own ellipse scaled by `(R + r)/R` about
- * the point the two axes cross — but the section it carries **changes** along the run, so the tool is a
- * canal surface and the face list has no word for one. The refusal says so, and says what does work.
+ * *What was this slice's one cut, and is not any more*: a rounding along the **elliptical** mitre between two
+ * equal rounds. Its spine is exact and this slice found it — the mitre's own ellipse scaled about the point
+ * the two axes cross — but the section it carries **changes** along the run, so it was refused by name and
+ * queued. Slice 5f built it: a crease with no rigid section is a **canal** band, the pipe surface of a ball
+ * carried along that spine, and the two tests below now assert the band rather than the refusal.
  */
 class BlendCurvedCreaseTest {
     private val L = LBlock()
@@ -544,45 +545,55 @@ class BlendCurvedCreaseTest {
         }
     }
 
-    // ---- 3. the cut: the elliptical mitre, refused by name ----
+    // ---- 3. what was the cut: the elliptical mitre, delivered as a canal band in slice 5f ----
 
     /**
-     * **A rounding along the elliptical mitre between two equal rounds is refused, by name** — the slice's
-     * one cut, and it is a whole case rather than a gap in a case.
+     * **A rounding along the elliptical mitre between two equal rounds builds** — and until slice 5f it was
+     * this slice's own whole cut, refused by name.
      *
-     * The design is worked out and the spine is exact: the ball of radius `r` tangent to both cylinders from
-     * the air has its centre at `R + r` from **both** axes, which for two equal cylinders whose axes meet is
-     * again a plane ellipse — the mitre's own ellipse scaled by `(R + r)/R` about the point the axes cross,
-     * in the mitre's own plane. What it carries is not a section this drawing states: the dihedral runs from
-     * `π` at each end of the mitre (where both bands are tangent to the face they share) to its least in the
-     * middle, so the tool is a canal surface and the band it leaves is neither a plane, a revolution nor a
-     * ruled strip. The refusal says so, and says that two **bevels** meet in a straight crease that rounds.
+     * What the refusal said, and why it is retired: *"{name} is an ellipse arc — the mitre where two equal
+     * roundings cross — and a rounding carried along it would have a section that changes from one end of the
+     * arc to the other, which this drawing does not state. The mitre between two chamfers is a straight
+     * crease and can be rounded."* The section does change, and slice 5f states exactly that: a crease with
+     * no rigid section is a **canal** band, the pipe surface of a ball carried along the spine, whose section
+     * is exact in each station's own normal plane. The spine this slice worked out is the same one, one sign
+     * over: the ball rolls **inside** the material at a convex ridge, so its centre stands `R − r` from both
+     * axes rather than `R + r`, which is again the mitre's own ellipse scaled about the point the axes cross.
+     * `refusal.blend.mitreSectionChanges` is gone from the bundle with the case it named.
      */
     @Test
-    fun aRoundingAlongTheEllipticalMitreIsRefusedByName() {
+    fun aRoundingAlongTheEllipticalMitreIsACanalBand() {
         val (stages, why) = L.run(listOf(12, 13).map { Rounding(it, BlendKind.FILLET, 4.0) }, Route.ONE_PASS)
         val solid = Evaluator().solid(assertNotNull(stages, why).last())
         assertManifold(solid.mesh, "two equal rounds crossing")
+        val before = Geom3.volume(solid.mesh)
         val edges = edgesOf(solid)
         val at = edges.indices.first { edges[it].name is EdgeName.BlendMitre }
         val piece = (edges[at].geom as EdgeGeom.OnPlane).piece
         assertTrue(piece is ProfileElement.EllipticArcE, "two equal cylinders whose axes meet cut in an ellipse, not a $piece")
 
-        val (choices, whyChoice) = Blend3.choicesFor(solid, listOf(at), BlendSection(BlendKind.FILLET, 1.0))
-        assertTrue(choices == null, "a rounding along an elliptical mitre may not build silently")
-        val reason = assertNotNull(whyChoice, "a refusal has a reason").render()
-        assertTrue("ellipse" in reason, "the refusal names the curve: '$reason'")
-        assertTrue("mitre" in reason, "…and says it is a mitre: '$reason'")
-        assertTrue("chamfer" in reason, "…and says what does work: '$reason'")
+        val sec = BlendSection(BlendKind.FILLET, 1.0)
+        val (choices, whyChoice) = Blend3.choicesFor(solid, listOf(at), sec)
+        val choice = assertNotNull(choices, "the mitre is scored: ${whyChoice?.render()}")[0]
+        val (out, whyOut) = L.run(listOf(12, 13).map { Rounding(it, BlendKind.FILLET, 4.0) } + Rounding(at, BlendKind.FILLET, 1.0), Route.STACKED)
+        val body = Evaluator().solid(assertNotNull(out, whyOut).last())
+        assertManifold(body.mesh, "the canal band along the elliptical mitre")
+        val took = before - Geom3.volume(body.mesh)
+        val (lo, hi) = assertNotNull(Blend3.canalRemoval(solid.feature, at, sec, choice), "the algebra states the canal's figure")
+        assertTrue(took in lo..hi, "the canal takes $took, outside its own bracket [$lo, $hi]")
+        // …and the band it leaves is named, with the tolerance its own boundary was fitted to
+        val band = assertNotNull(facesOf(body).firstOrNull { it.name == FaceName.BlendBand(at, 0) }, "the canal band is a face of the body")
+        assertNotNull(band.fitted, "…and it says how far its own boundary may be")
     }
 
     /**
-     * **The concave twin is the same cut, and it is refused in the same words.** Two **fills** crossing at
-     * the inside corner of a room leave the same elliptical mitre one sign over — two equal cylinders of
-     * air whose axes meet — so the rounding along it is refused by name rather than built half-way.
+     * **The concave twin is the same band one sign over.** Two **fills** crossing at the inside corner of a
+     * room leave the same elliptical mitre — two equal cylinders of air whose axes meet — and the rounding
+     * along it is the same canal **added** rather than taken away. Until slice 5f both were refused in the
+     * same words.
      */
     @Test
-    fun theConcaveTwinIsRefusedInTheSameWords() {
+    fun theConcaveTwinIsTheSameBandOneSignOver() {
         val cx = Construction()
         val box = prism(cx, listOf(Vec2(0.0, 0.0), Vec2(60.0, 0.0), Vec2(60.0, 40.0), Vec2(0.0, 40.0)), height)
         val faces = facesOf(Evaluator().solid(box))
@@ -605,23 +616,34 @@ class BlendCurvedCreaseTest {
         }
         val solid = Evaluator().solid(on)
         assertManifold(solid.mesh, "two fills crossing in a room")
+        val before = Geom3.volume(solid.mesh)
         val es = edgesOf(solid)
-        val mitres = es.indices.filter { es[it].name is EdgeName.BlendMitre }
+        val mitres = es.indices.filter { es[it].name is EdgeName.BlendMitre && es[it].reason == null }
         if (mitres.isEmpty()) {
             println("concave twin | no mitre is stated between two fills — nothing to round, and nothing claimed")
             return
         }
         for (m in mitres) {
-            val (choices, whyChoice) = Blend3.choicesFor(solid, listOf(m), BlendSection(BlendKind.FILLET, 0.5))
+            val sec = BlendSection(BlendKind.FILLET, 0.5)
+            val (choices, whyChoice) = Blend3.choicesFor(solid, listOf(m), sec)
             if (choices == null) {
                 val reason = assertNotNull(whyChoice, "a refusal has a reason").render()
                 assertTrue(namesSomething(reason), "the refusal names something: '$reason'")
                 println("concave twin | refused | — | ${reason.take(80)}")
                 continue
             }
+            assertTrue(!choices[0].convex, "a fill's mitre is a valley, so the canal is added")
             val out = round(cx, on, m, 0.5)
             val r = Evaluator().eval(out.node)
-            assertTrue(r is EvalResult.Invalid, "a rounding along a fill's elliptical mitre may not build silently")
+            if (r is EvalResult.Invalid) {
+                assertTrue(namesSomething(r.reason), "a rounding that cannot be built says why: ${r.reason}")
+                continue
+            }
+            val body = Evaluator().solid(out)
+            assertManifold(body.mesh, "the concave canal band")
+            val added = Geom3.volume(body.mesh) - before
+            val (lo, hi) = assertNotNull(Blend3.canalRemoval(solid.feature, m, sec, choices[0]), "the algebra states the fill's figure")
+            assertTrue(added in lo..hi, "the concave canal adds $added, outside its own bracket [$lo, $hi]")
         }
     }
 

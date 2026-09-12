@@ -2272,6 +2272,10 @@ object Section3 {
             // except where the plane runs **parallel** to those rulings, which no ruling crosses and which
             // the band states exactly instead (`Blend3.parallelBandCut`, the cut a sectioned rounded plate
             // is actually asked for)
+            // …and a **canal** band is neither: its characteristic curves are the ball's own circles, one
+            // per station, so its cut is read station by station and comes back as chords, flagged
+            // (OP-31, slice 5f — the sampled reader that slice owed)
+            Blend3.canalCut(feature, n.edge, cut)?.let { return bandCutToEdge(label, it) }
             Blend3.bandCut(feature, n.edge, n.piece, cut)?.let { return bandCutToEdge(label, it) }
             Blend3.parallelBandCut(feature, n.edge, n.piece, cut)?.let { pieces ->
                 // the extras are what *no index names*, so a single piece is the edge's own curve and
@@ -3038,6 +3042,13 @@ object Section3 {
                     carriers.add(BoolFace3.Carrier(k, j, p.name, null, emptyList(), null))
                     continue
                 }
+                // **a canal band is the one face this drawing states and cannot yet carry** (OP-31, slice
+                // 5f; session 84): its surface is exact — the pipe of a ball of known radius along a known
+                // spine — but it is no plane and no surface of revolution, so there is no `(theta, t)` chart
+                // to state a trim in and no carrier to look a triangle up against. The whole face list
+                // stands or falls together (the rule above), so the body is mesh-only with a reason that
+                // names the band and the way round it. Queued as (5i).
+                if (p.name is FaceName.BlendBand) return null to Msgs.refusalSectionBoolCanalBand(name = p.name.label)
                 // …and a face whose surface this drawing has no name for at all is the sink that stands
                 return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
             }
