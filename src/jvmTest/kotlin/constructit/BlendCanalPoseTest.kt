@@ -109,9 +109,10 @@ class BlendCanalPoseTest {
         pose: Pose,
         cx: Construction,
         sweep: Double,
+        ring: Double = this.ring,
     ): SolidRef {
         val prof =
-            listOf(Vec2(0.0, inner), Vec2(0.0, ring + 10.0), Vec2(10.0, ring + 10.0), Vec2(10.0, ring), Vec2(20.0, ring), Vec2(20.0, inner))
+            listOf(Vec2(0.0, ring / 2.0), Vec2(0.0, ring + 10.0), Vec2(10.0, ring + 10.0), Vec2(10.0, ring), Vec2(20.0, ring), Vec2(20.0, ring / 2.0))
         val pts = prof.mapIndexed { i, p -> cx.freePoint("L${ids++}_$i", p.x.mm, p.y.mm) }
         val segs = prof.indices.map { cx.segment(pts[it], pts[(it + 1) % prof.size]) }
         val o = cx.freePoint("Ro${ids++}", 0.mm, 0.mm)
@@ -338,6 +339,35 @@ class BlendCanalPoseTest {
     }
 
     // ---- (d) the pivot of slice 5h about a **ring**, at a sweep that is neither a right angle nor a half turn ----
+
+    /**
+     * **The *tight* ring's pivot takes the same material in every pose** (OP-31, slice 5o).
+     *
+     * `R = 8` is four ball radii rather than ten, so the station plane turns far enough along the run to
+     * stand nearly parallel to the crease it reads its apex on — which is what made the pivot's section
+     * reach thirty-eight millimetres down a ten-millimetre tube and lay a sliver of tool along the body's
+     * own edge. The section has a **fourth side** now, the band's own cap plane carried along the crease,
+     * so the tool is local to the corner; and a tool built in the crease's own frame owes this class the
+     * same claim every other tool does — it takes what it takes on `XY` wherever the drawing was sketched.
+     */
+    @Test
+    fun theTightRingPivotTakesTheSameMaterialInEveryPose() {
+        val tight = 8.0
+        assertSameInEveryPose("the tight ring's pivot at R = $tight") { pose ->
+            val cx = Construction()
+            val t = turnedOn(pose, cx, 270.0, tight)
+            val s = Evaluator().solid(t)
+            assertManifold(s.mesh, "${pose.what}: the tight 270° turn")
+            val (uu, vv, _) = frame(pose)
+            val v = pose.origin + uu * 10.0 + vv * tight
+            val pair = edgesAt(s, v).filter { Blend3.choicesFor(s, listOf(it), BlendSection(BlendKind.FILLET, 2.0)).first?.get(0)?.convex == true }
+            assertEquals(2, pair.size, "${pose.what}: the tight cap's reflex pair")
+            val (ref, why) = round(cx, t, pair, 2.0)
+            val body = Evaluator().solid(assertNotNull(ref, "${pose.what}: the tight ring's pivot builds: $why"))
+            assertManifold(body.mesh, "${pose.what}: the tight ring's pivot")
+            Geom3.volume(s.mesh) to Geom3.volume(s.mesh) - Geom3.volume(body.mesh)
+        }
+    }
 
     /** **The ring pivot at both caps of a 200° turn**, in every pose — the slice's own tool, held to the same rule. */
     @Test

@@ -6,6 +6,10 @@ import constructit.dsl.Construction
 import constructit.dsl.RegionRef
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
+import constructit.editor.DocumentFormat
+import constructit.editor.Editor
+import constructit.editor.Element
+import constructit.editor.ElementKind
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
@@ -32,21 +36,25 @@ import kotlin.test.assertTrue
  * *What this class is about, and it is a correction of slice 5h's own note.* That note said the small ring's
  * pivot *"does not close into a shell and is refused as such before the body ever sees it"*. It does close:
  * the tool is a watertight mesh of simple sections at every station and at every size, and [Blend3] asks it
- * about itself before the body sees it exactly as slice 5f's rule says. What fails at a tight ring is the
+ * about itself before the body sees it exactly as slice 5f's rule says. What failed at a tight ring was the
  * **meeting**: the station plane turns along the run until it stands very nearly parallel to the crease it
- * reads its own apex on, and the crease point then runs away down the run — 38 mm on a body 10 mm long at
- * `R = 8` — so the pivot lofts a razor-thin sliver of tool lying **along** the body's own edge. Where the
- * ring's curvature is comparable to the ball's there is no room between that sliver and the body, and what
- * the general boolean answers is a tangent contact or a zero-thickness flap: *"the edge between
- * (8.657, 8.08, 0) mm and (10, 8, 0) mm is used 2 times with 2 opposite uses"*.
+ * reads its own apex on, and the crease point then ran away down the run — 38 mm on a body 10 mm long at
+ * `R = 8` — so the pivot lofted a razor-thin sliver of tool lying **along** the body's own edge.
  *
- * *What the slice delivers, then, is the rule rather than the body.* Whether a given ring and a given ball
- * meet marginally is the engine's own coin — the same cell built, refused and refused in one JVM at
- * `r = 0.5` in session 86, and every resolution knob this construction has reshuffles *which* cells land
- * where without moving the count. So what is asserted here is what may never vary: **a pivot at a tight
- * ring builds and is a corner of the body, or it is refused in a sentence of this drawing's own** — naming
- * the ball, the two edges it pivots between and the cure — and never in the engine's own mesh diagnostic,
- * which is the one answer session 84 wrote down that this drawing may never give.
+ * *What slice 5o's second round did about it.* The section has a **fourth side** now — the band's own cap
+ * plane, carried along the crease with the station and read off the same near/far rule the near wall is —
+ * so the tool is **local to the corner** and no part of it lies along the body's edge outside the ground the
+ * two bands and the pivot take. And a leg leaves the body through **every** face it comes up to, weighted by
+ * how near it stands to each, which is what the crease point being *in* the shared face asks of the near
+ * leg's last stretch. Together they move the sweep from about 123 of 160 readings to about 132, and every one
+ * of the 160 is held to the figure the construction states for it rather than to its build alone.
+ *
+ * *What they did not do is retire the coin, and that is stated rather than glossed.* Whether a given ring and
+ * a given ball meet marginally is still the general boolean's own answer — the same cell builds, refuses and
+ * refuses again in one JVM — so what is asserted here is what may never vary: **a pivot at a tight ring
+ * builds and is a corner of the body, or it is refused in a sentence of this drawing's own** — naming the
+ * ball, the two edges it pivots between and the cure — and never in the engine's own mesh diagnostic, which
+ * is the one answer session 84 wrote down that this drawing may never give.
  */
 class BlendTightRingTest {
     private var ids = 0
@@ -139,6 +147,7 @@ class BlendTightRingTest {
         var built = 0
         var refused = 0
         val said = LinkedHashSet<String>()
+        val took = ArrayList<String>()
         for (r in listOf(0.5, 1.0, 1.5, 2.0, 2.5)) {
             val cx = Construction()
             val base = turned(cx)
@@ -179,10 +188,18 @@ class BlendTightRingTest {
                 val (regions, whySec) = Section3.regionsOf(body.feature, Plane3(Vec3(0.0, 0.0, z), Vec3.X, Vec3.Y))
                 assertNotNull(regions, "r = $r: the section at z = $z closes — ${whySec?.render()}")
             }
+            // *A section **along** the run is not asked of this fixture, and the reason is the fixture's
+            // own rather than the pivot's.* A plane through the turn's axis that passes through the pivot
+            // **is** the cap's own plane, and one that misses it stands tangent to the cylinder — a crossing
+            // the drawing states only as curves. A plane square to the axis crosses the band along the
+            // **circular** crease, whose cut through such a plane is the same open class (`(5l)`'s own).
+            // What reads through the pivot here is the level plane, and it does, three heights of it.
             val cap = facesOf(body).first { it.name.label.render().contains("cap at the start") }
             assertEquals(null, cap.reason?.render(), "r = $r: the face the two roundings share is still one a sketch can be put on")
+            took.add("r = $r takes ${v0 - v}")
         }
         println("== the tight ring R = $ring: $built of ${built + refused} sizes build and $refused are refused in the drawing's own words")
+        for (line in took) println("   $line")
         for (why in said) println("   refused: $why")
         assertEquals(5, built + refused, "every size is one or the other and nothing is skipped")
     }
@@ -212,6 +229,75 @@ class BlendTightRingTest {
             }
         }
     }
+
+    /**
+     * **The tight ring's pivot through the *file*, and by gesture** (OP-31, slice 5o).
+     *
+     * The two tests above build the body through the DSL. A user's drawing is a **journal**: the revolve and
+     * the two roundings are recorded gestures, each naming the edge it was made on and the branch it was
+     * scored at, and the drawing has to be a fixed point of save → load → save and give the very body the
+     * one-gesture DSL gives. A pivot is an ordinary corner of an ordinary dressing, so nothing about it may
+     * appear in the file — no stored count, no slot of its own and no version — and this is what says so.
+     */
+    @Test
+    fun theTightRingsPivotRoundTripsThroughTheFile() {
+        val script = tightScript(2.0)
+        val once = DocumentFormat.save(DocumentFormat.load(script))
+        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "the drawing round-trips byte-equal")
+        val ed = Editor()
+        ed.replaceDocument(DocumentFormat.load(once))
+        val fromFile = Evaluator().solid(bodyOf(ed).ref as SolidRef)
+        assertManifold(fromFile.mesh, "the tight ring's pivot, loaded from the file")
+        assertEquals(1, facesOf(fromFile).count { it.name is FaceName.BlendCorner }, "one corner face between the two bands")
+        assertEquals(2, edgesOf(fromFile).count { it.name is EdgeName.BlendCornerRail }, "…and its own two rails")
+        val cx = Construction()
+        val base = turned(cx)
+        val dsl = Evaluator().solid(assertNotNull(round(cx, base, pair(Evaluator().solid(base)), 2.0).first, "the DSL builds it too"))
+        assertManifold(dsl.mesh, "the one-gesture body")
+        val v = Geom3.volume(dsl.mesh)
+        assertClose(Geom3.volume(fromFile.mesh), v, 1e-7 * v, "two recorded gestures and one DSL gesture are the same body")
+    }
+
+    /** The tight ring's own drawing as a `.cit`: the revolve, then the two cap edges rounded one gesture each. */
+    private fun tightScript(r: Double): String {
+        val inner = ring / 2.0
+        val prof =
+            listOf(Vec2(0.0, inner), Vec2(0.0, ring + 10.0), Vec2(10.0, ring + 10.0), Vec2(10.0, ring), Vec2(20.0, ring), Vec2(20.0, inner))
+        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        sb.append("orthostart ${prof[0].x},${prof[0].y} -> e1\n")
+        var n = 2
+        for (i in 1 until prof.size) {
+            sb.append("orthovertex ${prof[i].x},${prof[i].y} -> e$n,e${n + 1}\n")
+            n += 2
+        }
+        val region = n - 1
+        sb.append("orthoclose -> e$n\n")
+        n++
+        sb.append("point 0,0 -> e$n\n")
+        sb.append("point 1,0 -> e${n + 1}\n")
+        sb.append("tool line pts=e$n,e${n + 1} clicks=0,0;1,0 -> e${n + 2}\n")
+        val axis = n + 2
+        n += 3
+        sb.append("param \"a\" = 270deg\n")
+        sb.append("tool revolve els=e$region,e$axis clicks=5,$ring;50,0 scalar=\"a\" -> e$n\n")
+        var at = n
+        sb.append("param \"r\" = ${r}mm\n")
+        for (k in 0 until 2) {
+            val one = Editor()
+            one.replaceDocument(DocumentFormat.load(sb.toString()))
+            val body = Evaluator().solid(bodyOf(one).ref as SolidRef)
+            val sharp =
+                pair(body).filter { Blend3.choicesFor(body, listOf(it), BlendSection(BlendKind.FILLET, r)).first?.get(0)?.convex == true }
+            assertEquals(2 - k, sharp.size, "the reflex pair still has ${2 - k} sharp edge(s) to round")
+            val e = sharp.first()
+            val choice = assertNotNull(Blend3.choicesFor(body, listOf(e), BlendSection(BlendKind.FILLET, r)).first, "edge $e is scored")[0]
+            sb.append("tool filletedge els=e$at clicks=0,0 scalar=\"r\" signs=$e;${choice.signs().joinToString(";")} -> e${at + 1},e${at + 2}\n")
+            at += 1
+        }
+        return sb.toString()
+    }
+
+    private fun bodyOf(ed: Editor): Element = ed.doc.elements.last { it.kind == ElementKind.SOLID }
 
     /** A refusal that is this drawing speaking: the ball, both edges, and the cure. */
     private fun speaks(

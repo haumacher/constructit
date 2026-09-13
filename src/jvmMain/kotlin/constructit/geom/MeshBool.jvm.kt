@@ -30,12 +30,16 @@ import java.io.File
  *
  * *And double precision is **not** a one-line change here, which an earlier note in this file claimed.*
  * `MeshGL64` arrived with Manifold **3**; this binding is `org.clojars.cartesiantheatrics:manifold3d`,
- * whose newest release (2.1.0, January 2025) wraps Manifold 2.x and ships a jar with `MeshGL` and no
- * `MeshGL64` in it. So the JVM path needs a Manifold 3 binding first — a newer clj-manifold3d release if
- * one comes, or a JNI/Panama build of our own — while the **browser**'s npm `manifold-3d` is already at
- * 3.5.1 and has `Mesh64` today. Until both have it the two platforms would not agree, so the tests are
- * measured against **float32 on the JVM**, which is what every tolerance in the suite is written to. Queued
- * as (5q) under OP-31.
+ * whose newest release (2.1.0, January 2025) ships a jar with `MeshGL` and no `MeshGL64` in it. Read more
+ * closely in session 86, the **native** inside the jar *is* Manifold 3 — `libmanifold.so.3`, carrying the
+ * `GetMeshGL64`/`ImportMeshGL64` symbols and `ManifoldParams()`, linked against `libtbb.so.12` — and it is
+ * the **Java surface** that is 2.x-shaped: no `MeshGL64` class, no `tolerance` on `MeshGL`, and an
+ * `ExecutionParams` without the `deterministic` flag and with no `ManifoldParams()` to reach it by. So the
+ * JVM path needs a binding whose Java side matches its native first — a newer clj-manifold3d release if one
+ * comes, or a JNI/Panama build of our own — while the **browser**'s npm `manifold-3d` is already at 3.5.1
+ * and has `Mesh64` today. Until both have it the two platforms would not agree, so the tests are measured
+ * against **float32 on the JVM**, which is what every tolerance in the suite is written to. Queued as (5q)
+ * under OP-31, together with the determinism the [observer] seam below measures.
  */
 actual object MeshBool {
     /** The probe's failure, or null when the engine ran. Computed once, at class-init. */
@@ -93,7 +97,31 @@ actual object MeshBool {
     /** The binding's version, quoted in reasons so a report says which engine produced a mesh. */
     const val VERSION = "2.0.3"
 
+    /**
+     * **A test seam, and the measurement it exists for** (OP-9; OP-31's (5q)). Every general boolean passes
+     * its two operands and its answer through here, so a test can ask the one question the suite could not
+     * otherwise put: *is the engine's answer a function of its operands?* Measured in session 86 on a pivot
+     * at a tight ring: two fresh constructions hand this call **byte-identical** operands (336 and 5639
+     * vertices), and the engine answers with 2334 vertices on one call and 2336 on the next, in one JVM, with
+     * the volume equal to nine decimals — also when the process is pinned to a single CPU. The bundled
+     * `libmanifold.so.3` links `libtbb`, and neither Manifold's `deterministic` switch nor `MeshGL64` is on
+     * the Java surface of this binding, so the cure is the binding itself, queued as (5q). Until then a
+     * marginal contact's verdict — build or refuse — is the engine's own coin, which is what
+     * `BlendCornerCanalTest`'s residue-zero sweep tolerates and `BooleanDeterminismTest` pins.
+     */
+    internal var observer: ((BoolOp, Mesh3, Mesh3, Mesh3?) -> Unit)? = null
+
     actual fun boolean(
+        kind: BoolOp,
+        a: Mesh3,
+        b: Mesh3,
+    ): Pair<BoolMesh?, Msg?> {
+        val out = boolean0(kind, a, b)
+        observer?.invoke(kind, a, b, out.first?.mesh)
+        return out
+    }
+
+    private fun boolean0(
         kind: BoolOp,
         a: Mesh3,
         b: Mesh3,

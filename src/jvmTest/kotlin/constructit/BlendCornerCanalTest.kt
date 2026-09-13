@@ -432,7 +432,7 @@ class BlendCornerCanalTest {
         for (ring in listOf(6.0, 8.0, 10.0, 12.0, 20.0)) {
             for (r in listOf(0.5, 1.0, 1.5, 2.0, 2.5)) {
                 cells +=
-                    runCell("ring R=$ring r=$r", { c -> turned(c, ring, 270.0) }, { s -> turnPair(s, ring).first }, r, reasons, figure = false)
+                    runCell("ring R=$ring r=$r", { c -> turned(c, ring, 270.0) }, { s -> turnPair(s, ring).first }, r, reasons)
                         .also { if (it.second) built += 2 else refused += 2 }.first
             }
         }
@@ -447,7 +447,7 @@ class BlendCornerCanalTest {
                 for (r in listOf(0.5, 1.0, 1.5, 2.0, 2.5)) {
                     val what = "ring sweep=$sweep ${if (atStart) "start" else "end"} cap r=$r"
                     cells +=
-                        runCell(what, { c -> turned(c, 20.0, sweep) }, { s -> capPair(s, 20.0, sweep, atStart).first }, r, reasons, figure = false)
+                        runCell(what, { c -> turned(c, 20.0, sweep) }, { s -> capPair(s, 20.0, sweep, atStart).first }, r, reasons)
                             .also { if (it.second) built += 2 else refused += 2 }.first
                 }
             }
@@ -465,7 +465,6 @@ class BlendCornerCanalTest {
         pairOf: (Solid3) -> List<Int>,
         r: Double,
         reasons: MutableSet<String>,
-        figure: Boolean = true,
     ): Pair<Int, Boolean> {
         val cx = Construction()
         val base = make(cx)
@@ -487,7 +486,7 @@ class BlendCornerCanalTest {
             if (ref == null && ref2 == null) return 2 to false
             val standing = Evaluator().solid(ref ?: ref2!!)
             assertManifold(standing.mesh, "$what, the route that builds")
-            if (figure) assertInsideItsOwnBracket(standing, v0, what)
+            assertInsideItsOwnBracket(standing, v0, what)
             return 2 to false
         }
         val body = Evaluator().solid(ref)
@@ -497,7 +496,7 @@ class BlendCornerCanalTest {
         val v = Geom3.volume(body.mesh)
         // …to the engine's own ULP, which is the class the general boolean is deterministic in (session 84)
         assertClose(Geom3.volume(other.mesh), v, 1e-7 * v, "$what: the two routes are the same body")
-        if (figure) assertInsideItsOwnBracket(body, v0, what)
+        assertInsideItsOwnBracket(body, v0, what)
         return 2 to true
     }
 
@@ -510,11 +509,14 @@ class BlendCornerCanalTest {
      * What the whole dressing takes, inside the figure the construction states for it: each band's own rigid
      * section times the run it keeps, plus the pivot's own quadrature less what the two bands hand over.
      *
-     * Asked only where **both walls of every band are planes**. A band whose other face is a *cylinder* has a
-     * wedge with a circular leg, and this algebra states no prism figure for one — the very gap slice 5e
-     * recorded when it left the sector's own rim uprights out of the matrix, and not this slice's to close.
-     * The ring family is therefore held to everything else — built, manifold, both routes, its corner named
-     * and its section closing — and to its own build rather than to a figure.
+     * **Asked of every cell of this class since slice 5o**, the ring family included. Slice 5h held the ring
+     * cells to their build alone, on the reading that *"a band whose other face is a cylinder has a wedge with
+     * a circular leg, and this algebra states no prism figure for one"*. That is true of the **matrix's** own
+     * `predict`, which reads the L-block's algebra; it is **not** true of `Blend3.cornerRemoval`, which reads
+     * each band's own section polygon and its own length and does not care what the legs are. A band along a
+     * revolve's cap edge carries a rigid section — the dihedral is the same at every station of that straight
+     * crease — so the band is a prism and its area is the polygon's. Every one of the 160 readings below is
+     * therefore held to the bracket the construction states for it, which is what the residue's zero means.
      */
     private fun assertInsideItsOwnBracket(
         body: Solid3,

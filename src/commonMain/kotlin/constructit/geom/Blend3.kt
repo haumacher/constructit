@@ -9710,6 +9710,9 @@ object Blend3 {
         val tail: Double,
         /** How far past each band's own cap this pivot's tool reaches — see [canalTurnOf]. */
         val endStep: Pair<Double, Double>,
+        /** The two planes the section's **fourth side** is cut off at, one per band — see [CapCut]. */
+        val cutA: CapCut?,
+        val cutB: CapCut?,
     ) : Corner {
         override val ends: List<Pair<Int, Boolean>> get() = listOf(ai to aAtStart, bi to bAtStart)
 
@@ -9851,6 +9854,27 @@ object Blend3 {
         val least = at(u) ?: return null
         if (abs(least - r) > GeomMath.TESS_TOL_MM) return null
         return u
+    }
+
+    /**
+     * One band's own **cap plane** as a cut for the pivot's fourth side (OP-31, slice 5o) — the plane square
+     * to that band's crease at station [where], turned so that [CapCut.out] points **away** from the corner
+     * [at]. It is the band's own end section carried along the crease: no constant is tuned into it and
+     * nothing about it is this pivot's, which is why the same reading serves a straight crease and a curved
+     * one and every ring radius alike.
+     */
+    private fun capCutOf(
+        piece: Piece,
+        atStart: Boolean,
+        where: Double,
+        at: Vec3,
+    ): CapCut? {
+        val place = placeAt(piece, if (atStart) where else piece.length - where) ?: return null
+        val n = place.cx.cross(place.cy)
+        if (n.length() <= Vec3.EPS) return null
+        val out = n.normalized()
+        val origin = place.at(Vec2(0.0, 0.0))
+        return CapCut(origin, if ((at - origin).dot(out) <= 0.0) out else -out)
     }
 
     /** One station of the pivot before its section is stated — what the station count is refined on. */
@@ -10105,6 +10129,26 @@ object Blend3 {
     ): Double = max(grow, 2.0 * r * (1.0 - cos(abs(sweep) / (2.0 * max(1, arcSteps)))))
 
     /**
+     * The plane a pivot's section is **cut off** at — one band's own cap, carried the tool's own step-off
+     * past it, with [out] pointing the way **away** from the corner (OP-31, slice 5o).
+     *
+     * *Why a pivot's section needs a fourth side at all.* A canal section closes on the **crease point** —
+     * where this station's plane cuts the crease the near band runs along — and at a **tight** ring that
+     * point runs away: the station plane turns until it stands nearly parallel to that crease, and the apex
+     * walks thirty-eight millimetres down a ten-millimetre tube. The section that names it is right, but
+     * what the loft makes of it is a razor-thin sliver of tool lying **along the body's own edge**, over
+     * ground the band itself removes exactly — and a tool that meets the body along a surface rather than
+     * across one has no watertight boolean. So the section is cut off where the band's own flat end section
+     * stands (slice 5p's cap, the plane square to the crease at the band's end), and the tool is thereby
+     * **local to the corner**: it reaches exactly as far down each crease as the band it hands over to,
+     * and no further.
+     */
+    private class CapCut(
+        val origin: Vec3,
+        val out: Vec3,
+    )
+
+    /**
      * The pivot's own section — [canalSectionAt]'s, with the one vertex that would otherwise **stand on the
      * body's own upright** stepped clear of it.
      *
@@ -10128,6 +10172,7 @@ object Blend3 {
         sNear: Int,
         sFar: Int,
         grow: Double,
+        cut: CapCut?,
     ): List<Vec2>? {
         val place = raw.place
         val q1 = Vec2(r * cos(raw.a1), r * sin(raw.a1))
@@ -10154,7 +10199,72 @@ object Blend3 {
         val gfU = far.grad(raw.pU) ?: return null
         val outVoid =
             (flat(gnU) * -sNear.toDouble() + flat(gfU) * -sFar.toDouble()).let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+
+        // **and a leg leaves the body through *every* face it comes up to, weighted by how near it stands
+        // to each** (OP-31, slice 5o). The near leg runs from the contact on the upright to the crease
+        // point, and the crease point lies **in the shared face** — so the leg's last stretch stands within
+        // a hair of that face, and a step taken along the near wall's own gradient alone has no component
+        // out of it at all. At a ring that is not an abstraction: the leg's own end lies **in** the cap's
+        // plane, its radial step keeps it there, and the tool then carries a whole rail of vertices inside
+        // a face of the body — *"the edge between (8.657, 8.08, 0) mm and (10, 8, 0) mm is used 2 times
+        // with 2 opposite uses"*, which is a tangent contact and not a crossing. The apex had this reading
+        // already (`outApex`, and the far wall's weight in it); what it did not have was the rest of the
+        // leg, and the weight is the same one measured at each point rather than at the apex only.
+        fun awayAt(
+            q: Vec2,
+            tau: Double,
+        ): Vec2 {
+            val p = place.at(q)
+            val gNq = near.grad(p)
+            val gFq = wF.grad(p)
+            val gRq = far.grad(p)
+            if (gNq == null || gFq == null || gRq == null) return outVoid
+            val wS = max(0.0, 1.0 - (p - (wF.nearest(p) ?: p)).length() / max(r, Geom3.WELD_TOL))
+            val wR = max(0.0, 1.0 - (p - (far.nearest(p) ?: p)).length() / max(r, Geom3.WELD_TOL))
+            val v = flat(gNq) * -sNear.toDouble() + flat(gFq) * (-sF.toDouble() * wS) + flat(gRq) * (-sFar.toDouble() * wR)
+            val away = if (v.length() <= Geom3.WELD_TOL) outVoid else v.normalized()
+            return (outVoid * (1.0 - tau) + away * tau).let { if (it.length() <= Geom3.WELD_TOL) outVoid else it.normalized() }
+        }
         val out = ArrayList<Vec2>(2 * legSteps + arcSteps + 2)
+        // **the fourth side, and it is a straight line stated exactly** (OP-31, slice 5o). The cut is a
+        // *plane*, so its own signed distance is **affine** in the station's two coordinates and its trace
+        // in this plane is a line with no fitting in it at all. Two terms set where that line stands, and
+        // each of them is the body's own: the band's own cap, carried here by the very near/far rule
+        // [nearSideFrom] reads the near wall itself by — and, where this station's own ball reaches **past**
+        // that cap, the plane parallel to it the ball is **tangent** to, because a tool may never cut the
+        // envelope it is the loft of. Whichever of the two stands further from the corner is the one that
+        // cuts, so the fourth side never takes ground the ball itself reaches and never leaves the corner.
+        val cutG = if (cut == null) Vec2(0.0, 0.0) else Vec2(cut.out.dot(place.cx), cut.out.dot(place.cy))
+        val cuts = cut != null && cutG.length() > Geom3.WELD_TOL
+        // …and the radius the tangent is taken at is the **tool's** and not the ball's: every point of the
+        // arc is carried out of the body by [lift] and the two legs by the step-off, so a line tangent to
+        // the bare ball would cross the very chords it has to stand clear of, and the section would not be
+        // a simple polygon any more. It is taken at the furthest any of them is carried.
+        val bulge = max(grow, lift(r, raw.sweep, arcSteps, grow, near0, 1.0))
+        val cutC = if (!cuts) 0.0 else min((place.at(Vec2(0.0, 0.0)) - cut!!.origin).dot(cut.out), -(r + bulge) * cutG.length())
+
+        fun beyond(q: Vec2): Double = if (!cuts) -1.0 else cutC + q.dot(cutG)
+
+        // …and how far along a leg the cut stands is bisected on the **wall's own trace** rather than on
+        // the chord to the apex: a curved wall's trace bends away from that chord, and the fourth side has
+        // to meet each leg where the leg really is, which is the reading every other point of a leg gets.
+        fun cutParam(
+            w: Wall,
+            from: Vec2,
+        ): Double {
+            if (!cuts || beyond(raw.apex) <= 0.0) return 1.0
+            var lo = 0.0
+            var hi = 1.0
+            repeat(50) {
+                val mid = (lo + hi) / 2.0
+                val lerp = from + (raw.apex - from) * mid
+                val q = onWall(w, place, lerp) ?: lerp
+                if (beyond(q) < 0.0) lo = mid else hi = mid
+            }
+            return (lo + hi) / 2.0
+        }
+        val tF = cutParam(wF, q1)
+        val tN = cutParam(near, q2)
         // **the tangency on the shared face is carried off it like every other point of that leg** (OP-31,
         // slice 5h, third probe). It is where the ball touches the face, so it stands **exactly in** that
         // face — and the pivot puts one of them down at every station, which is a whole rail of tool
@@ -10166,7 +10276,7 @@ object Blend3 {
         val gF1 = wF.grad(place.at(q1)) ?: return null
         out.add(q1 + flat(gF1) * (-sF.toDouble() * grow))
         for (i in 1 until legSteps) {
-            val q = onWall(wF, place, q1 + (raw.apex - q1) * (i.toDouble() / legSteps)) ?: return null
+            val q = onWall(wF, place, q1 + (raw.apex - q1) * (tF * i.toDouble() / legSteps)) ?: return null
             val g = wF.grad(place.at(q)) ?: return null
             out.add(q + flat(g) * (-sF.toDouble() * grow))
         }
@@ -10174,16 +10284,35 @@ object Blend3 {
         // faces meet: a tool vertex standing on one is the one contact a general boolean has no answer for.
         // So the apex is carried a twentieth of the ball's radius out of the body there — into air, so it
         // takes nothing extra — and back to the ordinary micron as it walks away again.
-        out.add(raw.apex + outApex * lift(r, raw.sweep, arcSteps, grow, near0, near0))
+        //
+        // *That is the reading where the cut does not bite at all*, and there are three such places and
+        // they are the three that matter: the two **ends** of the walk, where the station stands square to
+        // the crease and parallel to that band's own cap, so the trace is at infinity and the section is
+        // the band's own end section **exactly** — which is what lets the loft close on the ring that band
+        // already has — and the **hand-over**, where the apex is the corner's own vertex and stands nearer
+        // than any cap. Where the cut does bite, the fourth side's two ends are ordinary points of the two
+        // legs and take their own legs' steps off the walls they stand on.
+        val apexStep = raw.apex + awayAt(raw.apex, 1.0) * lift(r, raw.sweep, arcSteps, grow, near0, near0)
+        if (tF >= 1.0) {
+            out.add(apexStep)
+        } else {
+            val q = onWall(wF, place, q1 + (raw.apex - q1) * tF) ?: return null
+            val g = wF.grad(place.at(q)) ?: return null
+            out.add(q + flat(g) * (-sF.toDouble() * grow))
+        }
+        if (tN >= 1.0) {
+            out.add(apexStep)
+        } else {
+            val q = onWall(near, place, q2 + (raw.apex - q2) * tN) ?: return null
+            out.add(q + awayAt(q, tN) * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tN, near0)))
+        }
         val nearLeg = ArrayList<Vec2>(legSteps)
         for (i in 1 until legSteps) {
-            val tau = i.toDouble() / legSteps
+            val tau = tN * i.toDouble() / legSteps
             val q = onWall(near, place, q2 + (raw.apex - q2) * tau) ?: return null
-            val g = near.grad(place.at(q)) ?: return null
-            val step = (outVoid * (1.0 - tau) + flat(g) * (-sNear.toDouble() * tau)).let { if (it.length() <= Geom3.WELD_TOL) outVoid else it.normalized() }
             // …and at the hand-over the **whole** leg lies along the upright, not only its far end, so the
             // clearance holds all the way along it rather than dipping back to the micron in the middle
-            nearLeg.add(q + step * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0)))
+            nearLeg.add(q + awayAt(q, tau) * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0)))
         }
         out.addAll(nearLeg.reversed())
         // **and the ball's own arc leaves the body where it touches the upright, not *on* it.** The last
@@ -10323,17 +10452,6 @@ object Blend3 {
         // it, so the tool crosses rather than grazes (OP-31, slice 5h).
         val legSteps = max(3, set.maxOf { legStepsFor(wF, if (it.nearA) wA else wB, listOf(asCanalRaw(it))) })
         val grow = 2.0 * max(canalGrow(wF, wA), canalGrow(wF, wB))
-        val stations = ArrayList<CornerStation>(set.size)
-        var s = 0.0
-        for ((k, raw) in set.withIndex()) {
-            if (k > 0) s += (raw.at - set[k - 1].at).length()
-            val near = if (raw.nearA) wA else wB
-            val sNear = if (raw.nearA) sA else sB
-            val poly =
-                cornerSectionAt(wF, near, if (raw.nearA) wB else wA, raw, r, legSteps, arcSteps, sF, sNear, if (raw.nearA) sB else sA, grow)
-                    ?: return null to notStatable
-            stations.add(CornerStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.pF, raw.pU, poly, raw.a1, raw.sweep, raw.apex, raw.nearA, s))
-        }
         // **the band's own cap does not stand on the upright.** At the station the ball first touches the
         // upright its tangency on that band's other face **is** the point of contact — the C¹ argument, read
         // one way round — so a tube capped exactly there puts a vertex of the tool on an edge of the body,
@@ -10360,11 +10478,33 @@ object Blend3 {
         val backB = min(b.length, dB + pullB)
         val placeA = placeAt(a, if (aAtStart) backA else a.length - backA) ?: return null to notStatable
         val placeB = placeAt(b, if (bAtStart) backB else b.length - backB) ?: return null to notStatable
+        // **the fourth side's own plane, one for each band** (OP-31, slice 5o) — that band's cap, carried
+        // the tool's own step-off **past** the cap so that the side lies strictly inside the tube the band
+        // itself removes rather than in the very plane the band's tool is capped in, which would be two
+        // coincident sheets of the drawing's own making. Which of the two a station cuts on is the same
+        // question [nearSideFrom] asks of the walls, answered once and read off `nearA`.
+        val cutA = capCutOf(a, aAtStart, min(a.length, backA + grow), at) ?: return null to notStatable
+        val cutB = capCutOf(b, bAtStart, min(b.length, backB + grow), at) ?: return null to notStatable
+        val stations = ArrayList<CornerStation>(set.size)
+        var s = 0.0
+        for ((k, raw) in set.withIndex()) {
+            if (k > 0) s += (raw.at - set[k - 1].at).length()
+            val near = if (raw.nearA) wA else wB
+            val sNear = if (raw.nearA) sA else sB
+            val poly =
+                cornerSectionAt(
+                    wF, near, if (raw.nearA) wB else wA, raw, r, legSteps, arcSteps, sF, sNear, if (raw.nearA) sB else sA, grow,
+                    if (raw.nearA) cutA else cutB,
+                ) ?: return null to notStatable
+            stations.add(CornerStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.pF, raw.pU, poly, raw.a1, raw.sweep, raw.apex, raw.nearA, s))
+        }
         return CanalTurn(
             i, aAtStart, j, bAtStart, placeA, placeB, shared, at, stations, r, a.sec, a.choice.convex,
             grow, arcSteps, legSteps, wF, wA, wB, wD, CANAL_FIT_TOL_MM, cf,
             abs(Geom3.polygonArea(a.plain)) * backA + abs(Geom3.polygonArea(b.plain)) * backB,
             (grow + pullA) to (grow + pullB),
+            cutA,
+            cutB,
         ) to null
     }
 
@@ -10401,6 +10541,14 @@ object Blend3 {
                 val b = lo[nx]
                 val c = hi[nx]
                 val d = hi[m]
+                // **a column between two coincident pairs encloses nothing, and is left out** (OP-31, slice
+                // 5o). The section's fourth side is the band's own cap, and at the two ends of the walk and
+                // at the hand-over that cap stands further out than the crease point itself, so the side has
+                // no length there and its two vertices are one point said twice. Split about its centre,
+                // such a column is two triangles wound against each other on the same three points — the
+                // very zero-thickness flap [MeshCanon] names — so the column is skipped rather than emitted
+                // and the two rings stitch straight across, which is what a side of no length means.
+                if ((a - b).length() <= Geom3.WELD_TOL && (c - d).length() <= Geom3.WELD_TOL) continue
                 // **a quad of a turning section takes its own centre, not one of its two diagonals**
                 // (OP-31, slice 5h). A pivot's section turns from one band end to the other, so its quads
                 // are **not plane** — and the two diagonals of a quad that is not plane enclose different
@@ -10656,7 +10804,9 @@ object Blend3 {
             val far = if (raw.nearA) turn.wB else turn.wA
             val sNear = if (raw.nearA) cf.sA else cf.sB
             val sFar = if (raw.nearA) cf.sB else cf.sA
-            val poly = cornerSectionAt(turn.wF, near, far, raw, turn.r, legs, arcs, cf.sF, sNear, sFar, 0.0) ?: return 0.0
+            val poly =
+                cornerSectionAt(turn.wF, near, far, raw, turn.r, legs, arcs, cf.sF, sNear, sFar, 0.0, if (raw.nearA) turn.cutA else turn.cutB)
+                    ?: return 0.0
             var twice = 0.0
             var mx = 0.0
             var my = 0.0
@@ -10734,12 +10884,16 @@ object Blend3 {
         t2: Double,
     ): Double {
         val st = turn.stations[k]
-        val legs = (st.poly.size - turn.arcSteps) / 2
+        // …and the section carries **one vertex more** than its two legs since slice 5o: the fourth side's
+        // own two ends. That side stands in neither wall — it is the band's own cap plane — so its own
+        // slack is carried by the wider of the two strips rather than attributed to a wall it is not in.
+        val legs = (st.poly.size - turn.arcSteps - 1) / 2
         var l1 = 0.0
         var l2 = 0.0
         for (j in 0 until legs) l1 += (st.poly[j + 1] - st.poly[j]).length()
-        for (j in legs until 2 * legs) l2 += (st.poly[j + 1] - st.poly[j]).length()
-        return l1 * t1 + l2 * t2
+        for (j in legs + 1 until 2 * legs + 1) l2 += (st.poly[j + 1] - st.poly[j]).length()
+        val fourth = (st.poly[legs + 1] - st.poly[legs]).length()
+        return l1 * t1 + l2 * t2 + fourth * max(t1, t2)
     }
 
     /** The band a canal leaves, as a face of the dressed body — no plane, no revolution, and it says so. */
