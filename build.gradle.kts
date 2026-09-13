@@ -271,6 +271,14 @@ tasks.named<Test>("jvmTest") {
         systemProperty("e2e", it)
         inputs.files(tasks.named("jsBrowserDistribution"))
     }
+    // ...and -Dconstructit.manifold.native=<dir>, which points `MeshBool` at ConstructIt's own from-source
+    // Manifold shim instead of the clojars binding (OP-31's (5q); see native/). Unset — every ordinary
+    // build, CI included — changes nothing at all, which is the point: the native half is a prototype a
+    // developer opts into, and a bare checkout has no toolchain to build it with. The directory is *not* an
+    // input of this task: the .so is not in the repository and re-running the suite against a rebuilt shim
+    // is what the developer asking for it wants anyway.
+    System.getProperty("constructit.manifold.native")?.let { systemProperty("constructit.manifold.native", it) }
+    if (System.getProperty("constructit.manifold.native") != null) outputs.upToDateWhen { false }
     testLogging { events("passed", "failed", "skipped") }
 }
 

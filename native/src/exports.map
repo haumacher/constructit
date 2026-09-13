@@ -1,0 +1,14 @@
+/* Only the two JNI entry points leave this library (OP-31's (5q)).
+ *
+ * Not cosmetic: the clojars binding's own libmanifold.so.3 may already be loaded in the same JVM — the
+ * discovery in MeshBool.jvm.kt runs the old engine's probe when the shim is absent, and a developer may
+ * well load both while comparing them. Our Manifold is linked in *statically*, so without this script
+ * its ~2,000 global C++ symbols would be exported too and the dynamic linker would be free to interpose
+ * one library's engine on the other's calls. Hiding them makes the two engines genuinely separate. */
+{
+  global:
+    Java_constructit_geom_NativeManifold_version;
+    Java_constructit_geom_NativeManifold_boolOp;
+  local:
+    *;
+};

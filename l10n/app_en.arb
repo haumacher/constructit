@@ -9149,6 +9149,31 @@
     },
     "x-translated": "7f5f48ae"
   },
+  "refusal.meshbool.manifoldNativeShimDoubleMeshes": "{version}, through ConstructIt's own native shim (float64 meshes)",
+  "@refusal.meshbool.manifoldNativeShimDoubleMeshes": {
+    "description": "Names the general boolean engine in use on the JVM when ConstructIt's own JNI shim over a from-source Manifold build has been found: the shim reports the engine's version and the shim adds that it speaks double precision. Quoted in a node's reason so a report says which engine produced a mesh.",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.meshbool.nativeShimCaughtCppThrow": "the general boolean engine threw (ConstructIt's native shim caught it at the JNI boundary)",
+  "@refusal.meshbool.nativeShimCaughtCppThrow": {
+    "description": "Why a general boolean could not be computed: the C++ engine raised an exception, which the small JNI shim between Kotlin and Manifold caught rather than letting it cross into the Java virtual machine. Shown as a reason on the node that could not be built."
+  },
+  "refusal.meshbool.nativeShimNamedButNot": "the native Manifold shim was asked for but could not be loaded from {dir} ({message})",
+  "@refusal.meshbool.nativeShimNamedButNot": {
+    "description": "Why the general boolean engine is unavailable: a setting explicitly named a directory that should hold ConstructIt's own compiled Manifold library, and loading it from there failed. The first argument is that directory, the second the operating system's own reason.",
+    "placeholders": {
+      "dir": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
   "refusal.meshbool.generalBooleanNeedsTwoClosed": "a general boolean needs two closed meshes",
   "@refusal.meshbool.generalBooleanNeedsTwoClosed": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a boolean (union, difference or intersection) of two solids computed by the general triangle-mesh engine (Manifold), which runs as a native library on the desktop and as WebAssembly in the browser.",

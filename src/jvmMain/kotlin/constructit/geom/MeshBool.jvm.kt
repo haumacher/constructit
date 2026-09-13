@@ -20,40 +20,112 @@ import java.io.File
  * `available = false`. The general-boolean path then refuses with a reason and heals if the model changes
  * (OP-3) — the same behaviour the browser has while the WASM module is still loading.
  *
- * **Precision, stated.** `MeshGL` carries vertex positions as **float32**, so a general boolean is accurate
- * to about 1e-5 mm on drawing-sized coordinates — five orders of magnitude coarser than the exact path's
- * 1e-7 mm welding lattice, but two orders *finer* than the 0.02 mm chord tolerance the tessellated operands
- * already carry. That is the honest cost of the general path, and it is one more reason the exact path
- * stays exact. It is also measurable: a second boolean on a **curved** body re-snaps its tessellation, so
- * two disjoint roundings of one partial revolve take 1.69e-4 mm³ less in one gesture than one at a time,
- * while the same experiment on a **box**, whose coordinates survive float32 exactly, agrees to 2e-15.
+ * **Two engines, one seam.** By default this is the clojars binding exactly as it always was. When the
+ * system property `constructit.manifold.native` (or the environment variable
+ * `CONSTRUCTIT_MANIFOLD_NATIVE`) names a directory holding `libconstructit_manifold`, that shim is loaded
+ * instead — ConstructIt's own JNI binding over a Manifold 3 built from source, serial and speaking
+ * `MeshGL64`. Nothing else in the engine can tell which one answered; [status] names it, and that is the
+ * whole difference a caller sees. The default build stays a bare-checkout build with no native toolchain
+ * in it (OP-31's (5q), prototype).
  *
- * *And double precision is **not** a one-line change here, which an earlier note in this file claimed.*
- * `MeshGL64` arrived with Manifold **3**; this binding is `org.clojars.cartesiantheatrics:manifold3d`,
- * whose newest release (2.1.0, January 2025) ships a jar with `MeshGL` and no `MeshGL64` in it. Read more
- * closely in session 86, the **native** inside the jar *is* Manifold 3 — `libmanifold.so.3`, carrying the
- * `GetMeshGL64`/`ImportMeshGL64` symbols and `ManifoldParams()`, linked against `libtbb.so.12` — and it is
- * the **Java surface** that is 2.x-shaped: no `MeshGL64` class, no `tolerance` on `MeshGL`, and an
- * `ExecutionParams` without the `deterministic` flag and with no `ManifoldParams()` to reach it by. So the
- * JVM path needs a binding whose Java side matches its native first — a newer clj-manifold3d release if one
- * comes, or a JNI/Panama build of our own — while the **browser**'s npm `manifold-3d` is already at 3.5.1
- * and has `Mesh64` today. Until both have it the two platforms would not agree, so the tests are measured
- * against **float32 on the JVM**, which is what every tolerance in the suite is written to. Queued as (5q)
- * under OP-31, together with the determinism the [observer] seam below measures.
+ * **Precision, stated.** `MeshGL` carries vertex positions as **float32**, so a general boolean on the
+ * *default* engine is accurate to about 1e-5 mm on drawing-sized coordinates — five orders of magnitude
+ * coarser than the exact path's 1e-7 mm welding lattice, but two orders *finer* than the 0.02 mm chord
+ * tolerance the tessellated operands already carry. That is the honest cost of the general path, and it is
+ * one more reason the exact path stays exact. It is also measurable: a second boolean on a **curved** body
+ * re-snaps its tessellation, so two disjoint roundings of one partial revolve take 1.69e-4 mm³ less in one
+ * gesture than one at a time, while the same experiment on a **box**, whose coordinates survive float32
+ * exactly, agrees to 2e-15. Under the native shim both routes agree to the last bit — `BooleanEngineTest`
+ * measures it.
+ *
+ * *And double precision was **not** a one-line change here, which an earlier note in this file claimed.*
+ * `MeshGL64` arrived with Manifold **3**; the clojars binding `org.clojars.cartesiantheatrics:manifold3d`
+ * ships a jar with `MeshGL` and no `MeshGL64` in it, though the **native** inside that jar *is* a Manifold 3
+ * — `libmanifold.so.3`, carrying `GetMeshGL64`/`ImportMeshGL64`, linked against `libtbb.so.12`. It is the
+ * **Java surface** that is 2.x-shaped. So the JVM needed a binding whose Java side matches its native, and
+ * `native/` is that binding: one C++ file, one `boolean` call, `MeshGL64` in and out, statically linked
+ * against an upstream Manifold 3.5.1 — the **same version the browser runs** as npm `manifold-3d`, so the
+ * two platforms compute with the same engine and the same precision. Its determinism is a build fact and
+ * not a flag: Manifold 3 *removed* `ExecutionParams::deterministic`, and `MANIFOLD_PAR=OFF` — a serial
+ * engine with nothing left to race — is what replaces it.
  */
 actual object MeshBool {
+    /**
+     * **Which engine, decided once.** The system property `constructit.manifold.native`, or the environment
+     * variable `CONSTRUCTIT_MANIFOLD_NATIVE`, names a directory holding [NativeManifold]'s library. Unset —
+     * which is every ordinary build, CI included — means the clojars binding, exactly as before. Set means
+     * the shim is **required**: a directory that does not hold a loadable library is a configuration
+     * mistake a developer wants to hear about, so it becomes an ordinary unavailability with the operating
+     * system's own reason in it (OP-3) rather than a silent fall-back to the engine they asked to replace.
+     */
+    private val nativeDir: String? =
+        (System.getProperty("constructit.manifold.native") ?: System.getenv("CONSTRUCTIT_MANIFOLD_NATIVE"))?.takeIf { it.isNotBlank() }
+
+    /** The shim's own version string once it has loaded and answered a real boolean, else null. */
+    private var nativeVersion: String? = null
+
     /** The probe's failure, or null when the engine ran. Computed once, at class-init. */
     private val failure: String? =
-        try {
-            preloadAssimp()
-            // one real boolean, not just a class load: on a jar built for another platform the classes
-            // resolve and only the first native call fails
-            val cube = Manifold.Cube(manifold3d.linalg.DoubleVec3(1.0, 1.0, 1.0), false)
-            val probe = cube.subtract(cube.translate(0.5, 0.5, 0.5))
-            if (probe.isEmpty) Msgs.refusalMeshboolEngineReturnedNothingItsOwn().render() else null
-        } catch (t: Throwable) {
-            Msgs.refusalMeshboolNoUsableNativeManifoldLibrary(simpleName = t::class.simpleName ?: "", message = t.message ?: "").render()
+        if (nativeDir != null) {
+            loadNative(nativeDir)
+        } else {
+            try {
+                preloadAssimp()
+                // one real boolean, not just a class load: on a jar built for another platform the classes
+                // resolve and only the first native call fails
+                val cube = Manifold.Cube(manifold3d.linalg.DoubleVec3(1.0, 1.0, 1.0), false)
+                val probe = cube.subtract(cube.translate(0.5, 0.5, 0.5))
+                if (probe.isEmpty) Msgs.refusalMeshboolEngineReturnedNothingItsOwn().render() else null
+            } catch (t: Throwable) {
+                Msgs.refusalMeshboolNoUsableNativeManifoldLibrary(simpleName = t::class.simpleName ?: "", message = t.message ?: "").render()
+            }
         }
+
+    /**
+     * Load the shim from [dir] and prove it works, or say why not.
+     *
+     * The proof is the same one the clojars path makes — one real boolean, a unit cube minus a copy of
+     * itself shifted along the diagonal — because a library that loads and then cannot answer is worse than
+     * one that never loaded. On success [nativeVersion] is filled in and this returns null.
+     */
+    private fun loadNative(dir: String): String? =
+        try {
+            val os = System.getProperty("os.name").lowercase()
+            val ext =
+                if (os.contains("mac")) {
+                    ".dylib"
+                } else if (os.contains("windows")) {
+                    ".dll"
+                } else {
+                    ".so"
+                }
+            System.load(File(dir, "libconstructit_manifold$ext").absolutePath)
+            val cube = unitCube(0.0)
+            val out = NativeManifold.boolOp(2, cube.first, cube.second, unitCube(0.5).first, cube.second)
+            val stage = (out[3] as IntArray)[0]
+            if (stage != 0) {
+                Msgs.refusalMeshboolNativeShimNamedButNot(dir = dir, message = Msgs.refusalMeshboolEngineReturnedNothingItsOwn().render()).render()
+            } else {
+                nativeVersion = NativeManifold.version()
+                null
+            }
+        } catch (t: Throwable) {
+            Msgs.refusalMeshboolNativeShimNamedButNot(dir = dir, message = "${t::class.simpleName}: ${t.message}").render()
+        }
+
+    /** The smoke test's operand: an axis-aligned unit cube at [at], as the shim's two flat arrays. */
+    private fun unitCube(at: Double): Pair<DoubleArray, IntArray> {
+        val v = DoubleArray(24)
+        for (i in 0 until 8) {
+            v[i * 3] = at + (if (i and 1 != 0) 1.0 else 0.0)
+            v[i * 3 + 1] = at + (if (i and 2 != 0) 1.0 else 0.0)
+            v[i * 3 + 2] = at + (if (i and 4 != 0) 1.0 else 0.0)
+        }
+        // the six faces as twelve triangles, each wound counter-clockwise seen from outside, in the order
+        // z-, z+, y-, y+, x-, x+
+        val t = intArrayOf(0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5)
+        return v to t
+    }
 
     /**
      * Load `libassimp` (and the `libdraco` it needs) **before** Manifold's own library.
@@ -92,10 +164,18 @@ actual object MeshBool {
 
     actual val available: Boolean get() = failure == null
 
-    actual val status: String get() = failure ?: Msgs.refusalMeshboolManifoldJvmBindingFloatMeshes(VERSION = VERSION).render()
+    /** Which engine answered, and how precisely — the one thing a caller can see the choice in. */
+    actual val status: String
+        get() =
+            failure
+                ?: nativeVersion?.let { Msgs.refusalMeshboolManifoldNativeShimDoubleMeshes(version = it).render() }
+                ?: Msgs.refusalMeshboolManifoldJvmBindingFloatMeshes(VERSION = VERSION).render()
 
-    /** The binding's version, quoted in reasons so a report says which engine produced a mesh. */
+    /** The clojars binding's version, quoted in reasons so a report says which engine produced a mesh. */
     const val VERSION = "2.0.3"
+
+    /** True when the from-source shim is what [boolean] runs — what a measuring test asks before it measures. */
+    internal val isNative: Boolean get() = nativeVersion != null
 
     /**
      * **A test seam, and the measurement it exists for** (OP-9; OP-31's (5q)). Every general boolean passes
@@ -105,9 +185,11 @@ actual object MeshBool {
      * vertices), and the engine answers with 2334 vertices on one call and 2336 on the next, in one JVM, with
      * the volume equal to nine decimals — also when the process is pinned to a single CPU. The bundled
      * `libmanifold.so.3` links `libtbb`, and neither Manifold's `deterministic` switch nor `MeshGL64` is on
-     * the Java surface of this binding, so the cure is the binding itself, queued as (5q). Until then a
-     * marginal contact's verdict — build or refuse — is the engine's own coin, which is what
-     * `BlendCornerCanalTest`'s residue-zero sweep tolerates and `BooleanDeterminismTest` pins.
+     * the Java surface of this binding, so the cure was the binding itself, queued as (5q). On the default
+     * engine a marginal contact's verdict — build or refuse — is therefore still the engine's own coin, which
+     * is what `BlendCornerCanalTest`'s residue-zero sweep tolerates and `BooleanDeterminismTest` pins. Through
+     * the from-source shim above the same twelve constructions give **one** mesh, which `BooleanEngineTest`
+     * asserts rather than prints — the same seam, now measuring the cure.
      */
     internal var observer: ((BoolOp, Mesh3, Mesh3, Mesh3?) -> Unit)? = null
 
@@ -129,6 +211,7 @@ actual object MeshBool {
         val why = failure
         if (why != null) return null to meshBoolUnavailable(why)
         if (a.triangles.isEmpty() || b.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanNeedsTwoClosed()
+        if (nativeVersion != null) return native0(kind, a, b)
         return try {
             val ma = Manifold(meshGl(a))
             if (ma.status() != 0) return null to Msgs.refusalMeshboolFirstSolidMeshIsNot(status = ma.status())
@@ -147,6 +230,76 @@ actual object MeshBool {
         } catch (t: Throwable) {
             null to Msgs.refusalMeshboolGeneralBooleanEngineFailed(simpleName = t::class.simpleName ?: "", message = t.message ?: "")
         }
+    }
+
+    /**
+     * The same boolean through the from-source shim (OP-31's (5q)): **double precision in and out**, and no
+     * conversion to float anywhere on the way.
+     *
+     * The shim answers with four arrays and never throws — its `stage` is what becomes a refusal here, and
+     * it is numbered to land on the refusals this file already had words for, so switching engines changed
+     * no sentence. Ownership comes back per triangle, already matched against the two operands' original
+     * ids on the C++ side, which is the same derivation [owners] makes for the clojars path.
+     */
+    private fun native0(
+        kind: BoolOp,
+        a: Mesh3,
+        b: Mesh3,
+    ): Pair<BoolMesh?, Msg?> {
+        // by name, never by ordinal: `BoolOp` is declared UNION, INTERSECT, SUBTRACT, and a shim that read
+        // an ordinal would silently swap two operations the day that list gains a member
+        val op =
+            when (kind) {
+                BoolOp.UNION -> 0
+                BoolOp.INTERSECT -> 1
+                BoolOp.SUBTRACT -> 2
+            }
+        val out = NativeManifold.boolOp(op, flatVerts(a), flatTris(a), flatVerts(b), flatTris(b))
+        val status = out[3] as IntArray
+        when (status[0]) {
+            1 -> return null to Msgs.refusalMeshboolFirstSolidMeshIsNot(status = status[1])
+            2 -> return null to Msgs.refusalMeshboolSecondSolidMeshIsNot(status = status[1])
+            3 -> return null to Msgs.refusalMeshboolGeneralBooleanFailedManifoldStatus(status = status[1])
+            4 -> return null to Msgs.refusalMeshboolBooleanLeavesNothingSolid()
+            5 -> return null to Msgs.refusalMeshboolNativeShimCaughtCppThrow()
+        }
+        val v = out[0] as DoubleArray
+        val t = out[1] as IntArray
+        val vertices = ArrayList<Vec3>(v.size / 3)
+        var i = 0
+        while (i + 2 < v.size) {
+            vertices.add(Vec3(v[i], v[i + 1], v[i + 2]))
+            i += 3
+        }
+        val tris = ArrayList<Tri>(t.size / 3)
+        var j = 0
+        while (j + 2 < t.size) {
+            tris.add(Tri(t[j], t[j + 1], t[j + 2]))
+            j += 3
+        }
+        return MeshCanon.finish(Mesh3(vertices, tris), out[2] as IntArray)
+    }
+
+    /** [mesh]'s positions as one flat array of doubles — the shim's own `MeshGL64.vertProperties`. */
+    private fun flatVerts(mesh: Mesh3): DoubleArray {
+        val out = DoubleArray(mesh.vertices.size * 3)
+        for ((i, p) in mesh.vertices.withIndex()) {
+            out[i * 3] = p.x
+            out[i * 3 + 1] = p.y
+            out[i * 3 + 2] = p.z
+        }
+        return out
+    }
+
+    /** [mesh]'s triangles as one flat index run. */
+    private fun flatTris(mesh: Mesh3): IntArray {
+        val out = IntArray(mesh.triangles.size * 3)
+        for ((i, t) in mesh.triangles.withIndex()) {
+            out[i * 3] = t.a
+            out[i * 3 + 1] = t.b
+            out[i * 3 + 2] = t.c
+        }
+        return out
     }
 
     /**
@@ -239,4 +392,36 @@ actual object MeshBool {
         }
         return Mesh3(vertices, tris)
     }
+}
+
+/**
+ * **ConstructIt's own Manifold binding** (OP-9; OP-31's (5q)) — two native methods and nothing else.
+ *
+ * The library behind it is `native/libconstructit_manifold.so`, built by `native/build.sh` from an upstream
+ * Manifold 3.5.1 (`MANIFOLD_PAR=OFF`, so serial and therefore reproducible) with one C++ file of ours on
+ * top. It is **not** part of the ordinary build and not committed: a bare checkout has no native toolchain
+ * and must still configure and pass, so this is reached only when [MeshBool] has been pointed at a
+ * directory that holds it. See `native/src/constructit_manifold.cpp` for the surface's rationale.
+ *
+ * Deliberately not `internal`: an internal member's JVM name is mangled with the module name, and a `native`
+ * method's JVM name is the one the linker resolves. Package-private is the narrowest visibility that keeps
+ * the name `constructit.geom.NativeManifold.boolOp` the shim exports.
+ */
+private object NativeManifold {
+    /** What engine this is, as the shim was built to report it — version, commit, backend, precision. */
+    external fun version(): String
+
+    /**
+     * The answer is `[DoubleArray positions, IntArray triangles,
+     * IntArray owners, IntArray {stage, code}]`, and `stage` is what [MeshBool] turns into a refusal.
+     * Never throws across the boundary: the shim catches its own C++ and reports stage 5 instead.
+     */
+    external fun boolOp(
+        /** 0 union, 1 intersect, 2 subtract — see [MeshBool] for where the three names are spelled out. */
+        kind: Int,
+        vertsA: DoubleArray,
+        trisA: IntArray,
+        vertsB: DoubleArray,
+        trisB: IntArray,
+    ): Array<Any>
 }
