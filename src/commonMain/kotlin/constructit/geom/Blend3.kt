@@ -4855,7 +4855,21 @@ object Blend3 {
                     return null to Msgs.refusalQualified(name = turn.shared.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
                 }
                 val (next, whyBool) = Geom3.combine(if (turn.convex) BoolOp.SUBTRACT else BoolOp.UNION, result, tool)
-                result = next ?: return null to Msgs.refusalQualified(name = turn.shared.name.label, reason = whyBool ?: Msgs.refusalBlendCannotBeAppliedToBody())
+                // **and where the boolean cannot apply the pivot's tool, the drawing says so in its own
+                // words** (OP-31, slice 5o). The tool is asked about itself first and comes back a closed
+                // shell; what fails at a tight ring is the *meeting*, and until session 86 what came back
+                // was the engine's own mesh diagnostic under the shared face's name — *"the edge between
+                // (8.657, 8.08, 0) mm and (10, 8, 0) mm is used 2 times with 2 opposite uses"* — which is
+                // the one answer session 84 wrote down that this drawing may never give. The sentence
+                // names the two edges the ball pivots between, the ball itself and the cure that works,
+                // and carries the engine's own words inside it as evidence rather than as the reason.
+                result = next ?: return null to
+                    Msgs.refusalBlendPivotToolMeetsTheBody(
+                        sizePhrase = turn.sec.sizePhrase(),
+                        name = pieces[turn.ai].crease.edge.name.label,
+                        name2 = pieces[turn.bi].crease.edge.name.label,
+                        reason = whyBool ?: Msgs.refusalBlendCannotBeAppliedToBody(),
+                    )
             }
             return result to null
         }

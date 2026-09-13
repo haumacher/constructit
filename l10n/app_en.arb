@@ -19566,6 +19566,24 @@
       }
     }
   },
+  "refusal.blend.pivotToolMeetsTheBody": "the ball {sizePhrase} that pivots between {name} and {name2} leaves a tool this body meets along a surface rather than across one, so the general boolean has no watertight answer for it ({reason}) — round both edges at another radius, or leave one of them sharp",
+  "@refusal.blend.pivotToolMeetsTheBody": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Here the rounding of two edges meeting at a corner cannot be cut out of the body because the tool the pivoting ball leaves touches the body tangentially instead of crossing it. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "reason": {
+        "type": "message"
+      }
+    }
+  },
   "refusal.blend.canalBallLargerThanBend": "a ball {sizePhrase} is larger than the bend of {name}: rolled along it, its own contact turns back before the end of the crease, so there is no one band along it — round the crease smaller, or round the two faces larger",
   "@refusal.blend.canalBallLargerThanBend": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",

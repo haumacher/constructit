@@ -350,6 +350,9 @@ class BlendFreeEndCapProbeTest {
         assertTrue(nearAgain.reason == null && nearAgain.plane != null, "the near cap is a face again: ${nearAgain.reason?.render()}")
         assertClose(areaOf(nearAgain.outline), capArea(3.0, PI / 2), 1e-9, "…with the fillet's own section")
         assertEquals(far.name, spaceFace(ed, "farcap").name, "the space survived the undo")
-        assertClose(Geom3.volume(again.mesh), Geom3.volume(one.mesh), 1e-9, "…and the body is the one-rounding body again")
+        // the same body, re-evaluated: the general boolean is deterministic only to the float32 snap
+        // between two evaluations (queued as (5q)), so two readings of one body agree to 1e-7 of it, not to a bit
+        val v1 = Geom3.volume(one.mesh)
+        assertClose(Geom3.volume(again.mesh), v1, 1e-7 * v1, "…and the body is the one-rounding body again")
     }
 }

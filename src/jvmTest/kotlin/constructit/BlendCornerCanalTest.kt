@@ -405,7 +405,12 @@ class BlendCornerCanalTest {
 
     /**
      * **The sweep** — `r ∈ {0.5, 1, 1.5, 2, 2.5}` against a slant of `{10°, 20°, 35°}`, and the ring at
-     * `{8, 12, 20}` on a 270° partial revolve, in both gesture routes.
+     * `{6, 8, 10, 12, 20}` on a 270° partial revolve, in both gesture routes.
+     *
+     * The ring family runs from **6** to 20 since slice 5o, and it is the family the drawing's own answer is
+     * read on: a tight ring is where the pivot's tool and the body meet along a surface rather than across
+     * one, and what the sweep asserts of every cell of it is the rule and not a tally — built inside its own
+     * bracket, or refused in a sentence of this drawing's own.
      *
      * Every cell builds inside the figure the construction states for it or is refused **by name**, and the
      * residue is nothing at all. Whether a ball pivots at a corner is a property of the sizes and the angles
@@ -424,7 +429,7 @@ class BlendCornerCanalTest {
                         .also { if (it.second) built += 2 else refused += 2 }.first
             }
         }
-        for (ring in listOf(8.0, 12.0, 20.0)) {
+        for (ring in listOf(6.0, 8.0, 10.0, 12.0, 20.0)) {
             for (r in listOf(0.5, 1.0, 1.5, 2.0, 2.5)) {
                 cells +=
                     runCell("ring R=$ring r=$r", { c -> turned(c, ring, 270.0) }, { s -> turnPair(s, ring).first }, r, reasons, figure = false)
