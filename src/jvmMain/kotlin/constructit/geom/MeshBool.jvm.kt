@@ -20,12 +20,22 @@ import java.io.File
  * `available = false`. The general-boolean path then refuses with a reason and heals if the model changes
  * (OP-3) — the same behaviour the browser has while the WASM module is still loading.
  *
- * **Precision, stated.** `MeshGL` carries vertex positions as **float32** in this version of Manifold
- * (`MeshGL64` is the newer double-precision form, and moving to it is a one-line change here). So a
- * general boolean is accurate to about 1e-5 mm on drawing-sized coordinates, five orders of magnitude
- * coarser than the exact path's 1e-7 mm welding lattice but two orders *finer* than the 0.02 mm chord
- * tolerance that the tessellated operands already carry. That is the honest cost of the general path, and
- * it is one more reason the exact path stays exact.
+ * **Precision, stated.** `MeshGL` carries vertex positions as **float32**, so a general boolean is accurate
+ * to about 1e-5 mm on drawing-sized coordinates — five orders of magnitude coarser than the exact path's
+ * 1e-7 mm welding lattice, but two orders *finer* than the 0.02 mm chord tolerance the tessellated operands
+ * already carry. That is the honest cost of the general path, and it is one more reason the exact path
+ * stays exact. It is also measurable: a second boolean on a **curved** body re-snaps its tessellation, so
+ * two disjoint roundings of one partial revolve take 1.69e-4 mm³ less in one gesture than one at a time,
+ * while the same experiment on a **box**, whose coordinates survive float32 exactly, agrees to 2e-15.
+ *
+ * *And double precision is **not** a one-line change here, which an earlier note in this file claimed.*
+ * `MeshGL64` arrived with Manifold **3**; this binding is `org.clojars.cartesiantheatrics:manifold3d`,
+ * whose newest release (2.1.0, January 2025) wraps Manifold 2.x and ships a jar with `MeshGL` and no
+ * `MeshGL64` in it. So the JVM path needs a Manifold 3 binding first — a newer clj-manifold3d release if
+ * one comes, or a JNI/Panama build of our own — while the **browser**'s npm `manifold-3d` is already at
+ * 3.5.1 and has `Mesh64` today. Until both have it the two platforms would not agree, so the tests are
+ * measured against **float32 on the JVM**, which is what every tolerance in the suite is written to. Queued
+ * as (5q) under OP-31.
  */
 actual object MeshBool {
     /** The probe's failure, or null when the engine ran. Computed once, at class-init. */

@@ -47,10 +47,12 @@ import kotlin.test.assertTrue
  * and kind cannot be incongruent there. *"Two wedges that are not congruent"* at an inside corner is
  * therefore either two roundings of **unlike size or kind** (slice 5a's ledge, built) or an upright that is
  * **not** one straight run square to the shared face — the slanted one a loft's inside corner has and the
- * **ring** a revolve's cap corner has, which session 81 parked and which this slice refuses by name, in one
+ * **ring** a revolve's cap corner has, which session 81 parked and which this slice refused by name, in one
  * sentence naming the canal surface such a corner would be. Slice 5f built the canal band a ball leaves
- * **along a crease**; a canal *between two band ends* — a corner rather than a run — is the piece still
- * owed, and the sentence says exactly that.
+ * **along a crease**; a canal *between two band ends* — a corner rather than a run — was the piece still
+ * owed. **Slice 5h built it** (session 85), so the two fixtures below assert bodies where they used to
+ * assert that sentence, and say so in place; the pivot's own figures, sweep and routes are
+ * `BlendCornerCanalTest`'s.
  *
  * *What is exact and what is not.* The corner is exact — a horn torus, cut by `Revolve3`'s own table. A
  * curved band's **free end** notches the face it stands in, exactly, through the rigid map the meridian
@@ -357,47 +359,49 @@ class BlendCurvedCornerTest {
     // ---- (c) and (e): the two uprights the pivot cannot follow ----
 
     /**
-     * **A loft's inside corner refuses by name, and the reason is the upright** (session 81's parked case (a),
-     * reached through session 79's cut (2)).
+     * **A loft's inside corner builds, and the corner is the ball's own canal** (session 81's parked case
+     * (a), reached through session 79's cut (2) and delivered by OP-31 slice 5h).
      *
-     * The ball at an inside corner keeps its centre on the shared face's own offset plane and at `r` from the
-     * upright. Where the upright stands square to that face those two are a plane and a cylinder about its
-     * normal, meeting in a **circle** — the pivot, exact. A loft's side faces slant, so the upright between
-     * two of them slants too, the two conditions meet in an **ellipse**, and the corner is a swept sphere
-     * along it. Slice 5f carries a ball along a **crease** and states the band it leaves; carrying one
-     * between two **band ends** is a corner and not a run, and it is the piece still owed. So the pair is
-     * refused whole, in one sentence, naming the two faces whose crossing the upright is.
+     * *This test asserted a refusal until slice 5h, and says so in place.* The ball at an inside corner keeps
+     * its centre on the shared face's own offset plane and at `r` from the upright. Where the upright stands
+     * square to that face those two are a plane and a cylinder about its normal, meeting in a **circle** —
+     * the pivot, exact. A loft's side faces slant, so the upright between two of them slants too and the two
+     * conditions meet in an **ellipse**: the corner is the ball's canal along it, between the two band ends.
+     * Slice 5h builds it, and what this fixture pins is that the pair that used to be refused whole is a body
+     * whose corner is a named face with a reason of its own. The figures, the sweep over slant and size and
+     * both gesture routes are `BlendCornerCanalTest`'s.
      */
     @Test
-    fun aLoftsInsideCornerRefusesByNamingItsSlantedUpright() {
-        val why = refused(::lofted, listOf(LOFT_CAP_A, LOFT_CAP_B), 3.0, "a loft's inside corner")
-        assertTrue(why.contains("neither one straight run nor square to"), why)
-        assertTrue(why.contains("section 2's own face"), "…and it names the face the two roundings share: $why")
-        assertTrue(why.contains("canal surface"), "…and says what the corner would be: $why")
-        // and it heals the way every refusal here does: leave one of the two sharp and the other builds
+    fun aLoftsInsideCornerCarriesTheBallsPivotAboutItsSlantedUpright() {
+        val (solid, _) = built(::lofted, listOf(LOFT_CAP_A, LOFT_CAP_B), 3.0, what = "a loft's inside corner")
+        val corner = facesOf(solid).filter { it.name is FaceName.BlendCorner }
+        assertEquals(1, corner.size, "the pivot is a face of the body: ${facesOf(solid).map { it.name.label.render() }}")
+        val why = assertNotNull(corner[0].reason, "…and it says what it is").render()
+        assertTrue(why.contains("canal"), "…the canal the pivoting ball leaves: $why")
+        assertTrue(why.contains("neither a plane nor a surface of revolution"), why)
+        // and each of the two alone still builds, exactly as it did when the pair was refused
         built(::lofted, listOf(LOFT_CAP_A), 3.0, what = "one of the two alone")
         built(::lofted, listOf(LOFT_CAP_B), 3.0, what = "the other alone")
     }
 
     /**
-     * **A revolve's cap corner refuses by naming its ring upright** (session 81's parked case (b)).
+     * **A revolve's cap corner builds, and the ring is an upright like any other** (session 81's parked case
+     * (b), delivered by OP-31 slice 5h).
      *
-     * The upright at an inside corner of a revolve's cap is the **ring** the profile's own corner traces, so
-     * the ball's centre stands at `r` from a circle rather than from a line: a plane against a torus, a
-     * spiric quartic, and not even the ellipse a slanted upright gives. Before this slice the pair was refused with slice 5a's
-     * *"they are not congruent"* — which names the symptom, since two wedges at a ring upright are **bound**
-     * to differ, and offers a cure (give both edges the same rounding) that cannot work. The upright is
-     * asked about first now.
+     * *This test asserted a refusal until slice 5h, and says so in place.* The upright at an inside corner of
+     * a revolve's cap is the **ring** the profile's own corner traces, so the ball's centre stands at `r`
+     * from a circle rather than from a line: a plane against a torus, the spiric quartic. The same solve
+     * follows it — nothing in the construction knows whether the upright's carrier is a line or a ring — and
+     * the corner is the same canal between the same two band ends.
      *
-     * The **convex** corner of the same cap is untouched and builds, which is what says the refusal is about
-     * the inside corner and not about the fixture.
+     * The **convex** corner of the same cap is untouched and builds as it always did.
      */
     @Test
-    fun aRevolvesCapCornerRefusesByNamingItsRingUpright() {
-        val why = refused(::turned, listOf(TURN_CAP_A, TURN_CAP_B), 2.0, "a revolve's cap inside corner")
-        assertTrue(why.contains("neither one straight run nor square to"), why)
-        assertTrue(why.contains("the cap at the start of the sweep"), "…and names the shared face: $why")
-        assertTrue(!why.contains("not congruent"), "…and no longer names the symptom instead: $why")
+    fun aRevolvesCapCornerCarriesTheSamePivotAboutItsRing() {
+        val (solid, _) = built(::turned, listOf(TURN_CAP_A, TURN_CAP_B), 2.0, what = "a revolve's cap inside corner")
+        val corner = facesOf(solid).filter { it.name is FaceName.BlendCorner }
+        assertEquals(1, corner.size, "the pivot about the ring is a face of the body")
+        assertTrue(assertNotNull(corner[0].reason, "it says what it is").render().contains("canal"), "the ball's own canal")
         built(::turned, listOf(TURN_CAP_B, TURN_CAP_C), 2.0, what = "the same cap's convex corner")
     }
 

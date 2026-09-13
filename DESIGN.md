@@ -6903,7 +6903,11 @@ knows which is running.
   back. Because vertices come out shared, `assertManifold` applies **unchanged** — the same
   every-edge-used-once-each-way check as the exact path, no adapted weaker check.
 - **The precision cost, stated.** This Manifold generation carries `MeshGL` positions as **float32** (the
-  double-precision `MeshGL64` is newer; moving to it is a one-line change in each actual). A general boolean
+  double-precision form is `MeshGL64` on the JVM and `Mesh64` in the browser — *corrected in session 86: it is
+  **not** a one-line change in each actual. It arrived with Manifold **3**, and the JVM binding pinned here,
+  `org.clojars.cartesiantheatrics:manifold3d`, is at 2.1.0 of January 2025 wrapping Manifold 2.x, whose jar
+  carries `MeshGL` and no `MeshGL64`. The browser's npm `manifold-3d` is already 3.5.1 and has it; the JVM is
+  owed a Manifold 3 binding first. Queued as (5q)*). A general boolean
   is therefore accurate to ~1e-5 mm on drawing-sized coordinates: five orders coarser than the exact path's
   1e-7 mm welding lattice, two orders *finer* than the 0.02 mm chord tolerance the tessellated operands
   already carry. One more reason the exact path stays exact.
@@ -14666,6 +14670,108 @@ the composition table is driven generically as well as by its own test.
   diagnosis, because a face named but unable to answer its cut is worse than a face refused. The reading
   that replaced the cases is `BlendCanalSweepTest`: 144 cells, 136 built and 8 refused by name, residue
   zero, with *whether a ball rolls at all* asserted to be a property of the two sizes and of nothing else.
+- **Turn 85 — the upright sets the spine and the near face closes the section** (OP-31 slice 5h; session
+  85). Session 81's two parked uprights build: a loft's inside corner and a revolve's cap corner carry the
+  rolling ball's pivot, and the surface between the two band ends is the ball's own canal — a named face of
+  the body with a reason, two curves in the edge list, a cut it answers and a figure it is held to. The
+  slice cost exactly one distinction, and it was worth writing down because an intermediate reading of it
+  was wrong in a way that *looked* like a proof. A canal band's spine **and** its section are both read off
+  the crease's own two faces; a pivot's are read off **two different pairs**. The spine is set by the shared
+  face and the **upright** — plane against cylinder for a leaning one, plane against torus for a ring, and
+  the same bisection on the shared face's own polar ray about the corner follows both without knowing which
+  it is on. The section is closed by the shared face and the **near** face, whose real half-ray leaves the
+  ball's contact toward the crease and meets the shared face's trace at the crease point: the very apex
+  every canal section has closed on since slice 5f. The reading that said the corner could not be a two-wall
+  canal at all closed the region with the **far** face's ray instead and found it unbounded, which it is;
+  the near one's is the material and the region is the ordinary curvilinear triangle. The good half of that
+  reading survives and is the slice's own proof: the upright lies *in* each band's other face and a sphere
+  tangent to a plane touches it at one point only, so where the ball first reaches the upright its contact
+  with the upright **is** its tangency with that face — same normal plane, same great circle — and the
+  pivot's spine meets each band's spine C¹ with the bands' own end sections as its end rings. Three numbers
+  make the tool work and each is the body's own rather than a fudge: a band's cap carried the tool's own
+  step-off **off** the upright (a tube capped where its tangency stands on an edge of the body puts a tool
+  vertex on that edge, and that one change turned the slant sweep from ten of fifteen into fifteen of
+  fifteen), the section's contact carried into the **void** by its own chords' sagitta, and the apex carried
+  clear where three faces meet. A pivot is **stale** where it is fresh, for the reason session 81's mixed
+  pivot is: it ends each band short of its crease, and a band already cut at full length cannot be given
+  that tail back. Nothing recorded moved — no slot name, no renumbering, no format version — and the two
+  fixtures that asserted a refusal now assert bodies and say so in place. `BlendCornerCanalTest` reads a
+  96-cell cap class (92 built, 4 refused by name) and a 60-cell sweep over size, slant and ring radius in
+  both gesture routes (44 built inside their own bracket, 16 refused by name), residue zero. The cuts are
+  named: the tight ring `R = 8`, whose tool does not close, queued as (5o); the ring family held to its
+  build rather than to a figure, by slice 5e's own rule about a wedge with a circular leg; and a lofted
+  band's free end keeping its level section open, which predates the slice, is pinned by a test of its own
+  and queued as (5p). The suite is 2970 tests, from 2964.
+- **Turn 86 — a round leg has an offset, and a quad has a centre** (OP-31 slice 5h, reworked; session 86).
+  An adversarial probe of the pivot found two defects, and neither cause was where it looked. The pivot at a
+  partial revolve's **end** cap folded while its start cap built — and the pivot was not the reason: its two
+  tools are congruent to 2.3e-10 mm³. What folded was the ordinary **band** beside it, because `sectionOf`'s
+  rule that *a tool never shares a face with the body* held only where both legs were straight — *"a round
+  leg has no straight offset in this vocabulary"* — and so a band along a crease against a cylinder laid a
+  flat rectangle of tool **exactly in** the body's plane face, which the engine cancels or does not as it
+  pleases. A round leg **has** an offset: a circle's is a concentric circle, exact and needing no fitting, so
+  there is now one construction for both kinds and each leg steps out of the wedge by its own normal there.
+  The whole suite is unchanged by it, which is what says the step goes into air. The second defect — the two
+  gesture routes 7.6e-5 mm³ apart — was a **quad's diagonal**: a pivot's section turns, so its quads are not
+  plane, and reversing the walk along the spine (which is what handing the pair over in the other order does)
+  flips every diagonal. A quad now takes its own **centre**, four triangles to the centroid, whose volume is
+  the mean of the two splits and which has no tie to break; the shorter diagonal is order-free too but tosses
+  its own coin where two mirrored caps sit. A third reading was corrected on the way: the near/far face was
+  chosen by a comparison that is a **tie** at the station the ball first reaches the upright, and a tie broken
+  by 1.8e-32 of floating point picked the right wall at one cap and the wrong one at the other; a tie is now
+  reported and read a nudge further into the pivot. Two things that look right are written down as wrong:
+  cutting the pivots **before** the bands (the code's own comment claims it, and it breaks 269° and 271°), and
+  stating the pivot's direction from the **body** rather than from the pieces (order-free, but a reflection
+  turns the other way about its own normal, so it makes buildability a function of which cap the pivot sits
+  on). The sweep is extended to both caps × {90°, 180°, 270°} × five sizes: 120 cells, 102 built inside their
+  own bracket, 18 refused by name, residue zero, and every size but the smallest builds at **both** caps at
+  every angle. The remainder is `r = 0.5`, where the walls' own tessellation skin is a sixth of the ball and
+  the engine's answer is not even reproducible — the identical cell, three times in one JVM, came back built,
+  refused, refused, because Manifold parallelises its reductions. And measuring the probe's one open assertion
+  produced a cut of its own: the general boolean's float32 mesh, queued as (5q). The suite is 2974 tests.
+- **Turn 87 — a tool that is exact in one pose and noise in another** (OP-31 slice 5h, reworked twice;
+  session 86). A second probe sketched the same revolve on five planes and found the tool path to be a
+  function of the **pose**: turn the sketch plane 30° about `y` and a rounding that builds on `XY` folds.
+  The column that decided the diagnosis was the one with **no pivot in it at all** — a plain fillet along a
+  straight cap edge — which said the defect was older than the slice and lived in the shared path. Three
+  numbers were exactly zero in an axis-aligned pose and rounding noise in any other, and every one of them
+  is now read the same way in both. A section whose leg is **round** was swept by the plain sweep, which
+  carries no end-step, so its cap lay in a face of the body — there is no unstepped section any more, so the
+  flag that gated it is simply true and every straight run's tube is built by the one builder that carries
+  the steps. A round leg stepped off by a **micron** where the body's own skin is forty of them — slice 5f
+  had written that rule down for the canal and the ordinary band did not read it — and with the two legs'
+  steps now unequal the corner where they meet had to be **solved** rather than linearised, because a
+  linearised corner is `d²/2R` off the offset circle and the outline stops closing. And two Newton solves
+  walked to a thousandth of the tolerance their answers are accepted at, so a point that had *already
+  arrived* kept walking and gave up where the wall it walks on is parallel to the station's own plane: that
+  is the ledge refusal the probe saw in one pose and a body in the others, and one constant now governs the
+  walk and the acceptance in all three solvers. The pivot's own ring is capped off the body's face too, the
+  rule that said it need not be being exactly backwards and quoted where it stood. What it cost is stated:
+  the sweep gains a **generic** angle (200°, because 90°, 180° and 270° all put a cap's plane on exact
+  coordinates) and reads 140 cells, 112 built inside their bracket and 28 refused by name, eight cells
+  traded at the tight rings `R = 8` and `R = 12`, whose refusals are (5o)'s own family — every step-off in
+  this turn is larger, and a tight ring has least room for them. `BlendCanalPoseTest` is the new permanent
+  class: five poses × the three kinds of tool the drawing builds (the ordinary band, slice 5f's canal band,
+  slice 5h's pivot), each holding to *it builds, it is manifold, and it takes what it takes on `XY`*. And
+  (5q) is corrected: double precision is **not** a one-line change — `MeshGL64` arrived with Manifold 3 and
+  this build's JVM binding wraps Manifold 2.x — so the suite's tolerances are written to float32 on the JVM
+  and say so. The suite is 2984 tests.
+- **Turn 88 — a tangency is *on* the face, which is the one place a tool may not be** (OP-31 slice 5h, third
+  probe; session 86). The ring upright's pivot was pose-invariant after Turn 87 and the **loft's** slanted
+  one was not: three of ten cells (five poses × mirrored or not) came out folded, always in the same words —
+  the pivot's own boolean, named by the face the two roundings share, with a flap a *thousandth of a
+  millimetre* long. The loft's walls are all planes, so none of Turn 87's curved-wall work could touch it,
+  and that is what identified it: the pivot's section begins at the ball's **tangency on the shared face**,
+  which stands exactly in that face because that is what a tangency is — and the pivot lays one down at every
+  station, so the tool carried a whole rail of vertices in a plane of the body. Two coincident sheets again,
+  cancelling exactly while the face is `z = 20` and not once the drawing is sketched on a plane turned 30°
+  about `x`. The leg that starts at that tangency was already carried off the face point by point; the
+  tangency itself was not, and now is — the same face, the same gradient, the same direction out of the
+  material — which is `lift`'s own reading at the *other* end of the section said once more at the end that
+  had been left exact. It is worth more than the fold it fixes: the canal-corner sweep goes from 112 built of
+  140 to 114–118, because six of the tight-ring cells Turn 87 had traded away come back. `BlendCanalPoseTest`
+  gains the loft pivot plain and mirrored, so the permanent sweep now covers **both** uprights in every pose.
+  The suite is 2986 tests.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -17248,14 +17354,17 @@ centre stands on the material side; only the **names** it leaves are fitted*.
   *travels* and a level plane crosses it across the run. **No fourth carrier, no new slot name and no format
   version**: a canal is an ordinary entry, its face the entry's own band and its curves the entry's own two
   rails. The matrix's corner-curve class moves 30 cells. See the as-built note below.
-- **(5h) The ball pivoting about a slanted or a ring upright** — slice 5f's own cut, and the last thing
-  session 81's two parked uprights wait on. A canal along a **crease** is a run with a spine and two walls;
-  the pivot at an upright that is not one straight run square to the shared face is a canal **between two
-  band ends** — a corner, which must stitch to two existing rings, take its place in `cornersOf`'s ordering,
-  put a `BlendCorner` face on the body and answer `cornerCut`. The spine is stated for both: a plane against
-  a cylinder for the slanted upright (an ellipse), a plane against a torus for the ring (a spiric quartic,
-  which the same Newton on two signed distances follows without a closed form). Slice 5e refuses both in one
-  sentence that names exactly this.
+- ~~**(5h) The ball pivoting about a slanted or a ring upright**~~ — **delivered in session 85, and what it
+  cost was one distinction.** A canal band's spine *and* its section are read off the crease's own two faces;
+  a pivot's are read off **two different pairs**. The spine is set by the shared face and the **upright** —
+  a plane against a cylinder about a leaning axis is an ellipse, a plane against the torus about a ring is
+  the spiric — and the section is closed by the shared face and the **near** one of the pair's two other
+  faces, whose real half-ray leaves the ball's contact toward the crease and meets the shared face's trace at
+  the crease point, which is the apex every canal section has always closed on. The spine meets each band's
+  own spine **C¹**, exactly, because the upright lies *in* that band's other face and a sphere tangent to a
+  plane touches it once — so the two end rings are the bands' own end sections rather than a fit. No slot
+  name is added, none renumbers and no format version rises. An intermediate reading that the corner could
+  not be a two-wall canal at all is quoted and corrected in the as-built note below.
 - ~~**(5g) A corner curve's slot count, recorded**~~ — **delivered in session 83, and it was two defects
   rather than one**: a corner *made or unmade* by an edit moved the shared curves after it, and a rounding
   merely **added** to the dressing moved *all* of them, because the new entry's block goes in ahead of the
@@ -18296,6 +18405,298 @@ geometry, the file a fixed point and two undos giving the first body back; a cha
 by name; the bored canal body manifold, taking its own cylinder and nothing else, with its faces refused by
 name; and two section planes that are not level closing through the band. The suite is **2963** tests, from
 2957.
+
+#### Implementation status (as built — the canal corner, slice 5h, session 85)
+
+**Session 81's two parked uprights are bodies.** A loft's inside corner and a revolve's cap corner — the
+**slanted** upright and the **ring** — carry the rolling ball's pivot now, and the surface between the two
+band ends is the ball's own **canal**: a `BlendCorner` face of the dressed body with a reason of its own,
+its two curves in the edge list beside the bands' rails, its cut answered, and its figure stated.
+
+**The rule, and it is one sentence about two *different* pairs of walls.** The ball at an inside corner
+keeps its centre `r` from the face the two roundings share and `r` from the **upright** where their two
+other faces cross. Square and straight, those two are a plane and a cylinder about that plane's own normal
+and meet in a **circle** — session 80's exact pivot, untouched by this slice. Leaning, they meet in an
+**ellipse**; at a **ring** — a revolve's circular edge at an inside corner of its cap — in the **spiric** a
+plane cuts a torus in. Nothing is tabulated and nothing knows which of the three it is on: the tangency on
+the shared face runs on that face's own **polar ray about the corner**, so the one unknown is how far out it
+stands, and that is bracketed and bisected. At zero the centre stands over the corner itself, which is *on*
+the upright, so the distance is at most `r`; far out it is more; and it grows on the way. That is why
+*whether a ball pivots here* is a property of the sizes and the angles and of nothing else.
+
+**And the two roles slice 5f had in one pair of walls are two pairs here, which is the whole of what makes
+this a corner rather than a run.** A canal band's spine *and* its section are both read off the crease's own
+two faces. A pivot's **spine** is set by the shared face and the upright; its **section** is closed by the
+shared face and the **near** one of the pair's two other faces — the one whose own crease still runs on past
+the band's end. Both of those faces contain the upright, so both cut the station plane in a line through the
+ball's contact; the near one's real half leaves that contact toward the crease and meets the shared face's
+trace at the **crease point**, which is the apex `apexAt` has closed a canal section on since slice 5f. The
+far one's ray bounds nothing here: the region taken with it is the region taken with the near one plus the
+void wedge between them. Where the near face hands over to the far one — the one station whose plane
+contains the whole upright — the apex is the corner's own vertex and the two traces coincide along the
+upright, so the section is continuous through the change; before it the apex walks the crease sliver band A
+leaves behind, after it band B's.
+
+**The two ends are the bands' own end sections, exactly, and that is a proof rather than a fit.** The
+upright lies **in** the band's other face, and a sphere tangent to a plane touches it at one point only — so
+at the station where the rolling ball first reaches the upright, its contact with the upright **is** its
+tangency with that face. Same contact, same gradient, same tangent, same normal plane, same great circle:
+the pivot's spine meets each band's spine **C¹** and the ring where they hand over is that band's own end
+section. It follows that the distance from a band's centre to the upright is `√(r² + d²)` with `d` the
+distance, within that face, from the tangency to the upright — never less than `r` — so the station is found
+as a **minimum** and not as a root, which is what `touchStation` bisects for.
+
+**~~The argument this note replaces, quoted where it stood.~~** An earlier reading of this slice said the
+corner could not be a two-wall canal at all: *"Lean the upright — or bend it into a ring — and those two
+faces cut the station plane in two distinct rays from the contact point. The material's trace is then the
+complement of a wedge, the ball touches that wedge only at its apex, and the region outside the ball and
+inside the material is unbounded."* It is wrong, and wrong in one identifiable place: it took the section's
+second wall to be the **upright** and closed the region with the *far* face's ray. The second wall is the
+**near face**, whose real half-ray runs from the contact to the crease point, and the region it closes is
+the ordinary curvilinear triangle every canal section is. The upright is the **spine's** second contact and
+not the section's second wall, and separating those two roles is the whole slice.
+
+**What had to be true of the tool, and each of the three is the body's own number.** (1) *A band's cap does
+not stand on the upright.* At the hand-over station the band's tangency **is** the contact, by the C¹
+argument read one way round, so a tube capped exactly there puts a vertex of the tool on an edge of the
+body — the one contact a general boolean has no answer for. The cap is carried the tool's own step-off short
+of it and the pivot's own ring reaches that much further back, so the two overlap as two tools of one sign
+always may. This single change turned the slant sweep from ten of fifteen into fifteen of fifteen. (2) *The
+section leaves the body where it touches the upright, not on it.* The last chord before the contact stands a
+**sagitta** inside the ball's true arc — a hundredth of a millimetre where the step-off is a micron — so the
+contact and the chords that reach it are carried into the **void** the upright bounds by a step that covers
+that sagitta: the void is air, so the body loses nothing for it and the crossing becomes transversal
+(`lift`, which decays along the arc so only the chords near the contact move). (3) *Three faces meet where
+the near wall hands over*, and the section's apex comes up to that vertex: there the far wall joins the
+step-off by a continuous weight, and the whole leg is carried a twentieth of the ball's radius clear.
+
+**Nothing structural moved, and the slice spends no format.** A pivot is an **ordinary corner of an ordinary
+dressing**: `cornersOf` returns it beside every `Joint`, `Turn` and `Ledge`, it ends both bands at the
+stations it claims (`ringAt`, which `spanOf` reads as it reads every other), its face is the `BlendCorner`
+slot the catalogue already had and its two curves the `BlendCornerRail` slots a walk already puts down. **No
+name is added to `CornerSlot`'s vocabulary, no slot renumbers and no format version rises.** What it does
+*not* do is emit its surface into the group's tube shell, and that is stated rather than forgotten: its
+section changes from one band end to the other, so its rings carry neither band's point count. It is its own
+tool and its own boolean — slice 5f's own arrangement — and what it contributes to the group's mesh is the
+two **caps** that close the tubes it ends, each wound the way that band's own free-end cap would be.
+
+**And a pivot is *stale* for the same reason a corner about a band is.** It ends each band at the station the
+ball first touches the upright, which stands **short** of the crease's own end wherever the upright leans. A
+band already cut at full length has taken that tail off the body and no further subtraction can give it
+back, so the level at which such a corner is fresh rebuilds its chain from the undressed root — session 81's
+own rule, one case wider. With it the two gesture routes reach the same body; without it they differed by a
+tenth of a cubic millimetre on the loft.
+
+**The figure, and what it is measured against.** Pappus' own volume element `∫ A(s)·(1 − κ(s)·x̄(s)) ds`
+along the spine, with `A` the section's **exact** area at each station, **less what the two bands hand over**
+— each one's rigid section times the crease it gives up, which is exact because a band along a straight
+crease is a prism — plus each band's own prism. Bracketed by the drawing's own terms on both sides: the
+walls' tessellation skin and the section's own chord slack below, the tool's step-off and `[endSteps]`' own
+micron above. On the loft at 35° the whole dressing takes **25.116 mm³** inside `[25.116, 25.156]`, and every
+one of the fifteen slant cells lands inside its own.
+
+**The reader, and the two ends of it are exact.** The pivot's cut is **sampled** on its own `(station, arc)`
+chart for the reason slice 5f's band is: the characteristic circles lie in planes that turn along the pivot,
+so a plane crosses the patch *across* the turn. What is not sampled is where it hands over: a band's cut is
+stated on its surface rather than sampled, so the chart's two boundary stations solve the ball's own great
+circle against the plane in closed form (`circleOnPlane`) and the loop closes. The two **rails** are in the
+same honesty class the band's are: the tangency curve on the shared face is a fitted chain through points
+exact on both the ball and that face, and the range of the **upright** the ball rolls along is a piece of
+that upright's own carrier and therefore exact, not fitted at all.
+
+**The tallies.** `BlendCornerCanalTest.everyEdgeAndEveryAdjacentPairOfTheTwoCapsBuildsOrRefusesByName` reads
+the two caps' own edges and every pair of them that shares a vertex, in both kinds at two sizes: **96 cells,
+92 built and manifold, 4 refused by name, residue zero.** The sweep —
+`r ∈ {0.5, 1, 1.5, 2, 2.5}` against a slant of `{10°, 20°, 35°}` and against a ring of `{8, 12, 20}` on a
+270° partial revolve, each in **both** gesture routes — reads **60 cells, 44 built inside their own bracket,
+16 refused by name, residue zero**. Every built cell is manifold in both routes and the two agree to the
+general boolean's own ULP. All sixteen refusals are the small ring's: `R = 8`, where the pivot's own tool
+does not close into a shell and is refused as such before the body ever sees it, which is the rule session
+84 wrote down — *the tool is asked about itself first, so what comes back is the drawing's own sentence and
+never a mesh diagnostic*.
+
+**Cuts, each named and none silent.** (1) **The small ring refuses.** At `R = 8` the pivot's tool comes out
+unclosed and says so; at 12 and 20 it builds at every size. The cure is the section's own reading at a tight
+ring and it is queued as (5o). (2) **The ring family is held to its build and not to a figure.** A band whose
+other face is a **cylinder** has a wedge with a circular leg, and this algebra states no prism figure for
+one — the very gap slice 5e recorded when it left the sector's own rim uprights out of the matrix. The ring
+fixtures are held to everything else: built, manifold, both routes, the corner named, the section closing.
+(3) **A level section through a *lofted* band does not close**, and it did not before this slice either: a
+band along a loft's cap edge leaves its free end in the neighbouring side face and that face's outline does
+not carry the notch. `aLoftedBandsOwnFreeEndIsWhatKeepsItsSectionOpen` pins it — one band refuses in exactly
+the words two-and-a-pivot do — so the gap stays the loft's free end's and cannot be mistaken for the pivot's.
+Queued as (5p). (4) **The matrix class lives beside the pivot** rather than inside `BlendMatrixTest`, because
+the matrix reads the L-block's own algebra and half this class would be out of it by the rule in cut (2); it
+keeps the matrix's rule — built and manifold, or refused by name, residue zero. (5) **No file round-trip is
+asserted for these two fixtures**: a loft and a revolve reach the script format through tool steps this test
+class does not write. What the slice actually owed the format is asserted structurally instead — the pivot
+contributes exactly one `BlendCorner` face and two `BlendCornerRail` curves and nothing else, so no stored
+address re-packs and no version moves.
+
+**Two sentences are added and none retired.** `refusal.blend.cornerCanalIsNotPlane` is what the corner face
+says of itself — the canal the pivoting ball leaves between the two bands, neither a plane nor a surface of
+revolution — and `refusal.blend.uprightNeedsOneSize` is what two roundings of unlike size or kind are told at
+such an upright, with the cure that works: one ball pivots there, so give both edges the same rounding.
+German and French are written by hand to `l10n/review/`'s own register. `refusal.blend.sharpUprightIsNotStraightSquare`
+stays in the bundle and stays true — it is what `ledgeOf` says where the pair cannot be one ball's pivot —
+and `refusal.blend.isNotOneStraightRun`, `…isNotOneStraightRun2` and `…isNotSquareSoCannot` were audited as
+the brief asked: every one of them is **live and true**, speaking about the pivot about a *rounded* upright
+(session 81's band) and not about this corner.
+
+**Reworked in session 86 — the two defects a probe found, and what each turned out to be.** The delivery
+above built the **start** cap of a partial revolve and folded at its **end** cap, and its two gesture routes
+came out 7.6e-5 mm³ apart. Neither cause was where it looked.
+
+*(1) The fold was not the pivot's at all: it was a band's tool **sharing a face with the body**.* The pivot's
+own tools at the two caps are congruent to 2.3e-10 mm³ — the geometry was never the question. What failed was
+the ordinary **band** along the cap's crease against the cylinder, and `sectionOf`'s own rule — *"a tool never
+shares a face with the body"* — held only where **both** legs were straight: *"a round leg (a fillet against
+a cylinder) has no straight offset in this vocabulary, so it is swept as it always was"*. It has one. **A
+circle's offset is a concentric circle**, exactly, and it is the one offset that needs no fitting at all. So
+the unstepped branch is gone and there is one construction for both kinds: each leg's own step out of the
+wedge — constant along a line, radial on a circle — carries every point of it `GROW_MM` clear, the section's
+corner is where the two stepped legs meet, and the profile the sweep is handed is that same boundary as an
+exact loop. Until then the tool laid a flat rectangle **exactly in** the cap's plane, and *"whether a float32
+engine cancels two coincident sheets is a coin"*: it came up heads at a start cap whose plane is the sketch
+plane itself and tails at the end cap, which is the same plane reached through a rotation. The whole suite is
+unchanged by the step-off — every volume, every golden — which is what says it steps into air.
+
+*(2) The routes disagreed over a **quad's diagonal**, and no part of the geometry at all.* Two gestures one at
+a time hand the pair over in the other order, which reverses the walk along the spine. A pivot's section turns
+from one band end to the other, so its quads are **not plane**, and the two diagonals of a quad that is not
+plane enclose different volumes — reversing the walk flipped every one of them. The sections themselves were
+mirror-identical to the last digit (station for station, area for area). The cure is that a quad takes its own
+**centre**: four triangles to the centroid, whose volume is exactly the mean of the two splits, a pure function
+of the four points, free of any tie. The shorter diagonal was tried first and is order-free too, but it tosses
+a coin of its own wherever the two diagonals are within a hair — which two mirrored caps are — so it traded
+one asymmetry for another. With the centroid the file's body and the DSL's one-gesture body agree to 1.4e-11
+relative, and the two caps' pivots take the same volume to 6.6e-8.
+
+*And a third reading, corrected on the way.* The near/far face was chosen by *"the crease the apex still
+stands on"*, which at the station where the ball first reaches the upright is a **tie**: both walls' traces
+coincide there, both apexes are the same point, and both reaches are zero. A revolve's start cap broke that
+tie one way and its end cap the other off 1.8e-32 of floating point, so one station of the end cap's pivot
+closed on the wrong wall. A tie is now **reported** rather than broken — the material reading returns null
+where the stepped point stands on the far wall itself — and `cornerRawAt` reads it a nudge further into the
+pivot, where the walls have parted. That is a pure function of the angle; a comparison of two zeroes is a coin.
+
+*What was tried and is wrong, kept because it looks right.* **Cutting the pivots before the bands**, which is
+what the code's own comment claims it does: it makes the 270° case build but breaks 271° and 269°, so the
+order stands as written and the comment is the one that was wrong. And **stating the pivot's direction from
+the body** — positive about the shared face's outward normal — which is order-free but *reflection*-reversing:
+a revolve's two caps are each other's mirror, a reflection turns the other way about its own normal, and the
+rule builds one cap's pivot as the **reversed** mirror of the other's, making buildability a function of which
+cap it stands on. Read from the pieces, the construction is mirror-covariant; what the gesture's order must not
+reach is the *tool*, and that is answered in the tool.
+
+**The reworked tallies.** The sweep is extended to **both caps × sweep ∈ {90°, 180°, 270°} × five sizes** and
+reads **120 cells, 102 built inside their own bracket, 18 refused by name, residue zero** (from 60/44/16). At
+`r ∈ {1, 1.5, 2, 2.5}` every cell builds at **both** caps and at every sweep angle, and the two caps' bodies
+take the same volume to 6.6e-8. **The one remainder is `r = 0.5`**, and it is recorded as what it is: there
+the walls' own tessellation skin (0.08 mm, twice `canalGrow`) is a *sixth of the ball*, the tool's step-offs
+are of the ball's own order, and the general boolean's answer is **not reproducible** — the identical cell,
+run three times in one JVM on identical inputs, came back *built, refused, refused*. Manifold parallelises its
+reductions, so a marginal configuration is a coin the engine tosses at run time. The sweep therefore states
+what it always stated — built inside its bracket **or** refused by name — and the cells that refuse name the
+cap and the edge.
+
+**What the probe's one open assertion measures, with the number.** `bothCapsOfAThreeQuarterTurnPivotInOneGesture`
+asks that two congruent pivots take twice one, to one part in a million. They do not, and the pivot is not the
+reason: **two ordinary fillets on two disjoint edges of the same revolve, with no pivot anywhere**, take
+10.318871665625920 + 10.318871665618644 = 20.637743331 mm³ one at a time and 20.637574231 mm³ in one gesture —
+a deficit of **1.6910e-4 mm³**, the very same number the two pivots show (1.6933e-4). On a **box** the same
+experiment agrees to 2e-15. The deficit is the curved body's own: `MeshGL` carries positions as **float32**
+(OP-9, stated in `MeshBool.jvm.kt`), so the first boolean re-snaps the revolve's cylinder tessellation and the
+second cut removes a slightly different polyhedron. A planar body's coordinates survive float32 exactly and
+show nothing. The pivots themselves are congruent to **2.3e-10 mm³** on the tool and **6.6e-8** relative on the
+body, which is the content the assertion was after. Queued as (5q) — and **not** as the one-line change an
+earlier note in `MeshBool.jvm.kt` claimed: double precision arrived with Manifold **3**, this build's JVM
+binding wraps Manifold 2.x and ships no `MeshGL64` at all, so the JVM path is owed a Manifold 3 binding
+before the browser's `Mesh64` can be matched. Until both have it, every tolerance in this suite is written
+to **float32 on the JVM**, which is what the tests measure against.
+
+**Reworked again in session 86 — the tool path was a function of the pose, and what that turned out to be.**
+A second probe sketched the same revolve on five planes — `XY`, a shift, two turns, a turn with a shift — and
+at two sweeps. A rigid motion of the whole construction must carry a rounding with it and change nothing
+else; it did not. Four cells of the table folded, and **one of them was a plain fillet along one straight cap
+edge with no pivot anywhere**, which is what said the defect was older than this slice and lived in the
+**shared** tool path. It was three defects, each of them the same shape: *a number that is exactly zero in a
+pose the drawing happens to be axis-aligned in, and rounding noise in any other.*
+
+*(1) A section with a round leg was swept with no end-step at all, so its cap lay **in** a face of the body.*
+`Grown.stepped` meant *"were the legs really stepped off"*, and it gated which builder the tube gets: a
+straight run whose section was **not** stepped went to the plain sweep, which carries no [endSteps] — so the
+tool's cap sat exactly in the annulus the crease ends on. Two coincident sheets, and whether the engine
+cancels them is the coin `MeshCanon.flap` exists to name: on `XY` it came up heads every time and on a plane
+turned 30° about `y` it did not. Since session 86's first rework there *is* no unstepped section — a round
+leg has a concentric offset — so the flag is now simply **true**, and every straight run's tube is built by
+`toolMesh`, the only builder that carries the end steps. This one change fixed the band column in every pose
+**and** the 200° end cap the first rework's own sweep could not see, because 90°, 180° and 270° all put the
+end cap's plane on exact coordinates.
+
+*(2) A round leg stepped off by a **micron** where the body's skin is forty of them.* Slice 5f had already
+written the rule down for the canal — *the body's triangles stand inside a curved face by as much as its own
+tessellation tolerance, twenty times the micron* — and the ordinary band did not read it. `stepOf` now takes
+each leg's own step: `GROW_MM` off a plane, `max(GROW_MM, 2 × effectiveTol(R))` off a circle, which is
+`canalGrow`'s own number. With the two steps unequal the corner where the stepped legs meet had to stop being
+linearised, too: taking it a distance `d` from each leg's *tangent* at the crease point leaves it `d²/2R` off
+the offset circle, which is nothing at a micron and a whole weld tolerance at the skin — the profile's outline
+then does not close. The two offset legs are now intersected as what they are (line ∧ line, line ∧ circle,
+circle ∧ circle), and of the two crossings the one nearest the crease point is the corner.
+
+*(3) Two solvers walked to a thousandth of the tolerance their answers were accepted at.* `onWall` and
+`apexAt` stopped at `1e-12`/`1e-13` and were accepted at `1e-9`. On `XY` the residual really is zero and the
+walk stops at once; turned, it is a **nanometre** — which is not rounding but exactly what `apexAt` hands on,
+since a point taken along the segment from a contact to the apex inherits the apex's own tolerance — so the
+walk carried on, and where the wall it walks on is parallel to the station's own plane there is no direction
+within that plane to walk in and the solve gave up. That is the *ledge refusal in one pose and a body in the
+others* the probe reported: `refusal.blend.canalWallNotStatable`, raised where nothing about the geometry was
+unstatable. One constant, `ON_WALL_TOL`, now governs both the walk and what it is accepted at, in all three
+solvers.
+
+*And the pivot's own end, once those were right.* The corner's ring is where the band's tube is capped, and
+at a **ring** upright the ball first touches at the crease's own end, so the cap stood exactly in the plane
+square to the crease there — which is a face of the body. The rule that said *"the band already ends at the
+crease's own end and there is nothing to carry it off"* is exactly backwards, and it is quoted where it stood
+in the code: the cap is carried off by the wall's own skin, always. (A **micron** was tried there and takes
+eighteen more cells of the sweep away: the cap has to clear the band's curved wall too.)
+
+*(4) And the pivot's own section stood **in** the face the two roundings share* — found by the third probe,
+on the **loft**, whose walls are all planes so that none of the curved-wall work above touches it. The
+section's first vertex is the ball's tangency on the shared face, and a tangency is *on* the face by
+definition; the pivot puts one down at every station, so the tool carried a whole **rail** of vertices lying
+in a plane of the body. The same coin, and the same tell: the 35° loft built sketched on `XY`, where the
+shared face is `z = 20` exactly, and came out folded sketched on a plane turned 30° about `x` — the flap a
+thousandth of a millimetre long, which is the step-off's own scale. The tangency is now carried off the face
+by its own leg's step: same face, same gradient, same direction out of the material as the points that follow
+it. It is the reading `lift` already makes at the *other* end of the section, where the arc leaves the body at
+the upright, said once more at the end that had been left exact.
+
+**What it costs, stated.** The sweep gains a **generic** sweep angle (200°) beside the three right ones and
+reads **140 cells, 114 to 118 built inside their own bracket and 22 to 26 refused by name, residue zero** —
+the count wobbles between runs, and the cells it wobbles over are the `r = 0.5` family the engine's own answer
+is not reproducible on (below). Against the first rework's 120/102/18 the tight rings `R = 8` and `R = 12`
+refuse at a slightly *different* set of sizes: every step-off in this note is larger and a tight ring has
+least room for them. They refuse by name and they are (5o)'s own family, whose cure is the section's reading
+at a tight ring. Pose independence is the thing bought: a rounding is now what it is wherever the drawing was
+sketched, and that is a correctness property rather than a cell count.
+
+**The new test class.** `BlendCanalPoseTest` (5) holds the **whole tool path** to it in five poses and for
+each of the kinds of tool the drawing builds — the ordinary band (on a block's own edge as the control, and on
+a revolve's cap edge, whose wedge has one round leg), slice 5f's **canal band** along an elliptical mitre, and
+slice 5h's pivot about **both** uprights: the ring at both caps of a 200° turn, and the loft's **slanted** one
+plain and mirrored. Every claim is the same one: it builds, it is manifold, and it takes what it takes on `XY`
+to one part in ten million of the body — which is the general boolean's own float32 snap and nothing finer,
+for the reason queued as (5q).
+
+Tests: `BlendCornerCanalTest` (6) — the loft's slanted upright and the revolve's ring carrying the pivot,
+each with its corner named, its reason, its two rails and its own slots; level sections through a ring pivot
+closing at three planes with the shared face still opening; the lofted band's own free end pinned as the gap
+it is; the 140-cell sweep over both caps at four sweep angles; and the 96-cell cap class. `BlendCurvedCornerTest`'s
+two refusal fixtures are rewritten to assert bodies and say so in place. `BlendCornerCanalProbeTest` (4) and
+`BlendCornerCanalPoseProbeTest` (7) are the reviews' own probes, through the file, the editor and five
+sketch-plane poses; `BlendCanalPoseTest` (5) is the permanent class the pose rule lives in. The suite is
+**2986** tests, from 2964.
 
 ## Languages (OP-29 — RESOLVED session 81; design entry, session 81)
 
@@ -22918,7 +23319,7 @@ against the matrix's remaining residue — **designed in session 83** against th
 about the sharp upright and lands on a **ledge** in the other's own end plane, exact from end to end; the
 matrix's last 24 refused cells build inside a closed-form bracket; and the fitted tier is spent where it is
 owed instead — on the crease two unlike bands leave where they **cross**, a quartic carried by the new
-`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, ~~(5d) the drawing's two composition gaps~~ — *delivered in session 83, and there were **three** of them rather than two, none of them where item 3b's cut list said: the composition rule — every strip first, composing down the chain, then every splice against the trimmed outline — was already what the drawing said, and what stood in the way was a splice standing **past** the corner it is spliced at (a free end's cap at the L's reflex plan corner *grows* the face rather than biting it), a sampled run of a band's cut ending at the last **sample** the plane crossed rather than at the station where the band's own ruling ends, and a turning leg's run handing its end back on the dead side of its own bracket. The bevelled vertex' apex needs no face at all — its three triangles lie in the three bevel planes, so each band simply runs on to the apex — and a face space on a dressed base face at last draws the outline the body has. All 144 face-class cuts close, no volume moves and nothing appends; see the as-built note under OP-31* —, ~~(5e) session 79's two cuts~~ — *delivered in session 83, and one of the two is retired by a **proof** rather than by a construction: at a **sharp** upright square to the face two roundings share the two wedges are congruent by construction, so *"two wedges that are not congruent"* at an inside corner is either slice 5a's ledge or an upright the pivot cannot follow — session 79's cut (2) and session 81's two parked uprights are one cut. A **circular** crease is a corner participant now: the ball's own reading of the pivot is the **horn torus** it sweeps about the upright, on which a straight run's end section and an arc's are both arcs of one meridian circle, so a keyhole's inside corner between a boss and a wall builds exactly. A curved band's free end steps through the face it stands in (rounding a sector's rim did not work at all before) and **notches** it exactly, session 81's cut about that map not being rigid being wrong at a circular edge. The **slanted** upright a loft's inside corner has and the **ring** a revolve's cap corner has are refused in one sentence naming (5f)'s canal; a vertex with a curved edge among the three is refused with its cure rather than left to break the shell; the matrix gains a sector class of 34 cells, all built. The one cut is the **name** of the crease where a torus band and a cylinder band cross at a convex corner — the body is right and the boolean trims it, and the quartic between them is in no list; see the as-built note under OP-31* —, ~~(5f) the ball along an elliptical crease~~ — *delivered in session 83: a crease with **no rigid section** is a **canal** band — the pipe surface of the ball, whose characteristic in every station's own normal plane is a great circle of radius `r` and whose two tangencies lie in that plane exactly, so the tool is exact and only the names are fitted. The spine is solved against the two faces themselves, so one construction serves the mitre's own ellipse (scaled by `(R − r)/R`, the rolling ball being the fillet and its centre standing on the **material** side — slice 5b's note had that sign the other way round), a **fitted quartic** where the two rounds are of unlike size, and the concave twin one sign over. Two of the three stated prerequisites were not real: a canal is an **ordinary entry** of an ordinary dressing, so no fourth carrier, no new slot name and no format version — only the non-rigid `Dressing` and a **sampled** reader, which has to march the band's own `(station, arc)` chart because a canal band is a ribbon that travels and a level plane crosses it across the run. The figure is Pappus' `∫A(1 − κx̄)ds`, bracketed by the loft's own chord terms and the walls' own tessellation; the matrix's corner-curve class moves 30 cells to 276 built of 292. `refusal.blend.mitreSectionChanges` is gone from the bundle with the case it named; **reworked in session 84** after an adversarial probe: the tool now steps off a curved wall by that wall's **own skin** rather than by a micron (a micron is a twentieth of a tessellation tolerance, so tool and body met as coincident triangles along a whole rail), a cap is triangulated by the **widest ear** there is (a run's end leg is straight, and an ear at a collinear vertex has no area, which Manifold declines by status code), and a run that **turns back on itself** — the crease's normal planes stop foliating the spine once the ball is large against the crease's own bend, and the loft then sweeps the same band twice while the figure claims double — is refused by name instead of built wrong. `BlendCanalSweepTest` reads 144 cells, 136 built and 8 refused by name, residue zero; see the as-built notes under OP-31* —, (5h) the ball pivoting about a slanted or a ring upright — *slice 5f's own cut: a canal **between two band ends** is a corner rather than a run, and it is what session 81's two parked uprights wait on; slice 5e refuses both in one sentence that names it*, (5l) a canal band as a carrier through the general boolean — *session 84's cut: `BoolFace3` places a result triangle on an operand face by looking it up against an exact plane or an exact `Surface3`, and a canal band is neither, so a bored canal body refuses its whole face list by name (`refusal.section.boolCanalBand`, which offers the way round). The band's surface is exact and a `sits` predicate is a Newton solve away; what is owed is the rest of a carrier — a `(θ, t)` chart to state a trim in, the creases where it meets another carrier, and `cornersOf`'s ordering — which is the **fourth carrier** slice 5f's note said was not needed because the drawing never had to name the surface. Through a boolean it does. Half of it is worse than none: a band named but unable to answer its cut draws a section that does not close*, (5m) the canal's loft parameterised by its own spine — *session 84's cut: the stations are spread along the **crease** and the ball's centre solved in the crease's normal plane, which is a bijection only while the spine stands nearer the crease than the crease's own centre of curvature. Past that the run folds, and it is refused by name rather than built. Marching the spine itself — step along `grad1 × grad2`, re-project by Newton, end where the contact leaves the band — would build those roundings instead of refusing them; a fixed point in the spine's tangent was tried in session 84 and is ill-conditioned, because the two neighbours `c′` is read from are then solved in two nearly coincident planes*, (5n) a bevel along a crease with no rigid section — *session 84's cut: a constant-setback chamfer along a crease of changing dihedral is the ruled strip between the two setback traces on the two walls, which is a **loft between two fitted curves** and not the ball's canal — its own tool, its own cut reader and its own figure. Refused for now in the one sentence that says a rounding is what is stated there and a bevel is not (`refusal.blend.carriesNoRigidSection`)*, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
+`EdgeGeom.InSpace` with the tolerance it actually reached; see the as-built note under OP-31* —, ~~(5b) the ball along a curved crease~~ — *delivered in session 83 for the **circular** crease, which is the revolution it is: the free end's own notch arc is an edge and rounds exactly, the flat end of a band along a curved crease is a face, the strip a rounding takes off a curve a corner splices into a face is taken with the splice, a mirrored-section bug in the revolved tool is fixed, every appended slot of a dressed body is numbered one block per entry so that no stored address re-packs when a rounding is added or removed (format version 8, addresses mapped by name), and the matrix gains 292 corner-curve cells. The **elliptical** mitre is the slice's one cut, refused by name with its design written down, and is queued below as (5f); see the as-built note under OP-31* —, ~~(5c) curved faces through the boolean~~ — *delivered in session 83: a general boolean's result keeps a **curved** operand face too — the cylinder an extruded arc sweeps, the cone, sphere or torus a revolution sweeps, the band a rounding is — carried as the operand's own `Surface3` with its trim stated in the surface's own `(θ, t)` and read there by every reader. Plane ∩ cylinder, ∩ cone, ∩ sphere and two coaxial bands are the exact curves they are; two cylinders crossing are a fitted chain through points exact on both, with the tolerance reached. A bored block's rim rounds to an exact torus, the matrix gains a bored-block class of 28 cells, and the one whole cut is a crease through a tangency (two equal crossing cylinders), refused by name; see the as-built note under OP-31* —, ~~(5d) the drawing's two composition gaps~~ — *delivered in session 83, and there were **three** of them rather than two, none of them where item 3b's cut list said: the composition rule — every strip first, composing down the chain, then every splice against the trimmed outline — was already what the drawing said, and what stood in the way was a splice standing **past** the corner it is spliced at (a free end's cap at the L's reflex plan corner *grows* the face rather than biting it), a sampled run of a band's cut ending at the last **sample** the plane crossed rather than at the station where the band's own ruling ends, and a turning leg's run handing its end back on the dead side of its own bracket. The bevelled vertex' apex needs no face at all — its three triangles lie in the three bevel planes, so each band simply runs on to the apex — and a face space on a dressed base face at last draws the outline the body has. All 144 face-class cuts close, no volume moves and nothing appends; see the as-built note under OP-31* —, ~~(5e) session 79's two cuts~~ — *delivered in session 83, and one of the two is retired by a **proof** rather than by a construction: at a **sharp** upright square to the face two roundings share the two wedges are congruent by construction, so *"two wedges that are not congruent"* at an inside corner is either slice 5a's ledge or an upright the pivot cannot follow — session 79's cut (2) and session 81's two parked uprights are one cut. A **circular** crease is a corner participant now: the ball's own reading of the pivot is the **horn torus** it sweeps about the upright, on which a straight run's end section and an arc's are both arcs of one meridian circle, so a keyhole's inside corner between a boss and a wall builds exactly. A curved band's free end steps through the face it stands in (rounding a sector's rim did not work at all before) and **notches** it exactly, session 81's cut about that map not being rigid being wrong at a circular edge. The **slanted** upright a loft's inside corner has and the **ring** a revolve's cap corner has are refused in one sentence naming (5f)'s canal; a vertex with a curved edge among the three is refused with its cure rather than left to break the shell; the matrix gains a sector class of 34 cells, all built. The one cut is the **name** of the crease where a torus band and a cylinder band cross at a convex corner — the body is right and the boolean trims it, and the quartic between them is in no list; see the as-built note under OP-31* —, ~~(5f) the ball along an elliptical crease~~ — *delivered in session 83: a crease with **no rigid section** is a **canal** band — the pipe surface of the ball, whose characteristic in every station's own normal plane is a great circle of radius `r` and whose two tangencies lie in that plane exactly, so the tool is exact and only the names are fitted. The spine is solved against the two faces themselves, so one construction serves the mitre's own ellipse (scaled by `(R − r)/R`, the rolling ball being the fillet and its centre standing on the **material** side — slice 5b's note had that sign the other way round), a **fitted quartic** where the two rounds are of unlike size, and the concave twin one sign over. Two of the three stated prerequisites were not real: a canal is an **ordinary entry** of an ordinary dressing, so no fourth carrier, no new slot name and no format version — only the non-rigid `Dressing` and a **sampled** reader, which has to march the band's own `(station, arc)` chart because a canal band is a ribbon that travels and a level plane crosses it across the run. The figure is Pappus' `∫A(1 − κx̄)ds`, bracketed by the loft's own chord terms and the walls' own tessellation; the matrix's corner-curve class moves 30 cells to 276 built of 292. `refusal.blend.mitreSectionChanges` is gone from the bundle with the case it named; **reworked in session 84** after an adversarial probe: the tool now steps off a curved wall by that wall's **own skin** rather than by a micron (a micron is a twentieth of a tessellation tolerance, so tool and body met as coincident triangles along a whole rail), a cap is triangulated by the **widest ear** there is (a run's end leg is straight, and an ear at a collinear vertex has no area, which Manifold declines by status code), and a run that **turns back on itself** — the crease's normal planes stop foliating the spine once the ball is large against the crease's own bend, and the loft then sweeps the same band twice while the figure claims double — is refused by name instead of built wrong. `BlendCanalSweepTest` reads 144 cells, 136 built and 8 refused by name, residue zero; see the as-built notes under OP-31* —, ~~(5h) the ball pivoting about a slanted or a ring upright~~ — *delivered in session 85, and what it cost was one distinction: a canal band's spine **and** its section are both read off the crease's own two faces, while a pivot's are read off two different pairs. The **spine** is set by the shared face and the **upright** — a plane against a cylinder about a leaning axis is an ellipse, a plane against the torus about a ring the spiric, and the same bisection on the shared face's own polar ray about the corner follows all three without knowing which it is on. The **section** is closed by the shared face and the **near** one of the pair's two other faces, whose real half-ray leaves the ball's contact toward the crease and meets the shared face's trace at the crease point — the very apex every canal section has closed on since 5f; the far face's ray bounds nothing. The spine meets each band's own spine **C¹** exactly, because the upright lies *in* that band's other face and a sphere tangent to a plane touches it once, so the two end rings are the bands' own end sections rather than a fit. A pivot is an ordinary corner of an ordinary dressing: no slot name added, none renumbered, no format version. It is **stale** where fresh, as a corner about a band is, since it ends each band short of its crease. Three numbers make the tool work and each is the body's own: a band's cap carried off the upright, the section's contact carried into the void by its own chords' sagitta, and the apex carried clear where three faces meet. 96 cap-class cells (92 built, 4 refused by name) and a 60-cell sweep over size, slant and ring radius in both gesture routes (44 built inside their own bracket, 16 refused by name), residue zero; the small ring `R = 8` is the slice's own cut and is queued as (5o), a lofted band's free end keeping its level section open is pinned and queued as (5p). **Reworked in session 86** after an adversarial probe, and neither defect was the pivot's: a partial revolve's **end** cap folded because a band whose leg is **round** was swept with no step-off at all and laid a flat tool face exactly in the body's plane face — a circle's offset is a concentric circle, so it has one now and there is one construction for both kinds — and the two gesture routes disagreed over a **quad's diagonal**, since a turning section's quads are not plane and reversing the walk flips every one of them: a quad takes its own centre now. The near/far face's tie at the first station is reported and read a nudge into the pivot rather than broken by floating point. The sweep is extended to both caps × {90°, 180°, 270°} × five sizes — 120 cells, 102 built inside their own bracket, 18 refused by name — and the general boolean's float32 mesh is queued as (5q); see the as-built note under OP-31*, (5o) a pivot at a **tight** ring — *session 85's cut: at a ring of radius 8 the pivot's own tool does not close into a shell and is refused as such before the body sees it, while 12 and 20 build at every size. The section is right — the spine, the contacts and the apex are all found — and what fails is the loft's own skin where the ring's curvature is comparable to the ball's; the reading owed is the section's at a tight ring*, (5p) a lofted band's free end does not notch its neighbour face — *found by session 85 and older than it: a band along a loft's cap edge leaves its free end **in** the neighbouring side face, and that face's outline does not carry the notch, so a level section through the band region does not close — with a pivot beside it or with one band alone, in exactly the same words. Slice 5e stated that notch for a **circular** crease's end on a meridian plane; a loft's side face is the same statement one carrier over*, (5q) the general boolean in **double** precision — *session 86's cut, found by measuring a rework: `MeshGL` carries vertex positions as **float32**, so the first boolean re-snaps a **curved** body's tessellation and a second cut on the same body then removes a slightly different polyhedron. Two ordinary fillets on two disjoint edges of one partial revolve take 20.637743331 mm³ one at a time and 20.637574231 mm³ in one gesture — a deficit of 1.69e-4 mm³ with no rounding corner anywhere near it — while the same experiment on a **box**, whose coordinates survive float32 exactly, agrees to 2e-15. It is **not** a one-line change, and the note in `MeshBool.jvm.kt` that said it was is corrected: `MeshGL64` arrived with Manifold **3**, and the JVM binding this build pins — `org.clojars.cartesiantheatrics:manifold3d`, whose newest release is 2.1.0 of January 2025 — wraps Manifold 2.x and ships a jar carrying `MeshGL` and no `MeshGL64` at all. So the JVM path is owed a Manifold 3 binding first (a newer clj-manifold3d release if one comes, or a JNI/Panama build of our own), while the browser's npm `manifold-3d` is already 3.5.1 and has `Mesh64` today; until both have it the two platforms would not agree, so every tolerance in the suite is written to **float32 on the JVM** and that is what the tests measure against. What is owed besides is a pass over whatever golden volumes move*, (5l) a canal band as a carrier through the general boolean — *session 84's cut: `BoolFace3` places a result triangle on an operand face by looking it up against an exact plane or an exact `Surface3`, and a canal band is neither, so a bored canal body refuses its whole face list by name (`refusal.section.boolCanalBand`, which offers the way round). The band's surface is exact and a `sits` predicate is a Newton solve away; what is owed is the rest of a carrier — a `(θ, t)` chart to state a trim in, the creases where it meets another carrier, and `cornersOf`'s ordering — which is the **fourth carrier** slice 5f's note said was not needed because the drawing never had to name the surface. Through a boolean it does. Half of it is worse than none: a band named but unable to answer its cut draws a section that does not close*, (5m) the canal's loft parameterised by its own spine — *session 84's cut: the stations are spread along the **crease** and the ball's centre solved in the crease's normal plane, which is a bijection only while the spine stands nearer the crease than the crease's own centre of curvature. Past that the run folds, and it is refused by name rather than built. Marching the spine itself — step along `grad1 × grad2`, re-project by Newton, end where the contact leaves the band — would build those roundings instead of refusing them; a fixed point in the spine's tangent was tried in session 84 and is ill-conditioned, because the two neighbours `c′` is read from are then solved in two nearly coincident planes*, (5n) a bevel along a crease with no rigid section — *session 84's cut: a constant-setback chamfer along a crease of changing dihedral is the ruled strip between the two setback traces on the two walls, which is a **loft between two fitted curves** and not the ball's canal — its own tool, its own cut reader and its own figure. Refused for now in the one sentence that says a rounding is what is stated there and a bevel is not (`refusal.blend.carriesNoRigidSection`)*, ~~(5g) a corner curve's slot count recorded~~ — *delivered in session 83: the last appended address a dressed body did not hold still does now, and it was two defects rather than one — a corner made or unmade by an edit moved the shared curves after it, and a rounding merely added moved all of them, since the new entry's block goes in ahead of the whole run. The slot's identity is decided at build time and recorded on the feature, read inside each entry's own block, written into the file by the step that makes the body (`slots=`, format version 9) and taken from the geometry as an older file draws it on load; see the as-built note under OP-31* —; see *The fitted tier* under OP-31. Decided by the user: *"an approximation is better than nothing at all"*.
 See the OP-31 entry.
 
 **Queued in session 83 — a wedge with a *circular* leg has no step-off, so a band between a plane and a

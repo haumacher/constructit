@@ -8,6 +8,7 @@ import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -1234,42 +1235,35 @@ object Blend3 {
     ): Pair<Grown?, Msg?> {
         val o = Vec2(0.0, 0.0)
         val arc = wedge.pieces.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }
-        val n1 = outwardAt(wedge.t1, wedge.t2)
-        val n2 = outwardAt(wedge.t2, wedge.t1)
-        val grown: List<Vec2>
-        val plain: List<Vec2>
-        val region: Region
-        val stepped: Boolean
-        if (crease.leg1.line != null && crease.leg2.line != null && n1 != null && n2 != null) {
-            val corner = offsetCorner(n1, n2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
-            val g1 = wedge.t1 + n1 * GROW_MM
-            val g2 = wedge.t2 + n2 * GROW_MM
-            plain = listOf(o, wedge.t1) + arc + listOf(wedge.t2)
-            grown = listOf(corner, g1) + arc + listOf(g2)
-            // the very same boundary as an exact loop: the two legs stepped off, a square jog back onto
-            // each tangency, and the blend's own curve between them untouched
-            val loop =
-                Loop(
-                    listOf(ProfileElement.Seg(Segment(corner, g1)), ProfileElement.Seg(Segment(g1, wedge.t1))) +
-                        wedge.pieces +
-                        listOf(ProfileElement.Seg(Segment(wedge.t2, g2)), ProfileElement.Seg(Segment(g2, corner))),
-                )
-            region = Region(if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop), emptyList())
-            stepped = true
-        } else {
-            val pts = ArrayList<Vec2>()
-            pts.add(o)
-            pts.addAll(GeomMath.tessellatePiece(sidePiece(crease.leg1, o, wedge.t1), GeomMath.TESS_TOL_MM))
-            pts.addAll(arc)
-            pts.addAll(GeomMath.tessellatePiece(sidePiece(crease.leg2, wedge.t2, o), GeomMath.TESS_TOL_MM))
-            val kept = ArrayList<Vec2>(pts.size)
-            for (q in pts) if (kept.isEmpty() || (q - kept.last()).length() > Geom3.WELD_TOL) kept.add(q)
-            while (kept.size > 1 && (kept.first() - kept.last()).length() <= Geom3.WELD_TOL) kept.removeAt(kept.size - 1)
-            grown = kept
-            plain = kept
-            region = wedge.region
-            stepped = false
-        }
+        val s1 = stepOf(crease.leg1, wedge.t1, wedge.t2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val s2 = stepOf(crease.leg2, wedge.t2, wedge.t1) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val corner = s1.meet(s2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val g1 = s1.step(wedge.t1)
+        val g2 = s2.step(wedge.t2)
+        // the two legs as the section walks them — from the crease point out to each tangency, the straight
+        // leg in one step and the round one in its own chords, minus the crease point itself, which the
+        // section already carries as its first vertex (and as the stepped **corner** in the grown twin)
+        val leg1 = GeomMath.tessellatePiece(sidePiece(crease.leg1, o, wedge.t1), GeomMath.TESS_TOL_MM).drop(1)
+        val leg2 = GeomMath.tessellatePiece(sidePiece(crease.leg2, wedge.t2, o), GeomMath.TESS_TOL_MM).dropLast(1)
+        val plain = listOf(o) + leg1 + arc + leg2
+        val grown = listOf(corner) + leg1.map { s1.step(it) } + arc + leg2.map { s2.step(it) }
+        // the very same boundary as an exact loop: the two legs stepped off, a jog back onto each tangency,
+        // and the blend's own curve between them untouched
+        val loop =
+            Loop(
+                listOf(s1.piece(corner, g1), ProfileElement.Seg(Segment(g1, wedge.t1))) +
+                    wedge.pieces +
+                    listOf(ProfileElement.Seg(Segment(wedge.t2, g2)), s2.piece(g2, corner)),
+            )
+        val region = Region(if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop), emptyList())
+        // **every section is stepped off now**, which is what [stepOf] made true: a round leg has an offset
+        // of its own, so there is no longer a section that is swept as it was drawn. The flag stays because
+        // it is what says a straight run's tube must be built by [toolMesh] — the only builder that carries
+        // [endSteps] — rather than by the plain sweep, whose cap then lies **in** the body's own end face.
+        // A band along a straight crease against a cylinder went down that path and its cap was coplanar
+        // with the annulus the crease ends on: on `XY` the engine cancelled the two sheets and the body came
+        // out, and the same body sketched on a plane turned 30° about `y` came out folded (GitHub #36).
+        val stepped = true
         if (grown.size < 3) return null to Msgs.refusalBlendRoundingOwnSectionHasFewer()
         // one winding for both, so index k of either ring is the same point of the same section
         return if (Geom3.polygonArea(grown) >= 0.0) {
@@ -1277,6 +1271,135 @@ object Blend3 {
         } else {
             Grown(reversedFromFirst(grown), reversedFromFirst(plain), region, stepped) to null
         }
+    }
+
+    /**
+     * One leg's own **step off its face** — the map that carries a point of the leg [GROW_MM] out of the
+     * wedge, and the profile element the stepped leg is.
+     *
+     * *Why a round leg has one too* (OP-31, slice 5h). [sectionOf]'s rule is that **a tool never shares a
+     * face with the body**, and it used to hold only where both legs were straight: *"a round leg has no
+     * straight offset in this vocabulary, so it is swept as it always was"*. It has one — a **circle's
+     * offset is a concentric circle**, exactly, which is the one offset that needs no fitting at all — and
+     * without it every band along a crease against a cylinder puts a flat sheet of tool *exactly in* the
+     * body's own plane face and the difference of two solids that share a face is the coin toss
+     * [MeshCanon.flap] exists to name. It came up tails at the end cap of a partial revolve and heads at
+     * its start cap, off nothing but the arithmetic of a rotation, which is what said the coin was being
+     * tossed at all (GitHub #36, slice 5h's probe).
+     */
+    private class LegStep(
+        private val normal: Vec2?,
+        private val circle: Circle?,
+        private val side: Double,
+        /** How far this leg steps — the micron off a plane, the wall's own skin off a curved one. */
+        val off: Double,
+    ) {
+        /** The unit step out of the wedge at [q] — constant along a line, radial on a circle. */
+        fun normalAt(q: Vec2): Vec2 {
+            val c = circle ?: return normal!!
+            val d = q - c.center
+            return if (d.length() <= Vec2.EPS) normal ?: Vec2(1.0, 0.0) else d.normalized() * side
+        }
+
+        fun step(q: Vec2): Vec2 = q + normalAt(q) * off
+
+        /** The stepped leg from [from] to [to]: a parallel line, or the concentric circle. */
+        fun piece(
+            from: Vec2,
+            to: Vec2,
+        ): ProfileElement = stepped?.let { sidePiece(FilletLeg(null, it), from, to) } ?: ProfileElement.Seg(Segment(from, to))
+
+        /** This leg after the step: the concentric circle, or null where it is a line. */
+        val stepped: Circle? get() = circle?.let { Circle(it.center, it.radius + side * off) }
+
+        /** The line this leg becomes, as `p·n = d` through the crease point at the origin — null for a circle. */
+        val lineNormal: Vec2? get() = if (circle == null) normal else null
+
+        /**
+         * Where this stepped leg and [other]'s meet, **solved and not linearised** — the grown section's own
+         * corner.
+         *
+         * A line against a line is two linear equations. A **circle** is not: taking the corner as the point
+         * `d` from each leg's *tangent* at the crease point leaves it off the offset circle by `d²/2R`,
+         * which is nothing while `d` is a micron and is a whole weld tolerance once `d` is the wall's own
+         * skin — and the profile's outline then does not close (OP-31, slice 5h's pose rework). So the two
+         * offset legs are intersected as what they are, and of the two crossings the one **nearest the
+         * crease point** is the corner: the other is the far side of the circle.
+         */
+        fun meet(other: LegStep): Vec2? {
+            val n1 = lineNormal
+            val n2 = other.lineNormal
+            if (n1 != null && n2 != null) {
+                val det = n1.x * n2.y - n1.y * n2.x
+                if (abs(det) <= 1e-9) return null
+                return Vec2((off * n2.y - other.off * n1.y) / det, (other.off * n1.x - off * n2.x) / det)
+            }
+            if (n1 != null) return other.stepped?.let { crossLineCircle(n1, off, it) }
+            if (n2 != null) return stepped?.let { crossLineCircle(n2, other.off, it) }
+            val c1 = stepped ?: return null
+            val c2 = other.stepped ?: return null
+            val d = c2.center - c1.center
+            val len = d.length()
+            if (len <= Vec2.EPS) return null
+            // the radical line of the two circles, then the same crossing as a line against a circle
+            val a = (c1.radius * c1.radius - c2.radius * c2.radius + len * len) / (2.0 * len)
+            return crossLineCircle(d.normalized(), a + d.normalized().dot(c1.center), c1)
+        }
+
+        /** Where the line `p·n = d` crosses [c], nearest the crease point at the origin. */
+        private fun crossLineCircle(
+            n: Vec2,
+            d: Double,
+            c: Circle,
+        ): Vec2? {
+            val foot = n * d
+            val dir = n.perp()
+            val m = foot - c.center
+            val b = 2.0 * m.dot(dir)
+            val cc = m.dot(m) - c.radius * c.radius
+            val disc = b * b - 4.0 * cc
+            if (disc < 0.0) return null
+            val root = sqrt(disc)
+            val p1 = foot + dir * ((-b + root) / 2.0)
+            val p2 = foot + dir * ((-b - root) / 2.0)
+            return if (p1.length() <= p2.length()) p1 else p2
+        }
+    }
+
+    /**
+     * [LegStep] for one leg, or null where the leg states neither a line nor a circle to step off.
+     *
+     * Which way is **out of the wedge** is read off the other leg's own tangency [other], which always
+     * stands on the wedge's side: away from it along a straight leg ([outwardAt]), and on a round one the
+     * way that takes the circle *away* from it — inward where the wedge stands outside the circle, outward
+     * where it stands inside. That is [outwardAt]'s rule said once for both kinds, so a leg's step is out
+     * of the material at a convex crease and into it at a concave one exactly as it always was.
+     */
+    private fun stepOf(
+        leg: FilletLeg,
+        t: Vec2,
+        other: Vec2,
+    ): LegStep? {
+        if (leg.line != null) return outwardAt(t, other)?.let { LegStep(it, null, 1.0, GROW_MM) }
+        val c = leg.circle ?: return null
+        if (c.radius <= Geom3.WELD_TOL) return null
+        val side = if ((other - c.center).length() >= c.radius) -1.0 else 1.0
+        // **and a round leg steps off by the wall's own skin, not by the micron a plane is stated to**
+        // (OP-31, slice 5f's rule, said here for the ordinary band — GitHub #36's pose probe). The body's
+        // triangles stand **inside** a curved face by as much as its own tessellation tolerance, twenty
+        // times the micron, so a leg a micron proud of the *true* surface is still a fifth of a tolerance
+        // short of where the body's skin actually is: the tool's leg and the body's facets then cross each
+        // other along the whole rail in a band as wide as the chords are, and what the boolean answers
+        // there is a coincident pair of triangles or a tangent contact rather than a crossing. Whether it
+        // answered one or the other was decided by the **pose** — a revolve sketched on `XY` built and the
+        // same revolve turned 30° about `y` did not — which is how it was found. It is [canalGrow]'s own
+        // number, read the same way: twice the wall's own skin, never less than the micron.
+        val off = max(GROW_MM, 2.0 * GeomMath.effectiveTol(c.radius, GeomMath.TESS_TOL_MM))
+        // …and a circle the step would turn inside out is no leg to step off: a wall that bends within its
+        // own skin of nothing states no offset, and the section says so rather than folding through its
+        // own centre
+        if (c.radius + side * off <= Geom3.WELD_TOL) return null
+        return LegStep(outwardAt(t, other), c, side, off)
     }
 
     /**
@@ -1399,16 +1522,6 @@ object Blend3 {
         if (t.length() <= Geom3.WELD_TOL) return null
         val p = t.normalized().perp()
         return if (other.dot(p) > 0.0) p * -1.0 else p
-    }
-
-    /** Where the two legs stepped [GROW_MM] outward meet — the grown section's own corner. */
-    private fun offsetCorner(
-        n1: Vec2,
-        n2: Vec2,
-    ): Vec2? {
-        val det = n1.x * n2.y - n1.y * n2.x
-        if (abs(det) <= 1e-9) return null
-        return Vec2(GROW_MM * (n2.y - n1.y) / det, GROW_MM * (n1.x - n2.x) / det)
     }
 
     /** One target edge prepared: everything the tool needs about it, computed once. */
@@ -3464,6 +3577,24 @@ object Blend3 {
                             taken.add(j to bAtStart)
                             continue
                         }
+                        // **the pivot about a slanted or a ring upright** (OP-31, slice 5h): a canal
+                        // between two band ends, whose spine is set by the shared face and the upright and
+                        // whose section is closed by the shared face and the **near** one of the pair's two
+                        // other faces. It answers *neither* where the upright is one straight run square to
+                        // the face — there session 80's exact circle is the pivot and nothing has changed.
+                        if (!(turnsInward(a, aAtStart, bis) && turnsInward(b, bAtStart, bis))) {
+                            val (pivoted, whyPivot) = canalTurnOf(pieces, i, aAtStart, j, bAtStart, shared, corner)
+                            if (pivoted != null) {
+                                out.add(pivoted)
+                                taken.add(i to aAtStart)
+                                taken.add(j to bAtStart)
+                                continue
+                            }
+                            if (whyPivot != null) {
+                                if (refusal == null) refusal = whyPivot
+                                continue
+                            }
+                        }
                         val placeA = mitrePlacement(a, shared, corner, bis, c) ?: continue
                         val placeB = mitrePlacement(b, shared, corner, bis, c) ?: continue
                         if (!ringsAgree(a.grown.map { placeA.at(it) }, b.grown.map { placeB.at(it) })) {
@@ -4666,6 +4797,11 @@ object Blend3 {
             pieces.add(piece)
         }
 
+        // …and the **pivots** of this pass, each its own tool and its own boolean too (OP-31, slice 5h):
+        // a canal corner's section changes from one band end to the other, so it carries neither band's
+        // point count and is applied beside the group's shell rather than stitched into it.
+        var turns: List<CanalTurn> = emptyList()
+
         // …and the canal bands of this pass, each its own tool and its own boolean (OP-31, slice 5f)
         fun applyCanals(body: Solid3): Pair<Solid3?, Msg?> {
             var result = body
@@ -4690,6 +4826,7 @@ object Blend3 {
         val found = cornersOf(pieces)
         found.refusal?.let { return null to it }
         val corners = found.list
+        turns = corners.filterIsInstance<CanalTurn>()
         crowdedCorner(pieces, corners)?.let { c ->
             // …in the words of the **fresh** rounding the corner crowds, since a pass may run several
             // sections and only one of them is the gesture the user is making (OP-3: the reason belongs
@@ -4703,6 +4840,25 @@ object Blend3 {
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
         for (c in corners) for (end in c.ends) rings[end] = c.ringAt(end)
         val groups = groupsOf(pieces.size, corners)
+
+        // **the pivots are cut first**, before a single band is (OP-31, slice 5h). A pivot's section changes
+        // from one band end to the other, so it carries neither band's point count and cannot be stitched
+        // into the group's tube shell; and cut *after* the bands it would meet the body along the very band
+        // surface they have just left, arc for arc, which is the coincident pair of faces [sectionOf]'s rule
+        // exists to abolish. Cut into the undressed body it crosses ordinary faces transversally, and the
+        // bands that follow overlap it as two tools of one sign always may.
+        fun applyTurns(body: Solid3): Pair<Solid3?, Msg?> {
+            var result = body
+            for (turn in turns) {
+                val (tool, whyTool) = cornerTool(turn)
+                if (tool == null) {
+                    return null to Msgs.refusalQualified(name = turn.shared.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
+                }
+                val (next, whyBool) = Geom3.combine(if (turn.convex) BoolOp.SUBTRACT else BoolOp.UNION, result, tool)
+                result = next ?: return null to Msgs.refusalQualified(name = turn.shared.name.label, reason = whyBool ?: Msgs.refusalBlendCannotBeAppliedToBody())
+            }
+            return result to null
+        }
 
         fun apply(
             body: Solid3,
@@ -4776,7 +4932,17 @@ object Blend3 {
         //
         // Where no corner about a band is fresh the old path stands untouched — fresh groups applied to the
         // tip — so no existing drawing's mesh moves by more than the general engine's own float32 noise.
-        val stale = corners.any { c -> c.extra.isNotEmpty() && (c.ends.any { !pieces[it.first].existing } || c.extra.any { !pieces[it].existing }) }
+        // …and a **canal corner** is stale for the very same reason one about a band is (OP-31, slice 5h):
+        // the pivot ends each band at the station the ball first touches the upright, which stands **short**
+        // of the crease's own end wherever the upright leans. A band already cut at full length has taken
+        // that tail off the body, and a further subtraction can never give it back — so the level at which
+        // such a corner is *fresh* rebuilds its chain from the undressed root, exactly as session 81's
+        // mixed pivot does, and the two gesture routes then reach the same body.
+        val stale =
+            corners.any { c ->
+                (c.extra.isNotEmpty() && (c.ends.any { !pieces[it.first].existing } || c.extra.any { !pieces[it].existing })) ||
+                    (c is CanalTurn && c.ends.any { !pieces[it.first].existing } && c.ends.any { pieces[it.first].existing })
+            }
         if (!stale) {
             var result = applyTo
             for (group in groups) {
@@ -4785,7 +4951,7 @@ object Blend3 {
                 val (next, why) = apply(result, group)
                 result = next ?: return null to why
             }
-            return applyCanals(result)
+            return applyCanals(applyTurns(result).let { (r, why) -> r ?: return null to why })
         }
         // …and where this is the chain's **first** rounding the body addressed *is* the undressed root, so
         // there is nothing to look up: the operand is only ever needed one rounding further along
@@ -4800,7 +4966,7 @@ object Blend3 {
             val (next, why) = apply(result, group)
             result = next ?: return null to why
         }
-        return applyCanals(result)
+        return applyCanals(applyTurns(result).let { (r, why) -> r ?: return null to why })
     }
 
     /**
@@ -5590,6 +5756,8 @@ object Blend3 {
             val (centre, radius) = c.ball ?: return null
             return ballCut(centre, radius, c.members.map { outOf(pieces[it.first], it.second) }, c.at, cut)
         }
+        // **a canal corner is read the way it is built** (OP-31, slice 5h) — sampled on its own chart
+        if (c is CanalTurn) return canalTurnCut(c, cut)
         return null
     }
 
@@ -6460,6 +6628,11 @@ object Blend3 {
                 // to the apex, and those lines are the apex construction's rather than any ring's. They are
                 // not listed, and a rounding of them is therefore not offered (see the note under OP-31).
                 is Vertex -> Unit
+                // **the pivot about a slanted or a ring upright** (OP-31, slice 5h): its two rails are the
+                // ball's own contacts — the tangency curve on the shared face, fitted, and the range of
+                // the upright the ball rolls along, which is a piece of that upright's own carrier and
+                // therefore exact.
+                is CanalTurn -> out.addAll(canalTurnEdges(c, edges))
             }
             for (e in out) made.add(who to e)
         }
@@ -8287,6 +8460,13 @@ object Blend3 {
         val origin: Vec3,
         val axis: Vec3,
         val radius: Double,
+        /**
+         * Non-null where this wall is a **circle** rather than a surface — the ring a revolve's cap corner
+         * pivots about (OP-31, slice 5h), of this radius about [origin] in the plane square to [axis]. A
+         * straight upright is the same thing one dimension down: the axis itself, which is the cylinder
+         * below of radius zero.
+         */
+        val circle: Double? = null,
     ) {
         /**
          * The signed distance from [c] to this wall, in the surface's **own** orientation — a plane's own
@@ -8297,6 +8477,11 @@ object Blend3 {
         fun out(c: Vec3): Double {
             plane?.let { return it.distanceTo(c) }
             val rel = c - origin
+            circle?.let {
+                val along = rel.dot(axis)
+                val d = (rel - axis * along).length() - it
+                return sqrt(d * d + along * along) - radius
+            }
             return (rel - axis * rel.dot(axis)).length() - radius
         }
 
@@ -8306,6 +8491,10 @@ object Blend3 {
             val rel = c - origin
             val radial = rel - axis * rel.dot(axis)
             if (radial.length() <= Geom3.WELD_TOL) return null
+            circle?.let {
+                val v = c - (origin + radial.normalized() * it)
+                return if (v.length() <= Geom3.WELD_TOL) null else v.normalized()
+            }
             return radial.normalized()
         }
 
@@ -8316,6 +8505,7 @@ object Blend3 {
             val along = rel.dot(axis)
             val radial = rel - axis * along
             if (radial.length() <= Geom3.WELD_TOL) return null
+            circle?.let { return origin + radial.normalized() * it }
             return origin + axis * along + radial.normalized() * radius
         }
     }
@@ -8507,7 +8697,7 @@ object Blend3 {
             val c = m + ax * x + ay * y
             val f1 = w1.out(c) - r1
             val f2 = w2.out(c) - r2
-            if (abs(f1) <= 1e-13 && abs(f2) <= 1e-13) return c
+            if (abs(f1) <= ON_WALL_TOL && abs(f2) <= ON_WALL_TOL) return c
             val d1 = w1.grad(c) ?: return null
             val d2 = w2.grad(c) ?: return null
             val a11 = d1.dot(ax)
@@ -8530,8 +8720,25 @@ object Blend3 {
             y -= dy
         }
         val c = m + ax * x + ay * y
-        return if (abs(w1.out(c) - r1) <= 1e-9 && abs(w2.out(c) - r2) <= 1e-9) c else null
+        return if (abs(w1.out(c) - r1) <= ON_WALL_TOL && abs(w2.out(c) - r2) <= ON_WALL_TOL) c else null
     }
+
+    /**
+     * **How near a signed distance must come to nothing for a point to *be* on a wall** — one number for
+     * every solve in this machinery, used both to stop the walk and to accept what it reached.
+     *
+     * It used to be two: the walks stopped at `1e-12`/`1e-13` and their answers were accepted at `1e-9`, so
+     * a point that had **already arrived** by the standard its own caller applies kept walking. That is
+     * harmless while the arithmetic is exact — a drawing sketched on `XY` has planes at `z = 0` and the
+     * residual really is zero — and it is a defect the moment the same drawing is sketched on a plane
+     * turned 30° about `y`: the residual is then a nanometre, the walk carries on, and where the wall it is
+     * walking on happens to be **parallel to the station's own plane** there is no direction within that
+     * plane to walk in, so the solve gives up and the pivot is refused in a pose it builds in (GitHub #36).
+     * And the nanometre is not rounding: it is exactly what [apexAt] hands on, since a point taken along
+     * the segment from a contact to the apex inherits the apex's own tolerance. One number, so what one
+     * solve accepts the next does not reject.
+     */
+    private const val ON_WALL_TOL = 1e-9
 
     /** [q] pulled back **onto** [w]'s own surface within the station's plane — Newton on the signed distance. */
     private fun onWall(
@@ -8542,14 +8749,14 @@ object Blend3 {
         var q = q0
         repeat(20) {
             val f = w.out(place.at(q))
-            if (abs(f) <= 1e-12) return q
+            if (abs(f) <= ON_WALL_TOL) return q
             val g = w.grad(place.at(q)) ?: return null
             val gp = Vec2(g.dot(place.cx), g.dot(place.cy))
             val n2 = gp.dot(gp)
             if (n2 <= 1e-18) return null
             q = q - gp * (f / n2)
         }
-        return if (abs(w.out(place.at(q))) <= 1e-9) q else null
+        return if (abs(w.out(place.at(q))) <= ON_WALL_TOL) q else null
     }
 
     /** The point of the station's plane that lies on **both** walls — the crease's own point there, exact. */
@@ -8564,7 +8771,7 @@ object Blend3 {
             val p = place.at(q)
             val f1 = w1.out(p)
             val f2 = w2.out(p)
-            if (abs(f1) <= 1e-12 && abs(f2) <= 1e-12) return q
+            if (abs(f1) <= ON_WALL_TOL && abs(f2) <= ON_WALL_TOL) return q
             val d1 = w1.grad(p) ?: return null
             val d2 = w2.grad(p) ?: return null
             val a11 = d1.dot(place.cx)
@@ -8576,7 +8783,7 @@ object Blend3 {
             q = Vec2(q.x - (a22 * f1 - a12 * f2) / det, q.y - (-a21 * f1 + a11 * f2) / det)
         }
         val p = place.at(q)
-        return if (abs(w1.out(p)) <= 1e-9 && abs(w2.out(p)) <= 1e-9) q else null
+        return if (abs(w1.out(p)) <= ON_WALL_TOL && abs(w2.out(p)) <= ON_WALL_TOL) q else null
     }
 
     /**
@@ -9187,6 +9394,1132 @@ object Blend3 {
         val st = canal.stations[k]
         if (st.tip) return 0.0
         val legs = (st.poly.size - canal.arcSteps) / 2
+        var l1 = 0.0
+        var l2 = 0.0
+        for (j in 0 until legs) l1 += (st.poly[j + 1] - st.poly[j]).length()
+        for (j in legs until 2 * legs) l2 += (st.poly[j + 1] - st.poly[j]).length()
+        return l1 * t1 + l2 * t2
+    }
+
+    // ---- the canal corner: the ball pivoting about a slanted or a ring upright (OP-31, slice 5h) ----
+
+    /**
+     * **What the ball does at an inside corner whose upright is not one straight run square to the shared
+     * face**, in one sentence: it keeps its centre `r` from that face and `r` from the **upright**, and the
+     * surface it leaves between the two band ends is the pipe of the ball along that locus.
+     *
+     * *Two roles that coincide along a crease and part company at a corner, which is the slice's own
+     * finding.* Slice 5f's canal has **one** pair of walls doing both jobs: the spine is where the ball
+     * stands `r` from both of them, and the section is what is inside both of them and outside the ball.
+     * Here they are different pairs:
+     *
+     * - **the spine** is set by the shared face and the **upright** — a plane against a cylinder about a
+     *   leaning axis is an **ellipse**, a plane against the torus about a **ring** is the spiric quartic a
+     *   plane cuts a torus in, and the same 1-D solve follows both without knowing which it is on. The two
+     *   contacts lie in the station's own normal plane exactly, the upright's for the same reason a face's
+     *   does: differentiating `|p − c|² = r²` with `p` held on the upright gives `(p − c)·p′ = 0`, and
+     *   `p − c` is square to the upright, so `(p − c)·c′ = 0` follows;
+     * - **the section** is closed by the shared face and the **near face** — the one of the pair's two other
+     *   faces whose own crease still runs on past the band's end. Both of them contain the upright, so both
+     *   cut the station plane in a line through the contact; the *near* one's real half leaves the contact
+     *   toward the crease and meets the shared face's trace at the crease point itself, which is the apex
+     *   [apexAt] looks for. The far one's ray bounds nothing here: the region taken with it is the region
+     *   taken with the near one plus the void wedge between them.
+     *
+     * *And the spine joins each band's own spine C¹, exactly*, which is what makes the two end rings the
+     * bands' own end sections rather than a fit: the upright lies **in** the band's other face, and a sphere
+     * tangent to a plane touches it at one point only — so at the station where the rolling ball first
+     * reaches the upright its contact with the upright *is* its tangency with that face. Same contact, same
+     * gradient, same tangent, same normal plane, same great circle.
+     *
+     * *Where the near face changes over.* At the one station whose plane contains the whole upright the two
+     * faces' traces coincide along it and the apex is the corner's own vertex; before it the near face is
+     * the first band's, after it the second's, and the section is continuous through the change because the
+     * leg is the same leg on both sides of it. The apex sweeps exactly the two slivers of crease the bands'
+     * tangencies leave behind — the corner's own business, and the reason this is a corner and not two runs.
+     */
+    private class CornerStation(
+        val at: Vec3,
+        val t: Vec3,
+        val ax: Vec3,
+        val ay: Vec3,
+        /** The tangency on the shared face — exact. */
+        val pF: Vec3,
+        /** The contact on the upright — exact, and in this station's own plane. */
+        val pU: Vec3,
+        val poly: List<Vec2>,
+        val a1: Double,
+        val sweep: Double,
+        val apex: Vec2,
+        /** Which of the pair's two other faces closes the section here. */
+        val nearA: Boolean,
+        /** How far along the spine this station stands, as a length from the first band's end. */
+        val s: Double,
+    ) {
+        fun world(q: Vec2): Vec3 = at + ax * q.x + ay * q.y
+    }
+
+    /** The pivot between two band ends about an upright the circle cannot follow, ready to be swept. */
+    private class CanalTurn(
+        val ai: Int,
+        val aAtStart: Boolean,
+        val bi: Int,
+        val bAtStart: Boolean,
+        val placeA: Placement,
+        val placeB: Placement,
+        val shared: FacePatch,
+        val corner: Vec3,
+        val stations: List<CornerStation>,
+        val r: Double,
+        val sec: BlendSection,
+        val convex: Boolean,
+        val grow: Double,
+        val arcSteps: Int,
+        val legSteps: Int,
+        val wF: Wall,
+        val wA: Wall,
+        val wB: Wall,
+        val wD: Wall,
+        val fitted: Double,
+        /** What a station is a pure function of — kept so the figure can re-read the pivot finely. */
+        val frame: CornerFrame?,
+        /**
+         * What the two bands **give up** to this corner: each one's own wedge area times the length of
+         * crease between the station the ball first touches the upright at and the corner's own vertex.
+         *
+         * Exact, and a prism's figure rather than a measurement: a band along a straight crease carries a
+         * rigid section, so the piece of it the corner takes over is that section times that length. It is
+         * carried here so the pivot can state what it is worth **against the two bands run whole**, which
+         * is the one figure a test can measure without building a body that does not exist.
+         */
+        val tail: Double,
+        /** How far past each band's own cap this pivot's tool reaches — see [canalTurnOf]. */
+        val endStep: Pair<Double, Double>,
+    ) : Corner {
+        override val ends: List<Pair<Int, Boolean>> get() = listOf(ai to aAtStart, bi to bAtStart)
+
+        override fun ringAt(end: Pair<Int, Boolean>): Placement = if (end.first == ai && end.second == aAtStart) placeA else placeB
+
+        /**
+         * **The corner's own surface is not in this mesh**, and that is stated rather than forgotten: a
+         * canal corner's section changes from one end of the pivot to the other, so its rings carry neither
+         * band's point count and it cannot be stitched into the group's tube shell. It is its own tool and
+         * its own boolean, exactly as slice 5f's canal band is — and what this contributes here is the two
+         * **caps** that close the tubes it ends, each wound the way that band's own free-end cap would be.
+         */
+        override fun emit(
+            pieces: List<Piece>,
+            out: Geom3.MeshBuilder,
+        ) {
+            for (end in ends) {
+                val piece = pieces[end.first]
+                val p = ringAt(end)
+                for (t in piece.caps) {
+                    if (end.second) out.triangle(p.at(t.c), p.at(t.b), p.at(t.a)) else out.triangle(p.at(t.a), p.at(t.b), p.at(t.c))
+                }
+            }
+        }
+
+        override fun label(pieces: List<Piece>): Msg =
+            Msgs.refusalBlendInsideCornerWhereMeets(
+                name = pieces[ai].crease.edge.name.label,
+                name2 = pieces[bi].crease.edge.name.label,
+                name3 = shared.name.label,
+            )
+
+        override fun faces(
+            pieces: List<Piece>,
+            nameAt: (Int) -> FaceName,
+        ): List<FacePatch> {
+            val name = nameAt(0)
+            return listOf(
+                FacePatch(
+                    name,
+                    null,
+                    emptyList(),
+                    Msgs.refusalBlendCornerCanalIsNotPlane(
+                        name = name.label,
+                        sizePhrase = sec.sizePhrase(),
+                        name2 = pieces[ai].crease.edge.name.label,
+                        name3 = pieces[bi].crease.edge.name.label,
+                    ),
+                    null,
+                    fitted,
+                ),
+            )
+        }
+    }
+
+    /**
+     * The **upright** the pair pivots about, as a carrier a distance can be measured to — a straight run
+     * where the two other faces are planes, a **ring** where one is a cylinder and the other cuts it square
+     * to its own axis. Null where the crossing is a curve this drawing states no distance to.
+     *
+     * It is read off the two **faces** rather than hunted for among the edges, which is the same structural
+     * reading [axisLiesIn] makes: the upright *is* where the pair's two other faces cross, and the corner
+     * stands on it.
+     */
+    private fun uprightCarrier(
+        fa: FacePatch,
+        fb: FacePatch,
+        at: Vec3,
+    ): Wall? {
+        val pa = fa.plane
+        val pb = fb.plane
+        if (pa != null && pb != null) {
+            val dir = pa.normal.normalized().cross(pb.normal.normalized())
+            if (dir.length() <= Vec3.EPS) return null
+            return Wall(fa, null, at, dir.normalized(), 0.0)
+        }
+        val cyl = if (pa == null) fa else fb
+        val plane = (if (pa == null) pb else pa) ?: return null
+        val s = cyl.surface ?: return null
+        val band = s.band as? Revolve3.Band.Cylinder ?: return null
+        if (band.r <= Geom3.WELD_TOL) return null
+        val axis = s.axis.normalized()
+        if (abs(plane.normal.normalized().dot(axis)) < 1.0 - TANGENT_TOL) return null
+        val origin = s.origin + axis * (plane.origin - s.origin).dot(axis)
+        return Wall(cyl, null, origin, axis, 0.0, band.r)
+    }
+
+    /** The ball's own centre at station [s] of [piece]'s run — the wedge's own arc centre, placed. */
+    private fun ballCentreAt(
+        piece: Piece,
+        s: Double,
+    ): Vec3? {
+        val arc = piece.wedge.pieces.singleOrNull() as? ProfileElement.ArcE ?: return null
+        val place = placeAt(piece, s) ?: return null
+        return place.at(arc.arc.center)
+    }
+
+    /**
+     * Where along [piece]'s own run the rolling ball first **touches** the upright [wD] — the station the
+     * band ends at and the pivot begins at, solved rather than assumed.
+     *
+     * Monotone and therefore bisected: the upright lies in the band's other face, so the distance from the
+     * centre to it is `√(r² + d²)` with `d` the distance, *within that face*, from the ball's own tangency
+     * to the upright — and `d` grows linearly along the run. The root is where `d` is zero, which is exactly
+     * where the tangency runs off the face.
+     */
+    private fun touchStation(
+        piece: Piece,
+        wD: Wall,
+        atStart: Boolean,
+        r: Double,
+    ): Double? {
+        val len = piece.length
+        if (len <= Geom3.WELD_TOL) return null
+
+        // **the distance to the upright is never less than `r`**, so there is no sign to bisect on: the
+        // ball is tangent to the band's other face and the upright lies *in* that face, so
+        // `dist(c, d)² = r² + d²` with `d` the distance, within that face, from the tangency to the
+        // upright. The station wanted is where that distance is **least** — where `d` is nothing at all
+        // and the tangency runs off the face — so it is a minimum that is sought and not a root, and the
+        // minimum of `√(r² + d²)` in a linear `d` is unimodal, which is what a ternary search asks for.
+        fun at(u: Double): Double? = ballCentreAt(piece, if (atStart) u else len - u)?.let { wD.out(it) }
+        var lo = 0.0
+        var hi = len
+        repeat(120) {
+            val m1 = lo + (hi - lo) / 3.0
+            val m2 = hi - (hi - lo) / 3.0
+            val f1 = at(m1) ?: return null
+            val f2 = at(m2) ?: return null
+            if (f1 <= f2) hi = m2 else lo = m1
+        }
+        val u = (lo + hi) / 2.0
+        // …and the least distance has to **be** `r`: where the ball never comes that near, the upright
+        // leans away from this band and is not reached along it at all, and the pivot is refused rather
+        // than the band ended at a station it does not touch. Zero is an ordinary answer — where the
+        // upright stands in a plane square to the crease, as a revolve's own ring does, the ball touches
+        // it at the corner itself and the band is not shortened at all.
+        if (u >= len - Geom3.WELD_TOL) return null
+        val least = at(u) ?: return null
+        if (abs(least - r) > GeomMath.TESS_TOL_MM) return null
+        return u
+    }
+
+    /** One station of the pivot before its section is stated — what the station count is refined on. */
+    private class CornerRaw(
+        val at: Vec3,
+        val t: Vec3,
+        val place: Placement,
+        val pF: Vec3,
+        val pU: Vec3,
+        val a1: Double,
+        val sweep: Double,
+        val apex: Vec2,
+        val nearA: Boolean,
+    )
+
+    /** Everything the pivot is read from, gathered once so a station is a pure function of an angle. */
+    private class CornerFrame(
+        val wF: Wall,
+        val wA: Wall,
+        val wB: Wall,
+        val wD: Wall,
+        val corner: Vec3,
+        /** The material side of the shared face, unit — the way the ball's centre stands off it. */
+        val into: Vec3,
+        val ex: Vec3,
+        val ey: Vec3,
+        val dirA: Vec3,
+        val dirB: Vec3,
+        val sF: Int,
+        val sA: Int,
+        val sB: Int,
+        val r: Double,
+        val total: Double,
+    )
+
+    /**
+     * The ball's centre at turn [theta] — its tangency on the shared face runs on that face's own polar
+     * ray about the corner, and the one unknown is how far out it stands.
+     *
+     * One equation in one unknown and it is bracketed rather than iterated blind: at zero the centre stands
+     * over the corner itself, which is *on* the upright, so the distance is at most `r`; far out it is more
+     * than `r`; and it grows on the way. Bisection therefore always answers, at every slant and at every
+     * ring radius, which is what makes *whether a ball rolls here* a property of the sizes alone.
+     */
+    private fun cornerCentreAt(
+        cf: CornerFrame,
+        theta: Double,
+    ): Vec3? {
+        val e = cf.ex * cos(theta) + cf.ey * sin(theta)
+
+        fun at(rho: Double): Double = cf.wD.out(cf.corner + e * rho + cf.into * cf.r) - cf.r
+        var lo = 0.0
+        // **the tangency stands within a few ball radii of the corner, or this is not the pivot at all.**
+        // Square, it stands at exactly `r`; leaning or bent, at `r` over the cosine of the lean. A root
+        // further out than three radii is the locus' *other* branch — the ball on the far side of the
+        // upright — and taking it would sweep a tool right through the part, so it is refused instead.
+        var hi = 3.0 * cf.r
+        if (at(0.0) > 0.0 || at(hi) < 0.0) return null
+        repeat(90) {
+            val mid = (lo + hi) / 2.0
+            if (at(mid) < 0.0) lo = mid else hi = mid
+        }
+        return cf.corner + e * ((lo + hi) / 2.0) + cf.into * cf.r
+    }
+
+    /** Where a station stands before its section is read — the centre, the plane and the two contacts. */
+    private class CornerPlace(
+        val c: Vec3,
+        val t: Vec3,
+        val place: Placement,
+        val pF: Vec3,
+        val pU: Vec3,
+        val q1: Vec2,
+        val q2: Vec2,
+    )
+
+    /** The pivot's own frame at turn [theta] — solved, not stepped, so it is a pure function of the angle. */
+    private fun cornerPlaceAt(
+        cf: CornerFrame,
+        theta: Double,
+    ): CornerPlace? {
+        val h = 1e-6 * max(1.0, abs(cf.total))
+        val c = cornerCentreAt(cf, theta) ?: return null
+        val cA = cornerCentreAt(cf, theta - h) ?: c
+        val cB = cornerCentreAt(cf, theta + h) ?: c
+        var t = cB - cA
+        if (t.length() <= Vec3.EPS) return null
+        t = t.normalized()
+        val pF = cf.wF.nearest(c) ?: return null
+        val pU = cf.wD.nearest(c) ?: return null
+        var ax = pF - c
+        ax -= t * ax.dot(t)
+        if (ax.length() <= Vec3.EPS) return null
+        ax = ax.normalized()
+        val place = Placement(c, ax, t.cross(ax))
+        return CornerPlace(
+            c,
+            t,
+            place,
+            pF,
+            pU,
+            Vec2((pF - c).dot(place.cx), (pF - c).dot(place.cy)),
+            Vec2((pU - c).dot(place.cx), (pU - c).dot(place.cy)),
+        )
+    }
+
+    /**
+     * **Which of the two faces closes the section here, read off the material and not off a frame** — or
+     * null where the reading is a **tie**, which is a station of the pivot and not a number to round.
+     *
+     * Both of the pair's other faces contain the upright, so both cut this plane in a line through the
+     * contact and each of those lines has a **real** half and an **extension**: the real half is the one
+     * that is a face of the body, and the extension runs on through the material beyond the upright. The
+     * half that bounds the section is the real one, and which that is, is [outwardAt]'s own question asked
+     * of the *far* wall: a point stepped from the contact along it lies on the material side of that wall
+     * exactly when the face it is on is the body's own there.
+     *
+     * *Where the two walls' traces **coincide** — at the station the ball first reaches the upright, and at
+     * the hand-over — the question has no answer at all: the stepped point stands on both walls, so both
+     * readings are zero and both apexes are the same point. That is the tie, and it used to be broken by a
+     * comparison of two reaches along the two creases which is **itself** a tie at a revolve's own ring,
+     * where neither band gives up any crease: a revolve's start cap came out with one face and its end cap
+     * — whose frame is the start's turned by the sweep — with the other, off 1e-32 of floating point, and
+     * the section then closed on the far face's extension so that the tool shared the cap's own face with
+     * the body. The material does not care which way round the frame is, so a tie is **reported** here and
+     * [cornerRawAt] reads it a nudge further into the pivot, where the walls have parted.*
+     */
+    private fun nearSideFrom(
+        cf: CornerFrame,
+        pl: CornerPlace,
+        apexA: Vec2?,
+        apexB: Vec2?,
+    ): Boolean? {
+        fun bodysOwn(
+            ap: Vec2?,
+            far: Wall,
+            sFar: Int,
+        ): Double? {
+            if (ap == null) return null
+            val v = ap - pl.q2
+            if (v.length() <= Geom3.WELD_TOL) return null
+            val step = min(0.25 * cf.r, 0.5 * v.length())
+            // …and the face the body has is the one that **bounds the void**, which is the far wall's own
+            // non-material side: the void wedge's two faces are the part of each wall that lies beyond the
+            // other, so a point of the body's own face A stands on the *far* side of B and a point of A's
+            // extension stands with the material
+            return far.out(pl.place.at(pl.q2 + v.normalized() * step)) * sFar
+        }
+        // …and where only one of the two walls meets the shared face in this plane at all, that one closes
+        // the section and there is nothing to read
+        if (apexA == null && apexB == null) return null
+        if (apexA == null) return false
+        if (apexB == null) return true
+        val oA = bodysOwn(apexA, cf.wB, cf.sB)
+        val oB = bodysOwn(apexB, cf.wA, cf.sA)
+        // …and a reading of **nothing** is no reading: the stepped point stands on the far wall itself, so
+        // the two traces coincide here and this station is a tie
+        val readA = if (oA == null || abs(oA) <= Geom3.WELD_TOL) null else oA < 0.0
+        val readB = if (oB == null || abs(oB) <= Geom3.WELD_TOL) null else oB < 0.0
+        if (readA != null && readB != null) return if (readA != readB) readA else null
+        if (readA != null) return readA
+        if (readB != null) return !readB
+        return null
+    }
+
+    /** [nearSideFrom] asked at an angle of its own — what a tie is resolved by. */
+    private fun nearSideAt(
+        cf: CornerFrame,
+        theta: Double,
+    ): Boolean? {
+        val pl = cornerPlaceAt(cf, theta) ?: return null
+        val seed = Vec2((cf.corner - pl.c).dot(pl.place.cx), (cf.corner - pl.c).dot(pl.place.cy))
+        return nearSideFrom(cf, pl, apexAt(cf.wF, cf.wA, pl.place, seed), apexAt(cf.wF, cf.wB, pl.place, seed))
+    }
+
+    /** The pivot's own station at turn [theta] — centre, frame, the two contacts, the apex and the arc. */
+    private fun cornerRawAt(
+        cf: CornerFrame,
+        theta: Double,
+    ): CornerRaw? {
+        val pl = cornerPlaceAt(cf, theta) ?: return null
+        val c = pl.c
+        val place = pl.place
+        val q1 = pl.q1
+        val seed = Vec2((cf.corner - c).dot(place.cx), (cf.corner - c).dot(place.cy))
+        val apexA = apexAt(cf.wF, cf.wA, place, seed)
+        val apexB = apexAt(cf.wF, cf.wB, place, seed)
+        // **a tie is read a nudge into the pivot, never broken by arithmetic.** The two stations that tie
+        // are the two the walls' traces coincide at; at both of them the section is the *same* curve either
+        // way and only the step-off's direction differs, so the face the neighbouring stations close on is
+        // the one this one closes on too — and asking the material a nudge further in is a pure function of
+        // the angle, where a comparison of two zeroes is a coin (OP-31, slice 5h).
+        val nudge = max(1e-4 * abs(cf.total), 1e-9)
+        val inward = if (theta * 2.0 <= cf.total) nudge else -nudge
+        val nearA =
+            nearSideFrom(cf, pl, apexA, apexB)
+                ?: nearSideAt(cf, theta + inward)
+                ?: nearSideAt(cf, theta - inward)
+                ?: (theta * 2.0 <= cf.total)
+        val apex = (if (nearA) apexA else apexB) ?: return null
+        val a1 = atan2(q1.y, q1.x)
+        val a2 = atan2(pl.q2.y, pl.q2.x)
+        var d = a2 - a1
+        while (d <= -PI) d += 2.0 * PI
+        while (d > PI) d -= 2.0 * PI
+        val other = if (d >= 0.0) d - 2.0 * PI else d + 2.0 * PI
+        val toward = if (apex.length() <= Geom3.WELD_TOL) q1 else apex.normalized()
+
+        fun facing(s: Double): Double {
+            val a = a1 + s / 2.0
+            return Vec2(cos(a), sin(a)).dot(toward)
+        }
+        val sweep = if (facing(d) >= facing(other)) d else other
+        return CornerRaw(c, pl.t, place, pl.pF, pl.pU, a1, sweep, apex, nearA)
+    }
+
+    /** [raw] as the canal's own station, so the section, the legs and the sag rule are read once only. */
+    private fun asCanalRaw(raw: CornerRaw): CanalRaw = CanalRaw(raw.at, raw.t, raw.place, raw.pF, raw.pU, raw.a1, raw.sweep, raw.apex)
+
+    /**
+     * How far one point of the pivot's section is carried **out of the body**, at weight [w].
+     *
+     * Two terms, each of them the drawing's own number rather than a fudge. The section's chords stand a
+     * sagitta inside the ball's true arc, so a point that reaches the upright over one of them grazes the
+     * body's own edge unless it clears that sagitta. And where the near wall hands over to the far one the
+     * section's apex comes up to the body's own **vertex**, where three faces meet — the one contact a
+     * general boolean has no answer for — so there the whole leg is carried a twentieth of the ball's radius
+     * clear, into the void the upright bounds, which is air and costs the body nothing. [near0] is how near
+     * the hand-over this station stands and [w] how near the upright this point of it does.
+     */
+    private fun lift(
+        r: Double,
+        sweep: Double,
+        arcSteps: Int,
+        grow: Double,
+        near0: Double,
+        w: Double,
+    ): Double {
+        // …and a step-off of **nothing** is the section read exactly, which is what the figure's own
+        // quadrature integrates: every clearance here is the tool's and none of it is the body's.
+        if (grow <= 0.0) return 0.0
+        val big = max(clearOf(r, sweep, arcSteps, grow), r / 20.0 * near0)
+        return grow + max(0.0, big - grow) * w.coerceIn(0.0, 1.0)
+    }
+
+    /** How far the pivot's section must stand clear of the upright: its own chords' sagitta, never less than the step-off. */
+    private fun clearOf(
+        r: Double,
+        sweep: Double,
+        arcSteps: Int,
+        grow: Double,
+    ): Double = max(grow, 2.0 * r * (1.0 - cos(abs(sweep) / (2.0 * max(1, arcSteps)))))
+
+    /**
+     * The pivot's own section — [canalSectionAt]'s, with the one vertex that would otherwise **stand on the
+     * body's own upright** stepped clear of it.
+     *
+     * A canal band's two ends are tangencies on two *faces*, and the tool's own step-off carries its legs
+     * off them. A pivot's second contact is the **edge** where the pair's two other faces cross, so the
+     * section's arc arrives exactly on a line of the body and the tool's surface and the body's edge would
+     * coincide along the whole contact — *"a tangent or self-touching contact has no watertight mesh"*, the
+     * one answer a boolean cannot give a body. Past that contact is the **void** the upright bounds (the
+     * nearest point of a convex set to an outside point is where the ray through it enters), so the vertex
+     * is stepped that way by the tool's own step-off and the crossing happens in air, transversally.
+     */
+    private fun cornerSectionAt(
+        wF: Wall,
+        near: Wall,
+        far: Wall,
+        raw: CornerRaw,
+        r: Double,
+        legSteps: Int,
+        arcSteps: Int,
+        sF: Int,
+        sNear: Int,
+        sFar: Int,
+        grow: Double,
+    ): List<Vec2>? {
+        val place = raw.place
+        val q1 = Vec2(r * cos(raw.a1), r * sin(raw.a1))
+        val q2 = Vec2(r * cos(raw.a1 + raw.sweep), r * sin(raw.a1 + raw.sweep))
+
+        fun flat(v: Vec3): Vec2 = Vec2(v.dot(place.cx), v.dot(place.cy))
+        val gF = wF.grad(place.at(raw.apex)) ?: return null
+        val gN = near.grad(place.at(raw.apex)) ?: return null
+        // **three faces meet where the pivot hands one near wall over to the other**, and the apex is their
+        // own vertex there: stepping it off two of them leaves it standing in the third, which is the fold
+        // the boolean names at that vertex. So the far wall joins the step as the apex comes up to the
+        // upright and leaves it again as the apex walks away — one weight, continuous, nothing switched.
+        val gFar = far.grad(place.at(raw.apex)) ?: return null
+        val near0 = max(0.0, 1.0 - (place.at(raw.apex) - (far.nearest(place.at(raw.apex)) ?: place.at(raw.apex))).length() / max(r, Geom3.WELD_TOL))
+        val outApex =
+            (flat(gF) * -sF.toDouble() + flat(gN) * -sNear.toDouble() + flat(gFar) * (-sFar.toDouble() * near0))
+                .let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+        // **the way out of the body at the contact is the void's own bisector**, and it has to be: the
+        // contact stands on the *edge* where the pair's two other faces cross, and stepping it off one of
+        // them alone walks **into** the material the other one bounds — which is how a leg that lies along
+        // that edge came back as a coincident pair of triangles. Between the contact and the crease point
+        // the step turns from the one to the other, so the leg leaves the body all the way along.
+        val gnU = near.grad(raw.pU) ?: return null
+        val gfU = far.grad(raw.pU) ?: return null
+        val outVoid =
+            (flat(gnU) * -sNear.toDouble() + flat(gfU) * -sFar.toDouble()).let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+        val out = ArrayList<Vec2>(2 * legSteps + arcSteps + 2)
+        // **the tangency on the shared face is carried off it like every other point of that leg** (OP-31,
+        // slice 5h, third probe). It is where the ball touches the face, so it stands **exactly in** that
+        // face — and the pivot puts one of them down at every station, which is a whole rail of tool
+        // vertices lying in a plane of the body. Whether two coincident sheets cancel is the coin
+        // [MeshCanon.flap] exists to name, and it came up heads for a loft sketched on `XY`, where the
+        // shared face is `z = HEIGHT` exactly, and tails for the same loft sketched on a plane turned 30°
+        // about `x`. The leg's own step carries it off: the same face, the same gradient, the same
+        // direction out of the material as the points that follow it (GitHub #36).
+        val gF1 = wF.grad(place.at(q1)) ?: return null
+        out.add(q1 + flat(gF1) * (-sF.toDouble() * grow))
+        for (i in 1 until legSteps) {
+            val q = onWall(wF, place, q1 + (raw.apex - q1) * (i.toDouble() / legSteps)) ?: return null
+            val g = wF.grad(place.at(q)) ?: return null
+            out.add(q + flat(g) * (-sF.toDouble() * grow))
+        }
+        // …and where the apex comes up to the upright it comes up to the **body's own vertex**, where three
+        // faces meet: a tool vertex standing on one is the one contact a general boolean has no answer for.
+        // So the apex is carried a twentieth of the ball's radius out of the body there — into air, so it
+        // takes nothing extra — and back to the ordinary micron as it walks away again.
+        out.add(raw.apex + outApex * lift(r, raw.sweep, arcSteps, grow, near0, near0))
+        val nearLeg = ArrayList<Vec2>(legSteps)
+        for (i in 1 until legSteps) {
+            val tau = i.toDouble() / legSteps
+            val q = onWall(near, place, q2 + (raw.apex - q2) * tau) ?: return null
+            val g = near.grad(place.at(q)) ?: return null
+            val step = (outVoid * (1.0 - tau) + flat(g) * (-sNear.toDouble() * tau)).let { if (it.length() <= Geom3.WELD_TOL) outVoid else it.normalized() }
+            // …and at the hand-over the **whole** leg lies along the upright, not only its far end, so the
+            // clearance holds all the way along it rather than dipping back to the micron in the middle
+            nearLeg.add(q + step * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0)))
+        }
+        out.addAll(nearLeg.reversed())
+        // **and the ball's own arc leaves the body where it touches the upright, not *on* it.** The last
+        // chord before the contact runs within a sagitta of the upright's own line — a hundredth of a
+        // millimetre where the step-off is a micron — so the tool's surface and the body's edge approach
+        // each other over a whole strip and the boolean answers a zero-length edge. The contact and the
+        // chords that reach it are therefore carried **into the void** the upright bounds, by a step that
+        // covers that sagitta: the tool takes no more material for it (the void is air) and the crossing
+        // becomes transversal. It decays over the arc, so only the chords that stand near the contact move.
+        out.add(q2 + outVoid * lift(r, raw.sweep, arcSteps, grow, near0, 1.0))
+        for (i in arcSteps - 1 downTo 1) {
+            val a = raw.a1 + raw.sweep * i / arcSteps
+            val fade = max(0.0, 1.0 - (arcSteps - i).toDouble() / 3.0)
+            out.add(Vec2(r * cos(a), r * sin(a)) + outVoid * lift(r, raw.sweep, arcSteps, grow, near0, fade))
+        }
+        return out
+    }
+
+    /**
+     * The **pivot between two band ends** about an upright that is not one straight run square to the face
+     * the pair shares, or the reason it cannot be built, or neither where the upright *is* straight and
+     * square and session 80's exact circle answers instead.
+     */
+    private fun canalTurnOf(
+        pieces: List<Piece>,
+        i: Int,
+        aAtStart: Boolean,
+        j: Int,
+        bAtStart: Boolean,
+        shared: FacePatch,
+        at: Vec3,
+    ): Pair<CanalTurn?, Msg?> {
+        val a = pieces[i]
+        val b = pieces[j]
+        val n = shared.plane?.normal?.normalized() ?: return null to null
+        val fa = otherFace(a, shared) ?: return null to null
+        val fb = otherFace(b, shared) ?: return null to null
+        // the square upright is not this construction's: there the two other faces cut the pivot's own
+        // meridian plane in one and the same line and the corner is the exact horn torus (slice 5e)
+        if (axisLiesIn(fa, n) && axisLiesIn(fb, n)) return null to null
+        val what =
+            Msgs.refusalBlendInsideCornerWhereMeets(name = a.crease.edge.name.label, name2 = b.crease.edge.name.label, name3 = shared.name.label)
+        // **one size and one kind**, and the sentence says what does work: the ball that pivots here is one
+        // ball, so two roundings of unlike size or kind have two pivots and no one surface between them.
+        if (a.sec.kind != BlendKind.FILLET || b.sec.kind != BlendKind.FILLET || abs(a.sec.size - b.sec.size) > 1e-9 || a.sec.kind != b.sec.kind) {
+            return null to
+                Msgs.refusalBlendUprightNeedsOneSize(
+                    what = what,
+                    name = fa.name.label,
+                    name2 = fb.name.label,
+                    sizePhrase = a.sec.sizePhrase(),
+                    sizePhrase2 = b.sec.sizePhrase(),
+                )
+        }
+        if (a.choice.convex != b.choice.convex) return null to null
+        val notStatable =
+            Msgs.refusalBlendCanalWallNotStatable(name = a.crease.edge.name.label, name2 = fa.name.label, name3 = fb.name.label)
+        val wF = wallOf(shared) ?: return null to notStatable
+        val wA = wallOf(fa) ?: return null to notStatable
+        val wB = wallOf(fb) ?: return null to notStatable
+        val wD = uprightCarrier(fa, fb, at) ?: return null to notStatable
+        val r = a.sec.size
+        if (r <= Geom3.WELD_TOL) return null to null
+        val dA = touchStation(a, wD, aAtStart, r) ?: return null to notStatable
+        val dB = touchStation(b, wD, bAtStart, r) ?: return null to notStatable
+        val cA = ballCentreAt(a, if (aAtStart) dA else a.length - dA) ?: return null to notStatable
+        val cB = ballCentreAt(b, if (bAtStart) dB else b.length - dB) ?: return null to notStatable
+        val tA = wF.nearest(cA) ?: return null to notStatable
+        val tB = wF.nearest(cB) ?: return null to notStatable
+        val into = (cA - tA).let { if (it.length() <= Vec3.EPS) return null to notStatable else it.normalized() }
+        val exRaw = tA - at
+        if (exRaw.length() <= Geom3.WELD_TOL) return null to notStatable
+        val ex = exRaw.normalized()
+        val ey0 = n.cross(ex)
+        if (ey0.length() <= Vec3.EPS) return null to notStatable
+        var ey = ey0.normalized()
+        val rel = tB - at
+        var total = atan2(rel.dot(ey), rel.dot(ex))
+        // **the pivot is walked from the one band to the other, and the frame turned to suit** — never the
+        // pair re-ordered to suit the frame (OP-31, slice 5h). Stating the direction from the *body* instead
+        // — positive about the shared face's own outward normal — is order-free too and was tried, and it is
+        // **wrong**: a partial revolve's two caps are each other's **mirror**, a reflection turns the other
+        // way about its own normal, and the rule then builds the end cap's pivot as the *reversed* mirror of
+        // the start cap's. Whether a pivot builds is then a property of which cap it sits on, which is the
+        // one thing it may never be. Read from the pieces, the whole construction is mirror-covariant: the
+        // two caps' pivots are each other's reflection, station for station. What the gesture's own order
+        // must not reach is the **tool**, and that is answered where it arises, in [cornerMesh]'s quads.
+        if (total < 0.0) {
+            ey = -ey
+            total = -total
+        }
+        if (total <= TANGENT_TOL) return null to null
+        val sF = if (wF.out(cA) >= 0.0) 1 else -1
+        val sA = if (wA.out(cA) >= 0.0) 1 else -1
+        val sB = if (wB.out(cB) >= 0.0) 1 else -1
+        val cf =
+            CornerFrame(
+                wF, wA, wB, wD, at, into, ex, ey,
+                outOf(a, aAtStart), outOf(b, bAtStart),
+                sF, sA, sB, r, total,
+            )
+        val tooLarge = Msgs.refusalBlendCanalBallLargerThanBend(sizePhrase = a.sec.sizePhrase(), name = a.crease.edge.name.label)
+
+        fun raws(count: Int): List<CornerRaw>? = (0..count).map { cornerRawAt(cf, total * it / count) ?: return null }
+        var steps = 16
+        var set = raws(steps) ?: return null to tooLarge
+        while (steps < 128) {
+            val fine = raws(2 * steps) ?: return null to tooLarge
+            var worst = 0.0
+            for (k in 0 until steps) {
+                val mid = fine[2 * k + 1]
+                worst = max(worst, (mid.at - (set[k].at + set[k + 1].at) * 0.5).length())
+                worst = max(worst, (mid.pF - (set[k].pF + set[k + 1].pF) * 0.5).length())
+                worst = max(worst, (mid.pU - (set[k].pU + set[k + 1].pU) * 0.5).length())
+            }
+            set = fine
+            steps *= 2
+            if (worst <= GeomMath.TESS_TOL_MM) break
+        }
+        // **and the pivot has to go forward**, the same reading slice 5f makes of a run: where two steps of
+        // the centre oppose each other the ball is larger than the bend it is asked to turn in
+        for (k in 1 until set.size - 1) {
+            val back = set[k].at - set[k - 1].at
+            val on = set[k + 1].at - set[k].at
+            if (back.length() <= Vec3.EPS || on.length() <= Vec3.EPS) continue
+            if (back.normalized().dot(on.normalized()) <= 0.0) return null to tooLarge
+        }
+        // **four times the sag rule's own count** (OP-31, slice 5h): a pivot's arc *ends* on the body's own
+        // upright, and the last chord before that end stands a sagitta inside the true surface — so the
+        // tool's surface and the body's edge approach each other over a strip as wide as that sagitta, and
+        // what the boolean answers there is a graze rather than a crossing. The sagitta falls as the square
+        // of the count, so four times it is a sixteenth of the strip.
+        val arcSteps = 4 * max(1, GeomMath.chordSteps(r, set.maxOf { abs(it.sweep) }, GeomMath.TESS_TOL_MM))
+        // …and never fewer than three chords: at the hand-over the near leg lies **along** the upright
+        // itself, and a single chord between its two stepped ends runs beside the body's own edge for its
+        // whole length. Three gives the leg interior points that are pulled onto the wall and stepped off
+        // it, so the tool crosses rather than grazes (OP-31, slice 5h).
+        val legSteps = max(3, set.maxOf { legStepsFor(wF, if (it.nearA) wA else wB, listOf(asCanalRaw(it))) })
+        val grow = 2.0 * max(canalGrow(wF, wA), canalGrow(wF, wB))
+        val stations = ArrayList<CornerStation>(set.size)
+        var s = 0.0
+        for ((k, raw) in set.withIndex()) {
+            if (k > 0) s += (raw.at - set[k - 1].at).length()
+            val near = if (raw.nearA) wA else wB
+            val sNear = if (raw.nearA) sA else sB
+            val poly =
+                cornerSectionAt(wF, near, if (raw.nearA) wB else wA, raw, r, legSteps, arcSteps, sF, sNear, if (raw.nearA) sB else sA, grow)
+                    ?: return null to notStatable
+            stations.add(CornerStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.pF, raw.pU, poly, raw.a1, raw.sweep, raw.apex, raw.nearA, s))
+        }
+        // **the band's own cap does not stand on the upright.** At the station the ball first touches the
+        // upright its tangency on that band's other face **is** the point of contact — the C¹ argument, read
+        // one way round — so a tube capped exactly there puts a vertex of the tool on an edge of the body,
+        // which is the one contact a general boolean has no answer for. The cap is carried the tool's own
+        // step-off past it, into the ground the pivot covers anyway, and the two overlap there as two tools
+        // of one sign always may.
+        // …and **most of all** where the crease's own end is where the ball first touches, which is what a
+        // revolve's ring is. It used to be read the other way round — *"only where the tangency really does
+        // leave the band's other face **inside** the run: where the upright stands in a plane square to the
+        // crease — a revolve's own ring — the band already ends at the crease's own end and there is nothing
+        // to carry it off"* — and that is exactly backwards: the band is then capped in the plane square to
+        // the crease at its own end, and **that plane is a face of the body there**. Two coincident sheets
+        // again, and whether the engine cancels them is decided by the arithmetic: the same drawing built
+        // sketched on `XY`, where the cancellation is exact, and folded sketched on a plane turned 30° about
+        // `y`, where it is not (GitHub #36, the pose probe).
+        //
+        // *And the cap is carried off by the **wall's own skin**, not by a micron*, for [canalGrow]'s reason:
+        // it has to clear the band's *curved* wall as well as the plane it stands in, and a micron is a
+        // twentieth of that wall's own tessellation. A micron was tried and takes eighteen more cells of the
+        // sweep away.
+        val pullA = grow
+        val pullB = grow
+        val backA = min(a.length, dA + pullA)
+        val backB = min(b.length, dB + pullB)
+        val placeA = placeAt(a, if (aAtStart) backA else a.length - backA) ?: return null to notStatable
+        val placeB = placeAt(b, if (bAtStart) backB else b.length - backB) ?: return null to notStatable
+        return CanalTurn(
+            i, aAtStart, j, bAtStart, placeA, placeB, shared, at, stations, r, a.sec, a.choice.convex,
+            grow, arcSteps, legSteps, wF, wA, wB, wD, CANAL_FIT_TOL_MM, cf,
+            abs(Geom3.polygonArea(a.plain)) * backA + abs(Geom3.polygonArea(b.plain)) * backB,
+            (grow + pullA) to (grow + pullB),
+        ) to null
+    }
+
+    /**
+     * The pivot's **tool**: the loft of its stations, capped at each end a step **past** the band it ends.
+     *
+     * The overshoot is what keeps the two tools crossing rather than touching. At either end the section is
+     * the band's own wedge and the spine runs along the band's own crease, so a ring stepped back there is a
+     * slice of that band's tube — and the step-off is deliberately **twice** the band's, so the corner's own
+     * legs stand outside the band's and the two solids meet transversally instead of sharing a face.
+     */
+    private fun cornerMesh(turn: CanalTurn): Mesh3? {
+        if (turn.stations.size < 2) return null
+        val rings = ArrayList<List<Vec3>>(turn.stations.size)
+        for ((k, st) in turn.stations.withIndex()) {
+            val step =
+                if (k == 0) {
+                    -turn.endStep.first
+                } else if (k == turn.stations.size - 1) {
+                    turn.endStep.second
+                } else {
+                    0.0
+                }
+            rings.add(st.poly.map { st.world(it) + st.t * step })
+        }
+        val tris = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        for (l in 0 until rings.size - 1) {
+            val lo = rings[l]
+            val hi = rings[l + 1]
+            if (lo.size != hi.size) return null
+            for (m in lo.indices) {
+                val nx = (m + 1) % lo.size
+                val a = lo[m]
+                val b = lo[nx]
+                val c = hi[nx]
+                val d = hi[m]
+                // **a quad of a turning section takes its own centre, not one of its two diagonals**
+                // (OP-31, slice 5h). A pivot's section turns from one band end to the other, so its quads
+                // are **not plane** — and the two diagonals of a quad that is not plane enclose different
+                // volumes. Choosing one of them makes the tool a function of *which way the run is walked*:
+                // two gestures one at a time hand the pair over in the other order, which reverses the walk
+                // and flips every diagonal, and the two routes came out 7.6e-5 mm³ apart on a ring pivot
+                // for that reason and no other (GitHub #36). The **shorter** diagonal is order-free but
+                // tosses a coin of its own wherever the two are within a hair, which a revolve's two caps —
+                // each other's mirror to within the solver's last digit — are. The centre is neither and
+                // both: four triangles to the quad's own centroid, whose volume is exactly the mean of the
+                // two splits, a pure function of the four points, and free of any tie at all. So the routes
+                // agree, and a pivot's tool is the mirror of its mirror's, station for station.
+                val m = (a + b + c + d) * 0.25
+                tris.add(Triple(a, b, m))
+                tris.add(Triple(b, c, m))
+                tris.add(Triple(c, d, m))
+                tris.add(Triple(d, a, m))
+            }
+        }
+        val first = turn.stations.first()
+        val last = turn.stations.last()
+        val placeFirst = Placement(first.at - first.t * turn.endStep.first, first.ax, first.ay)
+        for (t in sectionCaps(first.poly)) tris.add(Triple(placeFirst.at(t.c), placeFirst.at(t.b), placeFirst.at(t.a)))
+        val placeLast = Placement(last.at + last.t * turn.endStep.second, last.ax, last.ay)
+        for (t in sectionCaps(last.poly)) tris.add(Triple(placeLast.at(t.a), placeLast.at(t.b), placeLast.at(t.c)))
+        var six = 0.0
+        for (t in tris) six += t.first.dot(t.second.cross(t.third))
+        val b = Geom3.MeshBuilder()
+        for (t in tris) {
+            if (six >= 0.0) b.triangle(t.first, t.second, t.third) else b.triangle(t.first, t.third, t.second)
+        }
+        return b.build()
+    }
+
+    /**
+     * The **tools** the pivots of this level are cut with, as meshes — the seam a test asserts the tool
+     * itself on, which is the half no reading of the body can see (OP-31, slice 5h).
+     */
+    internal fun cornerToolMeshes(f: Feature3.Blend): List<Mesh3> {
+        val pieces = piecesOf(f) ?: return emptyList()
+        return cornersOf(pieces).list.filterIsInstance<CanalTurn>().mapNotNull { cornerMesh(it) }
+    }
+
+    /**
+     * The pivot's tool as a solid, or the reason there is none — **asked of the tool itself** before the
+     * body ever sees it, so that what comes back is the drawing's own sentence and never a mesh diagnostic
+     * (the rule session 84 wrote down for the canal band, said again here).
+     */
+    private fun cornerTool(turn: CanalTurn): Pair<Solid3?, Msg?> {
+        val mesh = cornerMesh(turn) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = turn.shared.name.label)
+        if (mesh.triangles.isEmpty() || Geom3.volume(mesh) <= 0.0) return null to Msgs.refusalBlendRoundingOwnToolEnclosesNo()
+        MeshCanon.notClosed(mesh)?.let { return null to Msgs.refusalBlendRoundingOwnToolIsNot(itWord = it) }
+        return Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
+    }
+
+    /**
+     * The two curves a **canal corner** puts on the body, and each says what it is.
+     *
+     * The **tangency** on the shared face is the corner's own rail, a fitted chain through points every one
+     * of which is exact on both the ball and that face — the two bands' rails carried on round the corner,
+     * so *rail → corner rail → rail* is one chain exactly as a walk's is. The **contact** on the upright is
+     * not fitted at all: it is a piece of the upright's own carrier, which is a straight run or a circle,
+     * and the pivot merely says how much of it the ball rolls along.
+     */
+    private fun canalTurnEdges(
+        turn: CanalTurn,
+        edges: List<Int>,
+    ): List<SolidEdge> {
+        val face = FaceName.BlendCorner(edges, 0)
+        val out = ArrayList<SolidEdge>(2)
+        val (chain, tol) = fittedChain3(turn.fitted) { u -> cornerPointAt(turn, u, true) } ?: (null to null)
+        out.add(
+            SolidEdge(
+                EdgeName.BlendCornerRail(edges, 0),
+                chain?.let { EdgeGeom.InSpace(it) } ?: EdgeGeom.Straight(turn.stations.first().pF, turn.stations.last().pF),
+                FacePair(turn.shared.name, face),
+                null,
+                tol,
+            ),
+        )
+        out.add(
+            SolidEdge(
+                EdgeName.BlendCornerRail(edges, 1),
+                EdgeGeom.Straight(turn.stations.first().pU, turn.stations.last().pU),
+                FacePair(turn.wD.patch.name, face),
+                null,
+            ),
+        )
+        return out
+    }
+
+    /** A point of one of the pivot's two rails at [u] over the whole turn — exact on the ball and the wall. */
+    private fun cornerPointAt(
+        turn: CanalTurn,
+        u: Double,
+        onShared: Boolean,
+    ): Vec3? {
+        val n = turn.stations.size - 1
+        if (n < 1) return null
+        val x = (u.coerceIn(0.0, 1.0) * n)
+        val k = min(n - 1, x.toInt())
+        val f = x - k
+        val a = if (onShared) turn.stations[k].pF else turn.stations[k].pU
+        val b = if (onShared) turn.stations[k + 1].pF else turn.stations[k + 1].pU
+        return a + (b - a) * f
+    }
+
+    /**
+     * Where [cut] crosses a **canal corner** — sampled on the pivot's own `(station, arc)` chart, for the
+     * same reason slice 5f's band is: the characteristic curves are the ball's own circles in planes that
+     * turn along the pivot, so a plane crosses the patch *across* the turn and a station-by-station reader
+     * would find one point where the cut has a whole curve. Every point of the answer is exact on the
+     * surface; only the chords between them are not (OP-15).
+     */
+    private fun canalTurnCut(
+        turn: CanalTurn,
+        cut: Plane3,
+    ): Revolve3.BandCut? {
+        val n = cut.normal.normalized()
+        val d = cut.origin.dot(n)
+        val arcs = max(8, turn.arcSteps)
+        val at =
+            turn.stations.map { st ->
+                (0..arcs).map { j ->
+                    val a = st.a1 + st.sweep * j / arcs
+                    st.at + st.ax * (turn.r * cos(a)) + st.ay * (turn.r * sin(a))
+                }
+            }
+        val segs = ArrayList<Pair<Vec2, Vec2>>()
+        val last = at.size - 1
+        for (k in 0 until last) {
+            for (j in 0 until arcs) {
+                val corners = listOf(at[k][j], at[k][j + 1], at[k + 1][j + 1], at[k + 1][j])
+                val fs = corners.map { it.dot(n) - d }
+                val hits = ArrayList<Vec2>(4)
+                for (m in 0 until 4) {
+                    val a = fs[m]
+                    val b = fs[(m + 1) % 4]
+                    if ((a > 0.0 && b > 0.0) || (a < 0.0 && b < 0.0) || a == b) continue
+                    val t = (a / (a - b)).coerceIn(0.0, 1.0)
+                    // **the two ends of the chart are exact**, and they have to be: the pivot's own cut
+                    // hands over to each band's there, and a band's cut is stated on its surface rather
+                    // than sampled — so a chord's crossing would miss it by a sagitta and the section
+                    // would not close. The end station's own great circle is solved instead.
+                    val station =
+                        if (k == 0 && m == 0) {
+                            turn.stations.first()
+                        } else if (k == last - 1 && m == 2) {
+                            turn.stations.last()
+                        } else {
+                            null
+                        }
+                    val exact =
+                        station?.let {
+                            val lo = it.a1 + it.sweep * (if (m == 0) j else j + 1) / arcs
+                            val hi = it.a1 + it.sweep * (if (m == 0) j + 1 else j) / arcs
+                            circleOnPlane(it, turn.r, n, d, lo, hi)
+                        }
+                    hits.add(cut.toLocal(exact ?: (corners[m] + (corners[(m + 1) % 4] - corners[m]) * t)))
+                }
+                if (hits.size >= 2) segs.add(hits[0] to hits[1])
+                if (hits.size >= 4) segs.add(hits[2] to hits[3])
+            }
+        }
+        val runs = chainSegments(segs)
+        return if (runs.isEmpty()) null else Revolve3.BandCut(null, runs)
+    }
+
+    /**
+     * Where the ball's own great circle at [st] meets the plane `x·n = d`, between the angles [lo] and [hi]
+     * — solved rather than interpolated, so a chart's own boundary hands over to a band's exact cut.
+     */
+    private fun circleOnPlane(
+        st: CornerStation,
+        r: Double,
+        n: Vec3,
+        d: Double,
+        lo: Double,
+        hi: Double,
+    ): Vec3? {
+        val a = r * st.ax.dot(n)
+        val b = r * st.ay.dot(n)
+        val c = d - st.at.dot(n)
+        val rad = hypot(a, b)
+        if (rad <= Geom3.WELD_TOL || abs(c) > rad) return null
+        val phi = atan2(b, a)
+        val delta = acos((c / rad).coerceIn(-1.0, 1.0))
+        for (root in listOf(phi + delta, phi - delta)) {
+            for (turnBy in -2..2) {
+                val ang = root + turnBy * 2.0 * PI
+                if (ang >= min(lo, hi) - 1e-12 && ang <= max(lo, hi) + 1e-12) {
+                    return st.at + st.ax * (r * cos(ang)) + st.ay * (r * sin(ang))
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * **What the pivots of this level take off the body**, bracketed the way slice 5f brackets a canal run:
+     * Pappus' own volume element `∫ A(s)·(1 − κ(s)·x̄(s)) ds` along the spine, with `A` the section's exact
+     * area at each station — the region inside the shared face and the near one and outside the ball, whose
+     * boundary is the ball's own arc and the two walls' own traces.
+     *
+     * The bracket's two terms are the drawing's own rule and not a fudge: below, the exact quadrature **less
+     * the walls' own tessellation strip**, because a wall the ball rolls on reaches the boolean as chords
+     * standing inside the true surface; above, the chorded quadrature **plus the tool's own step-off strip**.
+     */
+    internal fun cornerRemoval(f: Feature3.Blend): Pair<Double, Double>? {
+        val pieces = piecesOf(f) ?: return null
+        val turns = cornersOf(pieces).list.filterIsInstance<CanalTurn>()
+        if (turns.isEmpty()) return null
+        // **the figure a body can be measured against** is what the pivot is worth *against the same two
+        // roundings run whole*: its own quadrature, less the stretch of each band's rigid section it takes
+        // over ([CanalTurn.tail], which is exactly that product). Both bands are prisms, so what they lose
+        // needs no measurement at all.
+        var lo = 0.0
+        var hi = 0.0
+        for (p in pieces) {
+            // **each band is a prism and the figure says so**: a straight crease carries a rigid section, so
+            // what it takes is that section's own area times its whole run — the exact wedge below and its
+            // own chords above, since a tessellated section stands outside the arc it chords. Each free end
+            // is stepped by [endSteps]' own micron, which is the slack the lower bound carries for it.
+            val area = abs(Geom3.polygonArea(p.plain))
+            // …and the section reaches the tool as **chords**, which stand outside the curves they chord by
+            // at most the tessellation's own tolerance — so the area it overstates is that tolerance times
+            // the section's own perimeter, which is the containment term and not a guess
+            var perim = 0.0
+            for (k in p.plain.indices) perim += (p.plain[(k + 1) % p.plain.size] - p.plain[k]).length()
+            val chordSlack = GeomMath.TESS_TOL_MM * perim
+            lo += (area - chordSlack) * p.length - 2.0 * area * GROW_MM
+            hi += area * p.length + 2.0 * area * GROW_MM
+        }
+        for (turn in turns) {
+            val (a, b) = cornerRemovalOf(turn) ?: return null
+            lo += a
+            hi += b
+        }
+        return lo to hi
+    }
+
+    /** One pivot's own figure and its bracket — see [cornerRemoval]. */
+    private fun cornerRemovalOf(turn: CanalTurn): Pair<Double, Double>? {
+        val cf = turn.frame ?: return null
+
+        fun sliceAt(
+            theta: Double,
+            legs: Int,
+            arcs: Int,
+        ): Double {
+            val raw = cornerRawAt(cf, theta) ?: return 0.0
+            val near = if (raw.nearA) turn.wA else turn.wB
+            val far = if (raw.nearA) turn.wB else turn.wA
+            val sNear = if (raw.nearA) cf.sA else cf.sB
+            val sFar = if (raw.nearA) cf.sB else cf.sA
+            val poly = cornerSectionAt(turn.wF, near, far, raw, turn.r, legs, arcs, cf.sF, sNear, sFar, 0.0) ?: return 0.0
+            var twice = 0.0
+            var mx = 0.0
+            var my = 0.0
+            for (k in poly.indices) {
+                val p = poly[k]
+                val q = poly[(k + 1) % poly.size]
+                val cross = p.x * q.y - q.x * p.y
+                twice += cross
+                mx += (p.x + q.x) * cross
+                my += (p.y + q.y) * cross
+            }
+            if (abs(twice) <= 1e-18) return 0.0
+            val area = abs(twice) / 2.0
+            val centroid = Vec2(mx / (3.0 * twice), my / (3.0 * twice))
+            val h = 1e-4 * max(1.0, abs(cf.total))
+            val p0 = cornerCentreAt(cf, theta - h) ?: return area
+            val p2 = cornerCentreAt(cf, theta + h) ?: return area
+            val v1 = p0 - raw.at
+            val v2 = p2 - raw.at
+            val nrm = v1.cross(v2)
+            if (nrm.length() <= 1e-18) return area
+            val towards = (v2 * v1.dot(v1) - v1 * v2.dot(v2)).cross(nrm) * (1.0 / (2.0 * nrm.dot(nrm)))
+            val rho = towards.length()
+            if (rho <= Geom3.WELD_TOL) return area
+            val dir = towards * (1.0 / rho)
+            val x = centroid.x * dir.dot(raw.place.cx) + centroid.y * dir.dot(raw.place.cy)
+            return area * (1.0 - x / rho)
+        }
+
+        fun quadrature(
+            legs: Int,
+            arcs: Int,
+        ): Double {
+            val count = turn.stations.size - 1
+            if (count < 2) return 0.0
+            var sum = 0.0
+            for (k in 0 until count) {
+                val len = turn.stations[k + 1].s - turn.stations[k].s
+                if (len <= 0.0) continue
+                val t0 = cf.total * k / count
+                val t1 = cf.total * (k + 1) / count
+                sum += len * (sliceAt(t0, legs, arcs) + 4.0 * sliceAt((t0 + t1) / 2.0, legs, arcs) + sliceAt(t1, legs, arcs)) / 6.0
+            }
+            return sum
+        }
+
+        fun strip(
+            t1: Double,
+            t2: Double,
+        ): Double {
+            var sum = 0.0
+            val count = turn.stations.size - 1
+            for (k in 0 until count) {
+                val len = turn.stations[k + 1].s - turn.stations[k].s
+                if (len <= 0.0) continue
+                sum += len * (cornerLegStrip(turn, k, t1, t2) + cornerLegStrip(turn, k + 1, t1, t2)) / 2.0
+            }
+            return sum
+        }
+        val exact = quadrature(256, 512)
+        val chorded = quadrature(turn.legSteps, turn.arcSteps)
+        val skin = strip(wallSkin(turn.wF), max(wallSkin(turn.wA), wallSkin(turn.wB)))
+        val stepped = strip(turn.grow, turn.grow)
+        // …**less what the two bands give up to it**: the figure a body can actually be measured against is
+        // the pivot's own removal against the same two roundings run whole, and what the corner takes back
+        // off each is that band's own rigid section times the crease it hands over ([CanalTurn.tail]).
+        return (min(exact, chorded) - skin - turn.tail) to (max(exact, chorded) + stepped - turn.tail)
+    }
+
+    /** The area one station's two legs stand to gain or lose to a strip [t1]/[t2] wide along each wall. */
+    private fun cornerLegStrip(
+        turn: CanalTurn,
+        k: Int,
+        t1: Double,
+        t2: Double,
+    ): Double {
+        val st = turn.stations[k]
+        val legs = (st.poly.size - turn.arcSteps) / 2
         var l1 = 0.0
         var l2 = 0.0
         for (j in 0 until legs) l1 += (st.poly[j + 1] - st.poly[j]).length()
