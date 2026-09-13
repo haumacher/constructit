@@ -41,6 +41,11 @@ import kotlin.test.assertTrue
  * deterministic; the engine's mesh is not a function of its operands. That is recorded here as what is
  * asserted (the operands, and the volume the answers agree on) and what is deliberately *not* (the mesh
  * itself), until (5q) puts a binding underneath that can be told to be deterministic.
+ *
+ * *And when it does.* Pointed at the from-source engine (`-Dconstructit.manifold.native=<dir>`, see
+ * `native/` and [BooleanEngineTest]), the print below becomes an **assertion**: one distinct vertex count,
+ * because a serial Manifold 3 has nothing left to toss a coin with. The old engine's path keeps printing, so
+ * this class says the same true thing about whichever engine is underneath it.
  */
 class BooleanDeterminismTest {
     private var ids = 0
@@ -129,7 +134,8 @@ class BooleanDeterminismTest {
             }
         }
         val sizes = runs.map { it.last().out!!.vertices.size }.distinct().sorted()
-        println("== boolean determinism: identical operands on $n calls × ${runs.size} constructions; the engine's final mesh has ${sizes.size} distinct vertex count(s): $sizes")
+        println("== boolean determinism (${MeshBool.status}): identical operands on $n calls × ${runs.size} constructions; the engine's final mesh has ${sizes.size} distinct vertex count(s): $sizes")
+        if (MeshBool.isNative) assertEquals(1, sizes.size, "the from-source engine is serial, so identical operands give one mesh: $sizes")
     }
 
     /**
