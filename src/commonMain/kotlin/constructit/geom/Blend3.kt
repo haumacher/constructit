@@ -5331,7 +5331,14 @@ object Blend3 {
      */
     internal fun deriveDressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, Msg?> {
         val trimmed = f.trimmedFaces
-        val faces = trimmed.faces ?: return null to trimmed.why
+        val whole = trimmed.faces ?: return null to trimmed.why
+        // **a cap a *later* gesture closed with a corner is no face of the body** (OP-31, slice 5p). A
+        // band's flat end is stated by the level that made it, and a corner may be made one gesture later
+        // — the chain then ends that band short of its own crease ("stale where fresh", slice 5h) and the
+        // cap the lower level stated stands where the body has nothing. Every other reading of a band's
+        // extent is already asked **at the tip** ([bandOf], [spanOf]); this is that rule for the cap, and it
+        // moves no slot: the face keeps its index and says who owns its end instead.
+        val faces = withoutCapsACornerTook(f, whole)
         if (trimmed.notches.isEmpty()) return faces to null
         val out = ArrayList<FacePatch>(faces.size)
         for ((i, patch) in faces.withIndex()) {
@@ -5479,6 +5486,28 @@ object Blend3 {
             .firstOrNull { (at to atStart) in it.ends }
             ?.apex(pieces)
 
+    /** See [deriveDressedFaces]: the list with every cap a corner at this tip has claimed tombstoned. */
+    private fun withoutCapsACornerTook(
+        f: Feature3.Blend,
+        faces: List<FacePatch>,
+    ): List<FacePatch> {
+        if (faces.none { it.name is FaceName.BlendCap && it.reason == null }) return faces
+        val pieces = piecesOf(f) ?: return faces
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        for (c in cornersOf(pieces).list) claimed.addAll(c.ends)
+        if (claimed.isEmpty()) return faces
+        return faces.map { patch ->
+            val name = patch.name as? FaceName.BlendCap ?: return@map patch
+            if (patch.reason != null) return@map patch
+            val at = pieces.indexOfFirst { it.index == name.edge }
+            if (at < 0 || (at to name.atStart) !in claimed) {
+                patch
+            } else {
+                FacePatch(name, null, emptyList(), Msgs.refusalBlendEndClosedByACorner(name = name.label))
+            }
+        }
+    }
+
     /**
      * The trimmed list and the notches the tip owes, derived at most **once per feature instance** behind
      * the memo on [Feature3.Blend.trimmedFaces] — GitHub #35's first cause (OP-5). The seam stays where it
@@ -5625,17 +5654,19 @@ object Blend3 {
         for (slot in 0 until slots) {
             val atStart = slot == 0
             val name = FaceName.BlendCap(d.index, atStart)
-            val free = piece != null && faces != null && (at to atStart) !in claimed
+            val closed = piece != null && (at to atStart) in claimed
+            val free = piece != null && faces != null && !closed
             val made = if (free) capPatchAt(faces!!, piece!!, atStart, name) else null
-            // **and where the notch owns the end, the cap says so in its own words** (OP-31, slice 5e): a
-            // curved band that ends flush with a face of the body notches that face, exactly as a straight
-            // one does, so the general sentence — *"a cap that stands in no flat face of the body has none
-            // to cut"* — is the wrong reason there and the drawing states the right one.
+            // **and where the end is not this slot's, the slot says whose it is** (OP-31, slices 5e and 5p).
+            // Three sentences, because there are three ends: a **corner** closes it and the surface there is
+            // the corner's own patch; a **notch** owns it, the cap standing flush in a face the body already
+            // has (a curved band that ends on a meridian plane does this, and so does every straight one that
+            // meets its neighbour at a right angle); or the drawing cannot read that end at all.
             val why =
-                if (made == null && free && standsInAFace(faces!!, piece!!, atStart)) {
-                    Msgs.refusalBlendCapStandsInAFace(name = name.label)
-                } else {
-                    Msgs.refusalBlendNoNotchAtThisEnd(name = name.label)
+                when {
+                    closed -> Msgs.refusalBlendEndClosedByACorner(name = name.label)
+                    made == null && free && standsInAFace(faces!!, piece!!, atStart) -> Msgs.refusalBlendCapStandsInAFace(name = name.label)
+                    else -> Msgs.refusalBlendNoNotchAtThisEnd(name = name.label)
                 }
             out.add(made ?: FacePatch(name, null, emptyList(), why))
         }
@@ -6112,6 +6143,48 @@ object Blend3 {
         return edges.indexOfFirst { it.name == was.name }.takeIf { it >= 0 } ?: old
     }
 
+    /**
+     * **The face list as a file older than [DocumentFormat.CAP_SLOT_VERSION] numbered it** (OP-31, slice 5p):
+     * this one, less the two flat-end slots a **straight** crease's entry did not own.
+     *
+     * Nothing else moved, so the old order is this one with those entries struck out — which is the whole
+     * reconstruction, stated once and recursively so that a chain's every level is numbered as that file
+     * numbered it. Reading it off the current list rather than rebuilding it from the producers is what
+     * keeps the two orders from drifting: a slot that is a tombstone here is a tombstone there.
+     */
+    private fun facesBeforeCapSlots(feature: Feature3): List<FacePatch>? {
+        val f = feature as? Feature3.Blend ?: return Section3.faces(feature).first
+        val faces = Section3.faces(feature).first ?: return null
+        val base = Section3.faces(f.base).first ?: return null
+        val baseBefore = facesBeforeCapSlots(f.base) ?: return null
+        val baseEdges = Section3.edges(f.base).first ?: return null
+        val gone = f.targets.indices.filter { straightCrease(f, baseEdges, it) }.mapNotNull { f.targets.getOrNull(it) }.toSet()
+        val appended =
+            faces.drop(base.size).filter {
+                val n = it.name
+                !(n is FaceName.BlendCap && n.edge in gone)
+            }
+        return baseBefore + appended
+    }
+
+    /**
+     * **A face slot's address as a file older than [DocumentFormat.CAP_SLOT_VERSION] meant it** — the map a
+     * load runs over a stored whole-face pick (OP-18, OP-31 slice 5p), the twin of [faceAddressBefore].
+     *
+     * Every entry owns two flat-end slots now and a straight crease's entry owned none, so every slot after
+     * the first such entry stands two further on. The slot at [old] is found in that file's own order, by
+     * **name**, and the name is looked up where it stands now; an address this cannot place is handed back
+     * unchanged rather than guessed at (OP-3).
+     */
+    fun faceAddressBeforeCapSlots(
+        feature: Feature3,
+        old: Int,
+    ): Int {
+        val faces = Section3.faces(feature).first ?: return old
+        val was = facesBeforeCapSlots(feature)?.getOrNull(old) ?: return old
+        return faces.indexOfFirst { it.name == was.name }.takeIf { it >= 0 } ?: old
+    }
+
     /** The same map for a **face** address: the bands were one run and the corner patches came after them. */
     fun faceAddressBefore(
         feature: Feature3,
@@ -6316,14 +6389,31 @@ object Blend3 {
     ): Int = if (straightCrease(f, baseEdges, k)) 2 * bandSlotsAt(f, k) else 0
 
     /**
-     * How many **flat end** face slots entry [k] owns: two where its crease is *not* one straight run, and
-     * none where it is (a straight band's cap stands in a face of the body and is that face's own notch).
+     * How many **flat end** face slots entry [k] owns: **two, always** (OP-31, slice 5p).
+     *
+     * *What this used to say, and why it was wrong.* Until slice 5p it read *"two where its crease is not one
+     * straight run, and none where it is"*, on session 81's own sentence: *"at a free end of a straight edge
+     * that frame lies in the end face's plane — the cap is square to the edge and so is the face"*. That is
+     * true at a **right angle** and nowhere else. The face a straight crease's free end runs into is square
+     * to that crease only where the two meet at 90°: on a regular **pentagonal** prism with one rounded top
+     * edge the neighbouring wall stands at the polygon's own exterior angle, on a **loft** it leans by the
+     * slant, and in both the band closes on a flat cap that is a face of the body like any other — with no
+     * slot to state it, so a level section through the band region could not close (`refusal.section
+     * .planeSectionThisSolidDoes`, the pentagon and the loft in exactly the same words).
+     *
+     * *Why the count cannot ask the geometry.* Whether a notch owns an end is a fact about the neighbouring
+     * faces' **orientation** — a coordinate, and a loft's slant is an ordinary parameter — so a count read
+     * off it would change the face list when a number is retyped, which is precisely what OP-21 forbids of
+     * structure. So every entry owns two, and each is either the cap it has or a tombstone saying who owns
+     * that end instead: the notch ([Msgs.refusalBlendCapStandsInAFace]) or the corner that closed it
+     * ([Msgs.refusalBlendEndClosedByACorner]). The indices therefore move, which is what
+     * [DocumentFormat.CAP_SLOT_VERSION] is for.
      */
     private fun capSlotsAt(
-        f: Feature3.Blend,
-        baseEdges: List<SolidEdge>,
-        k: Int,
-    ): Int = if (straightCrease(f, baseEdges, k)) 0 else 2
+        @Suppress("UNUSED_PARAMETER") f: Feature3.Blend,
+        @Suppress("UNUSED_PARAMETER") baseEdges: List<SolidEdge>,
+        @Suppress("UNUSED_PARAMETER") k: Int,
+    ): Int = 2
 
     /**
      * Whether entry [k]'s own crease is **one straight run** — read off the *base* body, so a tombstone
@@ -7814,10 +7904,121 @@ object Blend3 {
                 val away = outOf(piece, atStart) * -1.0
                 if (away.length() <= Geom3.WELD_TOL) continue
                 val frame = endPlacement(piece, atStart) ?: continue
+                // **the strip a band takes off its own two faces stops where the band does** (OP-31,
+                // slice 5p): asked at every free end, and answered only by the faces that really do carry
+                // material past the flat cap — see [capStep].
+                out.addAll(capSteps(faces, trimmed, piece, at, away.normalized(), frame))
                 out.add(notchAt(faces, piece, at, away.normalized(), atStart, pieces, frame) ?: continue)
             }
         }
         return out
+    }
+
+    /**
+     * **The step a band's own flat cap leaves in each of the crease's two faces** (OP-31, slice 5p) — the
+     * other half of what a free end owes, and the one the notch never covered.
+     *
+     * *The defect, in one shape.* A band takes a strip of constant width off each of the two faces its
+     * crease runs between, and [correctedOutline] takes it off that face's whole boundary **piece**. Where
+     * the band runs the whole of the crease that is exact — but the band ends on a flat cap square to the
+     * crease, and beyond that cap the face may still have material: the face's *other* boundary piece at
+     * that corner leaves it at some angle other than a right angle to the crease, so a **triangle** of the
+     * face survives past the cap and the drawing had already trimmed it away. On the 35° loft that triangle
+     * is what a level section at `z = 19.5` was missing, and the loop could not close.
+     *
+     * *The rule, and it is [bandToItsCorners]'s own one dimension over.* Where the face's other piece leaves
+     * the corner **square to the crease** — an extrusion's upright, a plan corner that turns a right angle —
+     * the face has nothing beyond the cap and the trimmed boundary is already where the body is: nothing is
+     * owed and nothing is spliced. Where it leaves at any other angle the boundary **steps** along the cap's
+     * own plane, whose trace on the face is the segment from the tangency at the crease's end to the corner
+     * itself — one straight piece, exact, with both of its ends on the neighbours' own carriers. That is a
+     * *bulge* in [spliceInto]'s own words, and the arithmetic beside it is already written.
+     */
+    private fun capSteps(
+        faces: List<FacePatch>,
+        trimmed: List<FacePatch>,
+        piece: Piece,
+        at: Vec3,
+        away: Vec3,
+        frame: Placement,
+    ): List<Notch> {
+        val out = ArrayList<Notch>()
+        for (side in 0..1) {
+            val name = if (side == 0) piece.crease.face1.name else piece.crease.face2.name
+            val t = if (side == 0) piece.wedge.t1 else piece.wedge.t2
+            capStep(faces, trimmed, piece, at, away, frame, name, t)?.let { out.add(it) }
+        }
+        return out
+    }
+
+    /** One face's own step — see [capSteps]. */
+    private fun capStep(
+        faces: List<FacePatch>,
+        trimmed: List<FacePatch>,
+        piece: Piece,
+        at: Vec3,
+        away: Vec3,
+        frame: Placement,
+        name: FaceName,
+        t: Vec2,
+    ): Notch? {
+        val patch = faces.firstOrNull { it.name == name } ?: return null
+        if (patch.reason != null) return null
+        val plane = patch.plane ?: return null
+        val v = plane.toLocal(at)
+        val head = plane.toLocal(frame.at(t))
+        if ((head - v).length() <= Geom3.WELD_TOL) return null
+        // **the crease's own direction, in this face's plane** — what the other piece is measured against
+        val along = plane.toLocal(at + away) - v
+        if (along.length() <= Vec2.EPS) return null
+        val d = along.normalized()
+        // the two boundary pieces at this corner; the one that is *not* the crease is the one to ask
+        val ends = patch.outline.indices.filter { (GeomMath.endOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        val starts = patch.outline.indices.filter { (GeomMath.startOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
+        if (ends.size != 1 || starts.size != 1 || ends[0] == starts[0]) return null
+        val other =
+            listOf(outgoing(patch.outline[ends[0]], back = true), outgoing(patch.outline[starts[0]], back = false))
+                .filterNotNull()
+                .minByOrNull { abs(it.dot(d)) } ?: return null
+        // **square to the crease means nothing is owed**: the body has no material past the cap there, and
+        // the strip the band took is already the boundary the body has
+        if (abs(other.dot(d)) <= TANGENT_TOL) return null
+        return spliceInto(faces, trimmed, patch, at, piece, listOf(ProfileElement.Seg(Segment(head, v))))
+    }
+
+    /**
+     * Which way [e] leaves the end of it that a corner stands at — [back] for the piece that *ends* there.
+     *
+     * The **tangent** and never a chord: [capStep] asks whether this piece leaves square to the crease, and
+     * a chord of an arc misses that by half its own sweep — which is how a flat annulus, whose boundary at
+     * the rounded edge's end is a *circle* tangent to the cap's own plane, came to be told it had material
+     * beyond a cap that in fact grazes it.
+     */
+    private fun outgoing(
+        e: ProfileElement,
+        back: Boolean,
+    ): Vec2? {
+        val sign = if (back) -1.0 else 1.0
+        return when (e) {
+            is ProfileElement.Seg ->
+                (e.segment.b - e.segment.a).let { if (it.length() <= Vec2.EPS) null else it.normalized() * sign }
+            is ProfileElement.ArcE -> {
+                val a = if (back) e.arc.endAngle else e.arc.startAngle
+                val r = Vec2(cos(a), sin(a))
+                (if (e.arc.ccw) r.perp() else r.perp() * -1.0) * sign
+            }
+            else -> {
+                // …and for the curves this drawing has no closed tangent for here, a chord short enough to
+                // be one: the fallback is never the answer for a rim, which is the case that matters.
+                val pts = GeomMath.tessellatePiece(e, 1e-9)
+                if (pts.size < 2) {
+                    null
+                } else {
+                    val d = if (back) pts[pts.size - 2] - pts.last() else pts[1] - pts.first()
+                    if (d.length() <= Vec2.EPS) null else d.normalized()
+                }
+            }
+        }
     }
 
     /**

@@ -14,7 +14,9 @@ import constructit.geom.EdgeName
 import constructit.geom.FaceName
 import constructit.geom.Feature3
 import constructit.geom.Geom3
+import constructit.geom.GeomMath
 import constructit.geom.Plane3
+import constructit.geom.Region
 import constructit.geom.Section3
 import constructit.geom.Solid3
 import constructit.geom.Vec2
@@ -23,6 +25,7 @@ import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.mm
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.tan
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -291,33 +294,111 @@ class BlendCornerCanalTest {
     }
 
     /**
-     * **What a pivot on a loft does *not* fix, pinned rather than left to be discovered** (the slice's own
-     * recorded cut).
+     * **A lofted band's own free end closes its section** (OP-31, slice 5p — what slice 5h pinned open).
      *
-     * A level section through the *band region* of a lofted body does not close, and it did not before this
-     * slice either: a band along a loft's own cap edge leaves its free end in the neighbouring side face and
-     * that face's outline does not carry the notch, so the loop is open between the side face and the band
-     * whether or not there is a corner beyond it. This asserts that the corner changes nothing about it —
-     * one band refuses exactly as two-and-a-pivot do — so the gap stays a gap of the *loft's* free end and
-     * cannot be mistaken for the pivot's.
+     * *The gap this retires.* A band along the loft's own cap edge ends on a flat cap standing in the plane
+     * square to its crease, and the neighbouring **side face leans**, so that cap is a face of the body like
+     * any other — session 81 gave a straight crease no flat-end slot at all, on the sentence *"the cap is
+     * square to the edge and so is the face"*, which holds at a right angle and nowhere else. Two things were
+     * missing at once and the loop needed both: the **cap** itself, and the **triangle of the side face**
+     * that survives past that cap, which the band's own strip had trimmed away over the face's whole piece.
+     *
+     * *The figure, and it is the body's own.* At height `h` below the cap the level plane crosses the band
+     * in one straight ruling, so what the rounding takes off the plain loft's section there is a **rectangle**
+     * — the crease's own length by the depth the band bites into the wall. That depth is read off the crease's
+     * dihedral, which is `90° + β` where `tan β` is the wall's own lean (the plan shrinks by `shift` over the
+     * height): the fillet's setback along the wall is `t = r / tan(α/2)`, the band's trace stands
+     * `√(2rh − h²)` in from the tangency on the cap, and the wall's own trace has moved out by `h·tan β`. So
+     * the strip is `h·tan β + t − √(2rh − h²)`, and it is **nothing at all** below `t·cos β`, where the band's
+     * tangency on the wall is and the wall is untouched again. Nothing here is measured off a mesh and
+     * nothing is fitted, which is why the tolerance below is a double's own and not a chord's.
      */
     @Test
-    fun aLoftedBandsOwnFreeEndIsWhatKeepsItsSectionOpen() {
+    fun aLoftedBandsOwnFreeEndClosesItsSection() {
         val cx = Construction()
         val base = lofted(cx)
         val (pair, _) = loftPair(Evaluator().solid(base), 35.0)
         val one = Evaluator().solid(assertNotNull(round(cx, base, listOf(pair[0]), 3.0).first, "one band alone builds"))
+        assertManifold(one.mesh, "one lofted band")
         val cx2 = Construction()
         val both = Evaluator().solid(assertNotNull(round(cx2, lofted(cx2), pair, 3.0).first, "both build"))
-        val plane = Plane3(Vec3(0.0, 0.0, 19.5), Vec3.X, Vec3.Y)
-        val (rOne, whyOne) = Section3.regionsOf(one.feature, plane)
-        val (rBoth, whyBoth) = Section3.regionsOf(both.feature, plane)
-        assertEquals(null, rOne, "a single lofted band's own section is open there already")
-        assertEquals(
-            whyOne?.render(),
-            whyBoth?.render(),
-            "…and the pivot beside it says the very same thing, so the gap is the free end's and not the corner's",
-        )
+        assertManifold(both.mesh, "the lofted pivot")
+        // **the two heights, and what each of them says.** 19.5 and 19.0 cross the band, so the region is the
+        // plain loft's less the strip; 18.0 is below the band's own tangency on the wall, so it is the plain
+        // loft's exactly — the band has run out and takes nothing there.
+        for (z in listOf(19.5, 19.0, 18.0)) {
+            val plane = Plane3(Vec3(0.0, 0.0, z), Vec3.X, Vec3.Y)
+            val (regions, why) = Section3.regionsOf(one.feature, plane)
+            val r = assertNotNull(regions, "one band alone: the section at z = $z closes: ${why?.render()}")
+            assertEquals(1, r.size, "…in one region")
+            assertClose(areaOf(r), loftFigure(z, 3.0), 1e-9, "…of the loft's own area less the band's own strip, at z = $z")
+            assertEquals(if (z > 18.331) 10 else 6, r[0].outer.elements.size, "…and the loop is the L's six pieces, four more where the band cuts")
+            assertEquals(emptyList(), r[0].holes, "…with no holes")
+            val (rBoth, whyBoth) = Section3.regionsOf(both.feature, plane)
+            val b = assertNotNull(rBoth, "the pivot beside it: the section at z = $z closes: ${whyBoth?.render()}")
+            assertTrue(areaOf(b) <= areaOf(r) + 1e-9, "…and the second band takes at least as much again at z = $z")
+        }
+        // **and a plane along the run closes too**, which is the reading the level one cannot make: the plane
+        // `y = 19.9` contains the crease's own direction and cuts the band along the whole of it.
+        for (y in listOf(19.0, 19.9)) {
+            val (regions, why) = Section3.regionsOf(one.feature, Plane3(Vec3(0.0, y, 0.0), Vec3.X, Vec3.Z))
+            assertNotNull(regions, "a plane along the crease at y = $y closes: ${why?.render()}")
+        }
+    }
+
+    /**
+     * **Both gesture routes give the same closed section** (OP-30's invariant, read for slice 5p): one
+     * dressing made in one gesture and the same two roundings made one at a time are one body, so the
+     * section through the band region has to be the same region — and it is, to the last bit, because
+     * every piece of it is exact.
+     */
+    @Test
+    fun bothGestureRoutesCloseTheSameLoftedSection() {
+        val cx = Construction()
+        val base = lofted(cx)
+        val (pair, _) = loftPair(Evaluator().solid(base), 35.0)
+        val together = Evaluator().solid(assertNotNull(round(cx, base, pair, 3.0).first, "one gesture builds"))
+        val cx2 = Construction()
+        val apart = Evaluator().solid(assertNotNull(rounded(cx2, lofted(cx2), pair, 3.0).first, "one at a time builds"))
+        assertManifold(together.mesh, "the loft rounded in one gesture")
+        assertManifold(apart.mesh, "the loft rounded one at a time")
+        for (z in listOf(19.5, 19.0)) {
+            val plane = Plane3(Vec3(0.0, 0.0, z), Vec3.X, Vec3.Y)
+            val (a, whyA) = Section3.regionsOf(together.feature, plane)
+            val (b, whyB) = Section3.regionsOf(apart.feature, plane)
+            assertNotNull(a, "the one-gesture body's section at z = $z closes: ${whyA?.render()}")
+            assertNotNull(b, "the one-at-a-time body's section at z = $z closes: ${whyB?.render()}")
+            assertClose(areaOf(b!!), areaOf(a!!), 1e-9, "…and the two routes enclose one area at z = $z")
+        }
+    }
+
+    /** What a list of regions encloses — outer boundaries less their holes, in the section plane's own (u, v). */
+    private fun areaOf(regions: List<Region>): Double =
+        regions.sumOf { r -> abs(GeomMath.signedArea(r.outer)) - r.holes.sumOf { abs(GeomMath.signedArea(it)) } }
+
+    /**
+     * **What the loft's own level section at [z] encloses once a band of radius [r] has run along its cap
+     * edge** — the figure the test above is measured against, and every term of it is the body's own.
+     *
+     * The loft scales its L-section linearly with height, so the plain section is `2700·s(z)²`. The band
+     * cuts a rectangle out of it: the crease's own length by the depth the rounding bites into the wall at
+     * that height, which is the 2D fillet of radius [r] in the crease's dihedral `α = 90° + β` — `β` being
+     * the wall's own lean. Below `t·cos β` the band's tangency on the wall is passed and it takes nothing.
+     */
+    private fun loftFigure(
+        z: Double,
+        r: Double,
+        slant: Double = 35.0,
+    ): Double {
+        val shift = HEIGHT * tan(slant * PI / 180.0) / kotlin.math.sqrt(2.0)
+        val scale = 1.0 - shift / 30.0
+        val s = 1.0 - z * shift / (HEIGHT * 30.0)
+        val tanB = shift / HEIGHT
+        val cosB = HEIGHT / kotlin.math.sqrt(shift * shift + HEIGHT * HEIGHT)
+        val t = r / tan((PI / 2 + kotlin.math.atan(tanB)) / 2)
+        val h = HEIGHT - z
+        val strip = if (h <= 0.0 || h >= t * cosB) 0.0 else h * tanB + t - kotlin.math.sqrt(2 * r * h - h * h)
+        return 2700.0 * s * s - 30.0 * scale * strip
     }
 
     // ---- (c) the sweep: whether a ball pivots is a property of the sizes and the angles ----

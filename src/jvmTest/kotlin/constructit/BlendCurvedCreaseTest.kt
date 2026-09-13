@@ -258,7 +258,10 @@ class BlendCurvedCreaseTest {
         val ref = round(cx, on, notch, 1.0)
         val body = Evaluator().solid(ref)
         assertManifold(body.mesh, "the notch rounded")
-        val caps = facesOf(body).filter { it.name is FaceName.BlendCap }
+        // **every entry owns two flat-end slots now** (OP-31, slice 5p), most of them tombstones saying that
+        // a notch or a corner owns that end instead — so the ones to count are the slots that *are* faces,
+        // which is what this test has always been about: the torus band's own two.
+        val caps = facesOf(body).filter { it.name is FaceName.BlendCap && it.reason == null }
         assertEquals(2, caps.size, "the torus band has a flat end at each of its own two ends")
         for (c in caps) {
             assertEquals(null, c.reason?.render(), "${c.name.label.render()} is a plane one can sketch on")

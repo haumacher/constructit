@@ -2838,14 +2838,41 @@ class Document {
         named: String? = null,
     ): SketchSpace? {
         if (solid.kind != ElementKind.SOLID) return null
-        if (faceRefusal(solid, piece) != null) return null
+        // **a flat-end slot arrived at every entry of a dressing** (OP-31, slice 5p;
+        // [DocumentFormat.CAP_SLOT_VERSION]), so a face address a file written before it holds stands two
+        // further on past every rounding whose crease is one straight run. It is mapped by **name**, once,
+        // and said — never re-resolved by where the plane happens to be, which would put a sketch on a
+        // different face the moment a part is edited (OP-18).
+        val at = migratedFaceAddress(solid, piece)
+        if (faceRefusal(solid, at) != null) return null
         val name = named ?: nextSpaceName()
         if (spaceNamed(name) != null) return null
-        return recording("sketchspace", Arg.Label(name), Arg.Keyed("el", Arg.El(solid)), Arg.Keyed("piece", Arg.Text(piece.toString()))) {
-            val intrinsic = cx.sideFacePlane(solid.ref as SolidRef, piece)
-            val space = addSpace(SketchSpace(name, null, solid, piece), intrinsic)
+        return recording("sketchspace", Arg.Label(name), Arg.Keyed("el", Arg.El(solid)), Arg.Keyed("piece", Arg.Text(at.toString()))) {
+            val intrinsic = cx.sideFacePlane(solid.ref as SolidRef, at)
+            val space = addSpace(SketchSpace(name, null, solid, at), intrinsic)
             space
         }
+    }
+
+    /**
+     * A stored `sketchspace … piece=` address as **this** build numbers it (OP-18, OP-31 slice 5p).
+     *
+     * Only a *replay* of a file written before [DocumentFormat.CAP_SLOT_VERSION] has anything to map, and
+     * only where the solid is a dressed one: every other address means what it always meant, and a live
+     * gesture records what it picked. The map is by **name** ([Section3.faceSpaceAddressBeforeCapSlots]) and
+     * the load says so once; an address the map cannot place is handed back unchanged and refuses in the
+     * ordinary words for a face this body has not got (OP-3).
+     */
+    private fun migratedFaceAddress(
+        solid: Element,
+        piece: Int,
+    ): Int {
+        val version = replayingVersion ?: return piece
+        if (version >= DocumentFormat.CAP_SLOT_VERSION) return piece
+        val feature = (Evaluator().valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return piece
+        val moved = Section3.faceSpaceAddressBeforeCapSlots(feature, piece)
+        if (moved != piece) noteLoad(Msgs.noteOneDressedBodyCapSlotsEverywhere(name = nameOf(solid)))
+        return moved
     }
 
     /**
@@ -14518,7 +14545,7 @@ class Document {
         // to be three runs, so adding a rounding to the dressing or taking one off re-packed them and a
         // stored address named a different curve. They are one block per entry now, which moves the indices a
         // file written before this version holds: the load maps them by **name**, once, and says so (OP-18).
-        val address =
+        val regrouped =
             if (signs.isNotEmpty() && version != null && version < DocumentFormat.GROUPED_SLOT_VERSION) {
                 val moved =
                     if (whole) Blend3.faceAddressBefore(body.feature, picked) else Blend3.addressBefore(body.feature, picked)
@@ -14526,6 +14553,19 @@ class Document {
                 moved
             } else {
                 picked
+            }
+        // **and a flat-end slot arrived at every entry** (OP-31, slice 5p;
+        // [DocumentFormat.CAP_SLOT_VERSION]). A straight crease's free end owned no cap slot at all, on the
+        // assumption that it always stands in a face of the body — true at a right angle and nowhere else —
+        // so every face slot after such an entry stands two further on now. A **whole-face** pick's address
+        // is a face's, so it is the one this moves; an edge address is untouched.
+        val address =
+            if (whole && signs.isNotEmpty() && version != null && version < DocumentFormat.CAP_SLOT_VERSION) {
+                val moved = Blend3.faceAddressBeforeCapSlots(body.feature, regrouped)
+                if (moved != regrouped) noteLoad(Msgs.noteOneDressedBodyCapSlotsEverywhere(name = nameOf(on)))
+                moved
+            } else {
+                regrouped
             }
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, oneRun(baseEl, ev))
         if (targets == null) {

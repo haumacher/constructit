@@ -4659,6 +4659,15 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid.",
     "x-translated": "5dadaee3"
   },
+  "refusal.section.planeSectionDoesNotCloseAt": "the plane's section of this solid does not close into an area — it breaks at {name}, which the plane crosses in a way this drawing states only as curves; read the section on a working plane instead",
+  "@refusal.section.planeSectionDoesNotCloseAt": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
   "refusal.section.planeSectionThisSolidDoes": "the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead",
   "@refusal.section.planeSectionThisSolidDoes": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid.",
@@ -5342,6 +5351,15 @@
   },
   "refusal.blend.capStandsInAFace": "{name} is no face of this body — the band's free end there stands in a face the body already has, so what the drawing says about that end is the notch in that face's own outline rather than a face of its own",
   "@refusal.blend.capStandsInAFace": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.endClosedByACorner": "{name} is no face of this body — a corner closes the band's run at that end, so the surface there is the neighbouring band across the mitre, or the corner's own patch, rather than a flat cap",
+  "@refusal.blend.endClosedByACorner": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "name": {
@@ -19510,6 +19528,15 @@
   "@note.oneDressedBody.cornerSlotsRecorded": {
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "x-translated": "ac3c1a73"
+  },
+  "note.oneDressedBody.capSlotsEverywhere": "{name}'s roundings each name their two flat ends now, whether a notch owns that end or the band closes on a cap of its own, so that a face this body has can never be one the drawing cannot name. This file's face addresses were written under the older numbering and have been mapped to it.",
+  "@note.oneDressedBody.capSlotsEverywhere": {
+    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or \u2014 when the tool cannot do what was asked \u2014 why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "note.oneDressedBody.slotsRegrouped": "{name}'s rails, free-end notches and corner curves are numbered one block per rounding now, so that adding a rounding to this dressing or taking one off can never make a stored address name a different curve. This file's addresses were written under the older numbering and have been mapped to it.",
   "@note.oneDressedBody.slotsRegrouped": {

@@ -54,6 +54,11 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
     @Test
     fun aFaceSpaceOpensOnEveryPlanarFaceOfTheCornerAndItsOutlineIsASectionInput() {
         val ed = load(threeBevels)
+        // **the addresses below are this build's**, so the script they are appended to has to be too: the
+        // fixture's own header is `constructit 7`, and a file older than
+        // [DocumentFormat.CAP_SLOT_VERSION] has its face addresses mapped on load (OP-31, slice 5p). Saving
+        // the loaded document first is the honest way to say *"at this version, this face"*.
+        val atThisVersion = DocumentFormat.save(ed.doc)
         val faces = Section3.faces(Evaluator().solid(bodyRef(ed)).feature).first ?: error("faces")
         val corner = faces.indices.filter { faces[it].name is FaceName.BlendCorner }
         val bands = faces.indices.filter { faces[it].name is FaceName.BlendBand }
@@ -63,7 +68,7 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
         var refused = 0
         for (i in corner + bands) {
             val f = faces[i]
-            val text = threeBevels + "sketchspace \"f\" el=e14 piece=$i\nsectioninput \"f\" edge=0 -> e18\n"
+            val text = atThisVersion + "sketchspace \"f\" el=e14 piece=$i\nsectioninput \"f\" edge=0 -> e18\n"
             val e =
                 try {
                     load(text)

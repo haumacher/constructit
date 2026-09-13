@@ -230,6 +230,42 @@ class BlendCanalPoseTest {
         }
     }
 
+    /**
+     * **A band whose free end closes on a cap of its own** (OP-31, slice 5p) — one rounded top edge of a
+     * regular **pentagonal** prism, in every pose.
+     *
+     * The block above is the case that always worked, and the reason is that its plan corner is a right
+     * angle: the wall the band's free end runs into is square to the crease, so the cap stands *in* that wall
+     * and is its notch. A pentagon's is not, so the band closes on a flat cap that is a face of its own and
+     * the wall keeps a triangle past it — two more pieces of tool geometry, both built in the crease's own
+     * frame, and so both owed the same claim as everything else in this class: they take what they take on
+     * `XY` wherever the drawing was sketched.
+     */
+    @Test
+    fun aFreeEndsOwnCapTakesTheSameMaterialInEveryPose() {
+        assertSameInEveryPose("one band on a pentagonal prism's top edge") { pose ->
+            val cx = Construction()
+            val plan = (0 until 5).map { Vec2(30.0 * cos(2 * PI * it / 5), 30.0 * sin(2 * PI * it / 5)) }
+            val prism = prismOn(pose, cx, plan, height)
+            val s = Evaluator().solid(prism)
+            assertManifold(s.mesh, "${pose.what}: the pentagonal prism")
+            val es = edgesOf(s)
+            val top =
+                es.indices.filter { i ->
+                    val p = Blend3.edgePath(es[i]).first ?: return@filter false
+                    val a = p.start ?: return@filter false
+                    val b = p.end ?: return@filter false
+                    val n = frame(pose).third
+                    abs((a - at(pose, 0.0, 0.0, height)).dot(n)) < 1e-9 && abs((b - at(pose, 0.0, 0.0, height)).dot(n)) < 1e-9
+                }
+            assertEquals(5, top.size, "${pose.what}: one top edge per side")
+            val (ref, why) = round(cx, prism, top.take(1), 3.0)
+            val body = Evaluator().solid(assertNotNull(ref, "${pose.what}: the top edge rounds: $why"))
+            assertManifold(body.mesh, "${pose.what}: the pentagon's rounded top edge")
+            Geom3.volume(s.mesh) to Geom3.volume(s.mesh) - Geom3.volume(body.mesh)
+        }
+    }
+
     // ---- (b) the canal band of slice 5f: a section that changes along an elliptical mitre ----
 
     /**

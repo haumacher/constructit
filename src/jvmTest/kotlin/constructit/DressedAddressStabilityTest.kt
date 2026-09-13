@@ -482,8 +482,8 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
     @Test
     fun anOlderFileHasItsCornerSlotsRecordedOnceAndMovesNothing() {
         assertEquals(9, DocumentFormat.CORNER_SLOT_VERSION, "the version that records a corner's slots")
-        assertEquals(DocumentFormat.CORNER_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
-        val old = DocumentFormat.save(rims(3).doc).replace("constructit 9", "constructit 8").replace(Regex(" slots=\\S+"), "")
+        assertTrue(DocumentFormat.VERSION >= DocumentFormat.CORNER_SLOT_VERSION, "…and this build writes that record or a later numbering")
+        val old = DocumentFormat.save(rims(3).doc).replace("constructit ${DocumentFormat.VERSION}", "constructit 8").replace(Regex(" slots=\\S+"), "")
         val doc = DocumentFormat.load(old)
         assertTrue(doc.loadNotes.any { "numbered from a record" in it }, "the load says the record was taken: ${doc.loadNotes}")
         // the layout is the one that file was written against: the shared curves after every block, which is
@@ -507,7 +507,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
     @Test
     fun aVersionEightFileAddressingACornerCurveLoadsUnmovedAndIsSavedWithTheRecord() {
         assertEquals(9, DocumentFormat.CORNER_SLOT_VERSION, "the version that records a corner's slots")
-        assertEquals(DocumentFormat.CORNER_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
+        assertTrue(DocumentFormat.VERSION >= DocumentFormat.CORNER_SLOT_VERSION, "…and this build writes that record or a later numbering")
 
         val doc = DocumentFormat.load(cornerRoundedAtEight)
         assertTrue(doc.loadNotes.any { "numbered from a record" in it }, "the load says the record was taken: ${doc.loadNotes}")
@@ -524,7 +524,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertClose(a, volumeOf(nine.elements.last { it.kind == ElementKind.SOLID }), abs(a) * 1e-9, "and it is the same body")
 
         val once = DocumentFormat.save(doc)
-        assertTrue(once.startsWith("constructit ${DocumentFormat.CORNER_SLOT_VERSION}\n"), "it is saved at the version that records:\n$once")
+        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}\n"), "it is saved at the version this build writes:\n$once")
         assertTrue("slots=2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2" in once, "…with the record the body states:\n$once")
         val again = DocumentFormat.load(once)
         assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")

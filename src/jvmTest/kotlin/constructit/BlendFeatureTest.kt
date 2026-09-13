@@ -147,8 +147,12 @@ class BlendFeatureTest {
         val dressed = Evaluator().solid(rounded).feature
         assertTrue(dressed is Feature3.Blend, "the blend is a feature of its own, not a mesh boolean: $dressed")
         val faces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second?.render())
-        assertEquals(baseFaces.size + 1, faces.size, "one band appended per blended edge")
-        assertEquals(baseFaces.map { it.name }, faces.dropLast(1).map { it.name }, "every base face keeps its index")
+        assertEquals(
+            baseFaces.size + 3,
+            faces.size,
+            "one band appended per blended edge, and its two flat-end slots beside it — every entry owns two, tombstoned where a notch or a corner owns that end (OP-31, slice 5p)",
+        )
+        assertEquals(baseFaces.map { it.name }, faces.dropLast(3).map { it.name }, "every base face keeps its index")
 
         // the cap: the whole boundary stepped in by the radius along the blended edge
         val cap = faces[baseFaces.indexOfFirst { it.name == FaceName.RevolveCap(SolidFace.TOP) }]
@@ -173,7 +177,7 @@ class BlendFeatureTest {
         )
 
         // the band itself: a straight edge carries the fillet arc, so the surface is a cylinder of the radius
-        val band = faces.last()
+        val band = faces[faces.size - 3]
         assertEquals(FaceName.BlendBand(i), band.name, "the band is named by the edge it rounds")
         assertEquals(Revolve3.Band.Cylinder(r, 0.0, 10.0), assertNotNull(band.surface).band, "a straight-edge fillet is a cylinder band")
         assertNull(band.plane, "and it is not a plane")
@@ -223,7 +227,11 @@ class BlendFeatureTest {
 
         val dressed = Evaluator().solid(rounded).feature
         val dressedFaces = assertNotNull(Section3.faces(dressed).first, Section3.faces(dressed).second?.render())
-        assertEquals(faces.size + 4, dressedFaces.size, "one band per piece of the chain")
+        assertEquals(
+            faces.size + 12,
+            dressedFaces.size,
+            "one band per piece of the chain, each with its own two flat-end slots (OP-31, slice 5p)",
+        )
         assertEquals(faces.map { it.name }, dressedFaces.take(faces.size).map { it.name }, "and no base index moved")
         // the cap is gone from *every* side by the radius: its outline no longer reaches any of its old corners
         val cap = dressedFaces[f]
@@ -257,14 +265,14 @@ class BlendFeatureTest {
         assertNull(dressed.inputsRefusal, "and so does the chamfered plate — that is the whole of slice 3")
         assertEquals(
             plain.edges.map { it.provenance },
-            dressed.edges.dropLast(1).map { it.provenance },
-            "every face of the base is named at its own index",
+            dressed.edges.dropLast(3).map { it.provenance },
+            "every face of the base is named at its own index — the three past them are the band and its two flat-end slots (OP-31, slice 5p)",
         )
         // the top face's cut is the same segment, shortened by the setback
         assertEquals(seg(0.0, 20.0, 30.0, 20.0), plain.edges[5].curve, "the plain top face runs the full width")
         assertEquals(seg(4.0, 20.0, 30.0, 20.0), dressed.edges[5].curve, "the dressed one starts at the setback")
         // …and the bevel itself is a named input
-        assertEquals(seg(0.0, 16.0, 4.0, 20.0), dressed.edges.last().curve, "the bevel is a face of the body")
+        assertEquals(seg(0.0, 16.0, 4.0, 20.0), dressed.edges[dressed.edges.size - 3].curve, "the bevel is a face of the body")
         assertTrue("rounded band" in dressed.edges.last().provenance, "${dressed.edges.last().provenance}")
 
         // corners: the consumed edge says why it is not one, and the two rails are
@@ -425,8 +433,12 @@ class BlendFeatureTest {
         assertTrue(f2 is Feature3.Blend && f2.base === f1, "the second blend's base is the first blend")
         val faces2 = assertNotNull(Section3.faces(f2).first, Section3.faces(f2).second?.render())
         val edges2 = assertNotNull(Section3.edges(f2).first)
-        assertEquals(faces1.size + 1, faces2.size, "one more band")
-        assertEquals(faces1.map { it.name }, faces2.dropLast(1).map { it.name }, "and every index of the *dressed* list survives")
+        assertEquals(
+            faces1.size + 3,
+            faces2.size,
+            "one more band, and the two flat-end slots that entry owns with it (OP-31, slice 5p)",
+        )
+        assertEquals(faces1.map { it.name }, faces2.dropLast(3).map { it.name }, "and every index of the *dressed* list survives")
         // two more rails — and, since OP-31's slice 5b, the two **notch curves** the band's free ends leave
         // in the side faces their caps stand in, which are creases of this body and addresses of their own
         assertEquals(edges1.size + 4, edges2.size, "two more rails and the band's two free-end notches")

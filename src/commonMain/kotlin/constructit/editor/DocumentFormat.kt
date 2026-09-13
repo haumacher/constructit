@@ -122,7 +122,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 9
+    const val VERSION = 10
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -264,6 +264,30 @@ object DocumentFormat {
      * and is saved with it from then on. The load says so once.
      */
     const val CORNER_SLOT_VERSION = 9
+
+    /**
+     * The first version whose dressed body owns **two flat-end face slots at every entry** (OP-31, slice 5p)
+     * — the last place a face the body has had no slot to be named in.
+     *
+     * A band that ends without a corner closes on a flat cap standing in the plane square to its crease, and
+     * session 81 gave that cap no slot wherever the crease was one straight run: *"at a free end of a
+     * straight edge that frame lies in the end face's plane — the cap is square to the edge and so is the
+     * face"*. That holds at a **right angle** and nowhere else. On a regular **pentagonal** prism with one
+     * rounded top edge the neighbouring wall stands at the polygon's own exterior angle; on a **loft** it
+     * leans by the slant. In both the cap is a face of the body with nothing to name it, so a level section
+     * through the band region could not close — the same refusal, in the same words, for a shape as ordinary
+     * as a prism.
+     *
+     * Whether a notch owns an end is a fact about the neighbouring faces' **orientation**, which is a
+     * coordinate and not structure (OP-21), so the count may not ask it: every entry owns two, each either
+     * the cap it has or a tombstone naming whoever owns that end instead. The face indices therefore
+     * **move**, which is what a version is for: a file written before this one has its stored face addresses
+     * — a `sketchspace … piece=` and a whole-face `filletedge signs=` alike — mapped by **name** through
+     * [constructit.geom.Blend3.faceAddressBeforeCapSlots] and
+     * [constructit.geom.Section3.faceSpaceAddressBeforeCapSlots], and the load says so once rather than
+     * putting a sketch on a different face in silence (OP-18).
+     */
+    const val CAP_SLOT_VERSION = 10
 
     const val HEADER = "constructit $VERSION"
 

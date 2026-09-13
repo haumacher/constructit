@@ -1,0 +1,13 @@
+constructit 9
+orthostart 0,0 -> e1
+orthovertex 60,0 -> e2,e3
+orthovertex 60,40 -> e4,e5
+orthovertex 0,40 -> e6,e7
+orthoclose -> e8
+param "h" = 20mm
+tool extrude els=e3 clicks=30,0 scalar="h" -> e9
+param "c" = 4mm
+tool chamferedge els=e9 clicks=30,0 scalar="c" signs=8;-1;1;0;1 -> e10,e11
+param "d" = 1mm
+tool chamferedge els=e10 clicks=30,2 scalar="d" signs=12;-1;1;0;1 -> e12,e13
+sketchspace "onchain" el=e12 piece=7

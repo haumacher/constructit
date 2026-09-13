@@ -689,7 +689,16 @@ data class SectionCorner(
  * exact arcs beside a twisted band's chords. [PlaneSection.drawn] is still the plain list of pieces, so
  * nothing that only wants the geometry had to learn about this.
  */
-data class DrawnPiece(val piece: ProfileElement, val approximated: Boolean)
+data class DrawnPiece(
+    val piece: ProfileElement,
+    val approximated: Boolean,
+    /**
+     * The face this piece is the cut of, where the caller knows it — what a section that does not close
+     * names when it says where it broke (OP-3, OP-31 slice 5p). It is a label and never an identity: the
+     * chaining itself is geometric, and nothing decides differently for knowing this.
+     */
+    val from: Msg? = null,
+)
 
 /**
  * The **section of a solid at a plane**, in the plane's own (u, v) — the context of a working plane, and the
@@ -1622,6 +1631,31 @@ object Section3 {
         }
 
     /**
+     * **A `sketchspace … piece=` address as a file older than [DocumentFormat.CAP_SLOT_VERSION] meant it**
+     * (OP-18, OP-31 slice 5p) — [Blend3.faceAddressBeforeCapSlots] read in the *address* space rather than
+     * in the face list's own.
+     *
+     * The two spaces differ by one constant. A dressed body's address count is its base's plus the faces the
+     * dressing adds ([faceAddressCount]), and so is its face list's length, so every level of a chain shifts
+     * both by the same amount: the difference between the two is the **root**'s own — how many addresses the
+     * undressed body has against how many faces it names — and nothing a dressing does changes it. An
+     * address inside the root's own space names a base face and does not move at all.
+     */
+    fun faceSpaceAddressBeforeCapSlots(
+        feature: Feature3,
+        piece: Int,
+    ): Int {
+        if (feature !is Feature3.Blend) return piece
+        var root: Feature3 = feature
+        while (root is Feature3.Blend) root = root.base
+        val rootFaces = faces(root).first?.size ?: return piece
+        val rootCount = faceAddressCount(root)
+        if (piece < rootCount) return piece
+        val delta = rootCount - rootFaces
+        return Blend3.faceAddressBeforeCapSlots(feature, piece - delta) + delta
+    }
+
+    /**
      * The face a dressed body's address [piece] names, past its base's own — a **band** or a **corner patch**,
      * in the dressed list's own order, with the sketching frame every face space is measured in.
      *
@@ -2076,14 +2110,22 @@ object Section3 {
         if (!facesAreWholeBoundary(feature)) return null to (structuralRefusal(feature) ?: MESH_ONLY)
         val section = structuralSection(feature, fs, plane)
         if (section.isEmpty) return null to Msgs.refusalSectionPlaneDoesNotCutThis()
-        val loops =
-            chainLoops(section.pieces) ?: return null to
-                Msgs.refusalSectionPlaneSectionThisSolidDoes()
+        // **and where it does not close, it says at which face** (OP-3, OP-31 slice 5p). A whole session
+        // went into finding that a lofted band's free end was the open end of this loop, on a refusal that
+        // said only *"one of the faces it crosses"*; the chain knows which piece it ran out at, and the
+        // general sentence stays for a piece that carries no name.
+        val (loops, stuck) = chainLoops(section.pieces)
+        if (loops == null) {
+            return null to (stuck?.let { Msgs.refusalSectionPlaneSectionDoesNotCloseAt(name = it) } ?: Msgs.refusalSectionPlaneSectionThisSolidDoes())
+        }
         return nest(loops) to null
     }
 
-    /** [pieces] chained end to end into closed loops, or null when one of them does not close. */
-    private fun chainLoops(pieces: List<DrawnPiece>): List<Loop>? {
+    /**
+     * [pieces] chained end to end into closed loops, or null when one of them does not close — with the face
+     * the chain ran out at, where that piece carries a name (OP-31, slice 5p).
+     */
+    private fun chainLoops(pieces: List<DrawnPiece>): Pair<List<Loop>?, Msg?> {
         val left = pieces.filter { (GeomMath.endOf(it.piece) - GeomMath.startOf(it.piece)).length() > Geom3.WELD_TOL }.toMutableList()
         val out = ArrayList<Loop>()
         while (left.isNotEmpty()) {
@@ -2104,15 +2146,15 @@ object Section3 {
                     left.indexOfFirst { reach(it) <= CHAIN_TOL }
                         .takeIf { it >= 0 }
                         ?: left.indexOfFirst { reach(it) <= tolBetween(tail, it) }
-                if (at == null || at < 0) return null
+                if (at == null || at < 0) return null to (tail.from ?: head.from)
                 val piece = left.removeAt(at)
                 tail = piece
                 run.add(if ((GeomMath.startOf(piece.piece) - end).length() <= (GeomMath.endOf(piece.piece) - end).length()) piece.piece else GeomMath.reverse(piece.piece))
             }
-            if (run.size < 2) return null
+            if (run.size < 2) return null to head.from
             out.add(Loop(run))
         }
-        return out.ifEmpty { null }
+        return out.ifEmpty { null } to null
     }
 
     /** How near two pieces must come to be one chain: exact against exact is exact, a chord is a chord. */
@@ -2171,9 +2213,12 @@ object Section3 {
         for (patch in fs) {
             val (edge, extra) = cutFace(feature, patch, cut)
             edges.add(edge)
-            edge.curve?.let { drawn.add(DrawnPiece(it, false)) }
-            edge.sampled?.let { pts -> drawn.addAll(polylinePieces(pts).map { DrawnPiece(it, true) }) }
-            drawn.addAll(extra)
+            // …each piece carrying the name of the face it is the cut of, so a loop that does not close can
+            // say where (OP-31, slice 5p)
+            val label = patch.name.label
+            edge.curve?.let { drawn.add(DrawnPiece(it, false, label)) }
+            edge.sampled?.let { pts -> drawn.addAll(polylinePieces(pts).map { DrawnPiece(it, true, label) }) }
+            drawn.addAll(extra.map { DrawnPiece(it.piece, it.approximated, it.from ?: label) })
         }
         val (es, whyEdges) = edges(feature)
         val corners =

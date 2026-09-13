@@ -136,8 +136,11 @@ class DressedFaceSpaceTest {
                 assertEquals(below.first!!.plane, above.first!!.plane, "…in the same frame")
             }
         }
+        // **the address is this build's**, so the script it is appended to is written at this version first:
+        // a file older than [DocumentFormat.CAP_SLOT_VERSION] has its face addresses mapped on load
+        // (OP-31, slice 5p), and the fixture's own header is `constructit 7`.
         val script =
-            SCRIPT + "sketchspace \"f\" el=e14 piece=${
+            DocumentFormat.save(DocumentFormat.load(SCRIPT)) + "sketchspace \"f\" el=e14 piece=${
                 assertNotNull(Section3.addressOfFace(solid.feature, FaceName.BlendBand(13, 0)), "the band has an address")
             }\n"
         val ed = Editor()

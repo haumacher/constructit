@@ -1,0 +1,14 @@
+constructit 9
+orthostart 0,0 -> e1
+orthovertex 60,0 -> e2,e3
+orthovertex 60,40 -> e4,e5
+orthovertex 0,40 -> e6,e7
+orthoclose -> e8
+param "pr" = 12mm
+tool fillet els=e5,e7 clicks=60,20;30,40 scalar="pr" signs=-1;1 -> e9
+param "h" = 20mm
+tool extrude els=e3 clicks=30,0 scalar="h" -> e10
+param "c" = 3mm
+tool chamferedge els=e10 clicks=30,0 scalar="c" signs=10;-1;1;0;1 slots=3:m10.11-0 -> e11,e12
+tool chamferedge els=e11 clicks=54,34 scalar="c" signs=12;-1;1;0;1;-1;-1;0;1;-1;1;0;1 -> e13
+sketchspace "oncap" el=e11 piece=10

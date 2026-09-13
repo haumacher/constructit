@@ -134,7 +134,10 @@ tool filletedge els=e9 clicks=30,0 scalar="r" signs=8;-1;1;0;1 -> e10,e11
         val rim = body(ed)
         val rounded = ed.doc.cx.roundNotch(refOf(rim), notches(refOf(rim))[0], 1.0)
         val faces = assertNotNull(Section3.faces(Evaluator().solid(rounded).feature).first)
-        val caps = faces.indices.filter { faces[it].name is FaceName.BlendCap }
+        // **picked by what it is, never by where it stands.** Every entry owns two flat-end slots since
+        // OP-31's slice 5p and most of them are tombstones — a notch or a corner owns that end — so this
+        // asks for the slots that are *faces*, and it is proof against the numbering moving again.
+        val caps = faces.indices.filter { faces[it].name is FaceName.BlendCap && faces[it].reason == null }
         assertTrue(caps.isNotEmpty(), "the revolved band ends on a cap face: ${faces.map { it.name }}")
         for (c in caps) {
             val f = faces[c]
