@@ -240,25 +240,28 @@ class BlendCanalProbeTest {
     }
 
     /**
-     * **A ball too large for the bend refuses in the editor's own words.** Retyped past the spine's least
-     * radius of curvature, the canal's body is invalid with a reason that names the crease and says why — never
-     * an engine status — and retyping back gives the body again.
+     * **A ball large against the bend rolls, and it is the editor that says so** (OP-31, slice 5m).
+     *
+     * This probe used to assert the opposite. Session 84 refused such a rounding by name
+     * (`refusal.blend.canalBallLargerThanBend`), because the stations were spread along the **crease** and
+     * the crease's own normal planes stop foliating the spine once the ball is large against the crease's
+     * bend — the run folded and the loft swept the same band twice. Since the stations march the **spine**
+     * itself there is no parameterisation left to fold, so the body is the body: manifold, inside the figure
+     * its own algebra states, and retyping back gives the smaller one again.
      */
     @Test
-    fun aBallTooLargeForTheBendRefusesByNameInTheEditor() {
+    fun aBallLargeAgainstTheBendRollsInTheEditor() {
         val ed = Editor()
         ed.replaceDocument(DocumentFormat.load(blockScript()))
         val first = volumeOf(bodyOf(ed), "as loaded")
         val rc = ed.doc.scalars.first { it.name == "rc" }
         assertTrue(ed.setParameter(rc, 2.5), ed.statusHint)
         val r = Evaluator().eval(bodyOf(ed).ref.node)
-        assertTrue(r is EvalResult.Invalid, "a 2.5 mm ball does not roll along the mitre of two 4 mm rounds")
-        val reason = (r as EvalResult.Invalid).reason
-        assertTrue(namesSomething(reason), "the refusal names the crease: $reason")
-        assertTrue(!reason.contains("status") && !reason.contains("Manifold"), "…and no engine diagnostic leaks: $reason")
+        assertTrue(r is EvalResult.Ok, "a 2.5 mm ball rolls along the mitre of two 4 mm rounds: ${(r as? EvalResult.Invalid)?.reason}")
+        checkBracket(ed, 2.5)
+        assertTrue(volumeOf(bodyOf(ed), "at 2.5 mm") < first, "…and it takes more than the 1 mm ball did")
         assertTrue(ed.setParameter(rc, 1.0), ed.statusHint)
         assertClose(volumeOf(bodyOf(ed), "back at 1 mm"), first, 1e-9 * first, "the body is back")
-        println("probe | too large | $reason")
     }
 
     // ---- fixtures ----

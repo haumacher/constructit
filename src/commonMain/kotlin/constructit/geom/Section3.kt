@@ -579,8 +579,11 @@ data class Pipe3(
      * found by a scan over the knots and then a golden-section descent between its two neighbours.
      *
      * It is the *nearest* point and not a root of `(p − c)·c′` chosen at random, which is what makes the
-     * answer single-valued wherever the ball is smaller than the spine's own bend — the very condition
-     * slice 5f already refuses a run by ([Msgs.refusalBlendCanalBallLargerThanBend]).
+     * answer single-valued on the side of the spine the band actually lies on. Where the ball is larger than
+     * the spine's own bend the pipe surface self-intersects on the **concave** side, and the strip between
+     * the two tangencies — which is all a canal band ever is — stands on the convex one (OP-31, slice 5m,
+     * which builds exactly that case; a pivot's corner still refuses it by name,
+     * [Msgs.refusalBlendCanalBallLargerThanBend]).
      */
     fun stationOf(p: Vec3): Double {
         val n = stations.size

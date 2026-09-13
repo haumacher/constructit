@@ -8,6 +8,7 @@ import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -8800,6 +8801,15 @@ object Blend3 {
          */
         val grow: Double,
     ) {
+        /**
+         * **The spine between the stations** — the Catmull–Rom through them, with the tolerance the curve
+         * between two of them may stand from the truth, measured ([pipeOf]). It is the curve every reading
+         * *between* two stations is seeded on ([canalSpineRawAt]); the band's own carrier is the same
+         * interpolant carried one step past each free end, which is as far as the tool goes
+         * ([canalBandPatch]).
+         */
+        val spine: Pipe3 by lazy { pipeOf(stations.map { PipeStation(it.at, it.t, it.ax, it.s) }, r, closed) }
+
         val name: FaceName get() = FaceName.BlendBand(index, 0)
 
         val convex: Boolean get() = choice.convex
@@ -9077,11 +9087,57 @@ object Blend3 {
         tau = tau.normalized()
         val c = centreAt(w1, w2, m, tau, s1 * r, s2 * r) ?: return null
         // **the spine's own tangent, and not the crease's**: the characteristic circle of a pipe surface
-        // stands square to the *spine*, which is where the two tangencies lie exactly (see [Wall])
-        val cA = centreAt(w1, w2, mA, tau, s1 * r, s2 * r) ?: c
-        val cB = centreAt(w1, w2, mB, tau, s1 * r, s2 * r) ?: c
-        var t = cB - cA
-        t = if (t.length() <= Vec3.EPS) tau else t.normalized()
+        // stands square to the *spine*, which is where the two tangencies lie exactly (see [Wall]), and it
+        // is read from the two gradients **at this very point** rather than from two neighbouring solves
+        // (OP-31, slice 5m — see [spineTangentAt]).
+        val t = spineTangentAt(w1, w2, c, tau) ?: tau
+        return canalRawFrom(w1, w2, c, t, m)
+    }
+
+    /**
+     * **The spine's own tangent at [c]** (OP-31, slice 5m) — the cross product of the two offset surfaces'
+     * own gradients, read at the point itself, oriented to carry on in [prev]'s direction.
+     *
+     * The spine is `{ c : dist(c, F₁) = r and dist(c, F₂) = r }`, which is the intersection of the two
+     * faces' offset surfaces; the tangent of an intersection curve is `∇f₁ × ∇f₂`, and both gradients are
+     * closed forms of the point ([Wall.grad]). That is the whole of why this slice's march is
+     * well-conditioned where session 84's fixed point was not: **nothing is read from a neighbour**, so
+     * there is no pair of nearly coincident planes for two neighbouring solves to be read in.
+     *
+     * Null where the two surfaces run **tangent** — the run's own tip, where the rounding tapers to
+     * nothing and the intersection is a touching rather than a crossing; the march carries [prev] through
+     * it, which is what a tip is: one point of an otherwise ordinary run.
+     */
+    private fun spineTangentAt(
+        w1: Wall,
+        w2: Wall,
+        c: Vec3,
+        prev: Vec3?,
+    ): Vec3? {
+        val g1 = w1.grad(c) ?: return null
+        val g2 = w2.grad(c) ?: return null
+        val x = g1.cross(g2)
+        if (x.length() <= TANGENT_TOL) return null
+        val u = x.normalized()
+        return if (prev != null && u.dot(prev) < 0.0) -u else u
+    }
+
+    /**
+     * The station a **spine point** [c] carries: the frame of its own normal plane, the two tangencies, the
+     * crease's own apex and the turn of the ball's arc between them (OP-31, slice 5m).
+     *
+     * Every one of them is a closed reading of [c] alone — a tangency is the wall's own nearest point, the
+     * frame is square to [t], the apex is the one point of the plane that lies on both walls — so a station
+     * is a pure function of where the ball's centre stands, whatever parameterisation brought it there.
+     */
+    private fun canalRawFrom(
+        w1: Wall,
+        w2: Wall,
+        c: Vec3,
+        t: Vec3,
+        /** Where to look for the crease's own point — a point near it in space, or nothing at all. */
+        apexSeed: Vec3?,
+    ): CanalRaw? {
         val p1 = w1.nearest(c) ?: return null
         val p2 = w2.nearest(c) ?: return null
         var ax = p1 - c
@@ -9091,7 +9147,12 @@ object Blend3 {
         val place = Placement(c, ax, t.cross(ax))
         val q1 = Vec2((p1 - c).dot(place.cx), (p1 - c).dot(place.cy))
         val q2 = Vec2((p2 - c).dot(place.cx), (p2 - c).dot(place.cy))
-        val seed = Vec2((m - c).dot(place.cx), (m - c).dot(place.cy))
+        val seed =
+            if (apexSeed == null) {
+                Vec2(0.0, 0.0)
+            } else {
+                Vec2((apexSeed - c).dot(place.cx), (apexSeed - c).dot(place.cy))
+            }
         val apex = apexAt(w1, w2, place, seed) ?: return null
         val a1 = atan2(q1.y, q1.x)
         val a2 = atan2(q2.y, q2.x)
@@ -9111,6 +9172,121 @@ object Blend3 {
         // the sign is kept: which way the ball's arc runs from tangency to tangency is what the cap's own
         // arc and the section's winding are stated with
         return CanalRaw(c, t, place, p1, p2, a1, sweep, apex)
+    }
+
+    /**
+     * **The spine, marched on itself** (OP-31, slice 5m) — and why the run is no longer read through the
+     * crease's own parameterisation.
+     *
+     * Slice 5f spread the stations along the **crease** and solved the ball's centre in the crease's normal
+     * plane at each. That map is a bijection only while the spine stands nearer the crease than the crease's
+     * own centre of curvature; past that the crease's normal planes stop foliating the spine, `u` walks
+     * forward, turns at a cusp and comes back over ground it has already covered, and session 84 refused
+     * such a rounding by name rather than build the band twice over. The cure is to stop reading the spine
+     * through anything but itself.
+     *
+     * The spine is the intersection of the two faces' **offset surfaces**, each offset by `r` toward the air
+     * the ball rolls in — that is what *the centre stands `r` from both faces* says — so:
+     *
+     * - the **tangent** is `∇f₁ × ∇f₂` ([spineTangentAt]), read from the two gradients at the current point
+     *   and from nothing else, which is exactly the ill-conditioning session 84 recorded and could not get
+     *   round: *"a fixed point in the spine's tangent was tried and is ill-conditioned, because the two
+     *   neighbours `c′` is read from are solved in two nearly coincident planes"* — there are no neighbours
+     *   in this reading at all;
+     * - a **step** is taken along that tangent and pulled back onto both offsets by Newton ([centreAt], which
+     *   solves the two signed distances in the plane square to the tangent), so every station is on the spine
+     *   to machine precision however long the run is;
+     * - the run **ends** where the ball's contact leaves the faces' own trim, and that is the crease's own
+     *   two ends: the crease [canalPath] carries *is* the trimmed edge, and its endpoint lifted to the spine
+     *   is where the contact runs off. Those two liftings are well-conditioned — it is the run's *interior*
+     *   the crease's foliation loses — so the two ends are stated exactly and the march lands on them rather
+     *   than stepping past.
+     *
+     * A march that cannot reach the far end is the ball failing to fit somewhere along the crease — the two
+     * offsets stop meeting — and refuses in the caller's own sentence; there is no partial run with two free
+     * ends to be had here, because the crease is the trim and the walls carry it all the way.
+     */
+    private fun marchSpine(
+        w1: Wall,
+        w2: Wall,
+        path: Path3,
+        lens: List<Double>,
+        r: Double,
+        s1: Int,
+        s2: Int,
+        closed: Boolean,
+        step: Double,
+    ): List<CanalRaw>? {
+        if (step <= Geom3.WELD_TOL) return null
+        val first = canalRawAt(w1, w2, path, lens, 0.0, r, s1, s2) ?: return null
+        val last = if (closed) first else canalRawAt(w1, w2, path, lens, 1.0, r, s1, s2) ?: return null
+        val out = ArrayList<CanalRaw>()
+        out.add(first)
+        var cur = first
+        // …and the walk is bounded by the crease's own length: a spine that has marched many times it has
+        // lost its way, and that is a refusal rather than a loop that never ends
+        val guard = max(16, ceil(8.0 * lens.sum() / step).toInt())
+        var k = 0
+        var done = false
+        while (k < guard) {
+            k++
+            val c = centreAt(w1, w2, cur.at + cur.t * step, cur.t, s1 * r, s2 * r) ?: return null
+            val t = spineTangentAt(w1, w2, c, cur.t) ?: cur.t
+            val raw = canalRawFrom(w1, w2, c, t, cur.place.at(cur.apex)) ?: return null
+            if (closed) {
+                if (k >= 3 && (raw.at - first.at).dot(first.t) >= 0.0 && (raw.at - first.at).length() <= step) {
+                    done = true
+                    break
+                }
+            } else if ((raw.at - last.at).dot(last.t) >= 0.0) {
+                done = true
+                break
+            }
+            out.add(raw)
+            cur = raw
+        }
+        if (!done) return null
+        if (!closed) {
+            // the far end is the run's own end and is stated exactly; a station that has crowded up against
+            // it is dropped rather than left as a step the loft would have to close on
+            while (out.size > 1 && (out.last().at - last.at).length() <= step / 2.0) out.removeAt(out.size - 1)
+            out.add(last)
+        }
+        return if (out.size >= 2) out else null
+    }
+
+    /**
+     * **How far the true spine stands from the chord between two stations** (OP-31, slice 5m) — the loft's
+     * own warp rule, asked of the band rather than tabulated, and the number the step is halved against.
+     *
+     * The chord's own midpoint is pulled back onto the spine and its station stated there; what is measured
+     * is the miss of the centre and of the two tangencies, which is exactly what slice 5f measured when it
+     * doubled the crease's station count.
+     */
+    private fun chordMiss(
+        w1: Wall,
+        w2: Wall,
+        set: List<CanalRaw>,
+        r: Double,
+        s1: Int,
+        s2: Int,
+        closed: Boolean,
+    ): Double {
+        var worst = 0.0
+        for (k in 0 until (if (closed) set.size else set.size - 1)) {
+            val a = set[k]
+            val b = set[(k + 1) % set.size]
+            val mid = (a.at + b.at) * 0.5
+            var t = b.at - a.at
+            if (t.length() <= Vec3.EPS) continue
+            t = t.normalized()
+            val c = centreAt(w1, w2, mid, t, s1 * r, s2 * r) ?: continue
+            val raw = canalRawFrom(w1, w2, c, spineTangentAt(w1, w2, c, t) ?: t, a.place.at(a.apex)) ?: continue
+            worst = max(worst, (raw.at - mid).length())
+            worst = max(worst, (raw.p1 - (a.p1 + b.p1) * 0.5).length())
+            worst = max(worst, (raw.p2 - (a.p2 + b.p2) * 0.5).length())
+        }
+        return worst
     }
 
     /**
@@ -9209,30 +9385,33 @@ object Blend3 {
         val lens = path.elements.map { pieceLength(it) }
         val notFitting = Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
 
-        fun raws(n: Int): List<CanalRaw>? = (0..n).map { canalRawAt(w1, w2, path, lens, it.toDouble() / n, r, s1, s2) ?: return null }
-        var n = 8
-        var set = raws(n) ?: return null to notFitting
-        while (n < 128) {
-            val fine = raws(2 * n) ?: return null to notFitting
-            var worst = 0.0
-            for (k in 0 until n) {
-                val mid = fine[2 * k + 1]
-                worst = max(worst, (mid.at - (set[k].at + set[k + 1].at) * 0.5).length())
-                worst = max(worst, (mid.p1 - (set[k].p1 + set[k + 1].p1) * 0.5).length())
-                worst = max(worst, (mid.p2 - (set[k].p2 + set[k + 1].p2) * 0.5).length())
-            }
-            set = fine
-            n *= 2
-            if (worst <= GeomMath.TESS_TOL_MM) break
+        // **the stations march the spine itself** (OP-31, slice 5m), and the step is the geometry's own:
+        // it starts at an eighth of the crease and is halved until the chord between two stations stands
+        // inside the tessellation tolerance of the spine it spans ([chordMiss]) — a count derived at build
+        // time from the body, stored nowhere and stated in no file (OP-21).
+        val closed = (path.start != null && path.end != null && (path.start!! - path.end!!).length() <= Geom3.WELD_TOL)
+        val creaseLen = lens.sum()
+        if (creaseLen <= Geom3.WELD_TOL) return null to notFitting
+        var step = creaseLen / 8.0
+        var set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step) ?: return null to notFitting
+        var halvings = 0
+        // …and what is measured is the miss of the set being **replaced**, so the run is always marched one
+        // level finer than the level that came inside the tolerance — slice 5f's own doubling, said for a
+        // step rather than for a count
+        while (halvings < 8 && set.size < 512) {
+            val miss = chordMiss(w1, w2, set, r, s1, s2, closed)
+            halvings++
+            step /= 2.0
+            set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step) ?: return null to notFitting
+            if (miss <= GeomMath.TESS_TOL_MM) break
         }
         val arcSteps = max(1, GeomMath.chordSteps(r, set.maxOf { abs(it.sweep) }, GeomMath.TESS_TOL_MM))
         val legSteps = legStepsFor(w1, w2, set)
-        // **a closed crease states its last station only once** — the run comes back to where it began, so
-        // a station at `u = 1` would be the one at `u = 0` said twice and the loft would close on a
-        // zero-length step (OP-31, slice 5f)
         val grow = canalGrow(w1, w2)
-        val closed = (path.start != null && path.end != null && (path.start!! - path.end!!).length() <= Geom3.WELD_TOL)
-        val used = if (closed) set.dropLast(1) else set
+        // **a closed crease states its last station only once** (OP-31, slice 5f) — the run comes back to
+        // where it began, and the march stops one step short of it rather than saying it twice, so the
+        // loft wraps on a step of its own length instead of a zero-length one
+        val used = set
         val stations = ArrayList<CanalStation>(used.size)
         var s = 0.0
         for ((k, raw) in used.withIndex()) {
@@ -9247,29 +9426,11 @@ object Blend3 {
             stations.add(CanalStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2, poly, raw.sweep, raw.a1, raw.apex, s, tip))
         }
         if (stations.count { !it.tip } < 2) return null to notFitting
-        // **and the run has to go forward** (OP-31, slice 5f; session 84) — the one thing the crease's own
-        // parameterisation does not guarantee.
-        //
-        // A station is solved in the plane through the crease point square to the **crease's** tangent, and
-        // the ball's centre it finds is a point of the spine. That correspondence is a bijection only while
-        // the spine stands nearer the crease than the crease's own centre of curvature; past that the
-        // crease's normal planes stop foliating the spine, and `u` walks forward along the spine, turns at
-        // a cusp and comes back over ground it has already covered. The loft then sweeps the same band
-        // twice: the tool still cuts (a set union does not care that it was covered twice), so nothing in
-        // the mesh says anything is wrong, while the figure the algebra states integrates the run twice
-        // over and stands at very nearly double what the body actually loses — which is how this was found.
-        //
-        // It is the geometric statement of *the ball is too large for this corner to carry it*, and it is
-        // measured on the construction's own stations rather than tabulated: where two consecutive steps of
-        // the centre oppose each other, there is no one band along the crease and the drawing says so.
-        for (k in 1 until stations.size - 1) {
-            val back = stations[k].at - stations[k - 1].at
-            val on = stations[k + 1].at - stations[k].at
-            if (back.length() <= Vec3.EPS || on.length() <= Vec3.EPS) continue
-            if (back.normalized().dot(on.normalized()) <= 0.0) {
-                return null to Msgs.refusalBlendCanalBallLargerThanBend(sizePhrase = sec.sizePhrase(), name = edge.name.label)
-            }
-        }
+        // **and the run goes forward by construction** (OP-31, slice 5m): each step is taken along the
+        // spine's own tangent and pulled straight back onto the spine, so there is no parameterisation left
+        // to fold. Session 84's *"the crease's normal planes stop foliating the spine once the ball is
+        // large against the crease's own bend"* was a property of the reading and never of the band, and
+        // the refusal it earned (`refusal.blend.canalBallLargerThanBend`) is retired with its case.
         return Canal(index, edge, sec, choice, r, stations, w1, w2, path, lens, closed, arcSteps, CANAL_FIT_TOL_MM, grow) to null
     }
 
@@ -9444,6 +9605,37 @@ object Blend3 {
     }
 
     /**
+     * **A station of this canal's spine at [v] of its own length** (OP-31, slice 5m) — the parameterisation
+     * every reader of the band asks it in, now that the crease's own is gone.
+     *
+     * The marched stations state the spine at a sequence of arc lengths; a length between two of them is
+     * read by stepping along their chord and then pulling the point back **onto** the spine, which is the
+     * same Newton the march itself takes. So the answer is exact on both offset surfaces at every `v`,
+     * continuous in `v`, and needs nothing of the crease at all — which is what lets a rail be fitted and
+     * the figure be integrated over the spine's own length.
+     */
+    private fun canalSpineRawAt(
+        canal: Canal,
+        v: Double,
+    ): CanalRaw? {
+        val sts = canal.stations
+        if (sts.size < 2) return null
+        // **the seed rides the spine's own interpolant and the plane is the seed's own** (OP-31, slice 5m),
+        // and both halves of that matter: a seed taken on the **chords** between stations and a plane taken
+        // from the chord's own direction make the map only `C⁰`, so two samples a ten-thousandth apart either
+        // side of a station report a turn the spine has not taken — which is a curvature of nothing at all,
+        // and Pappus' own factor is read on exactly that. The interpolant is `C¹` and [spineTangentAt] is a
+        // closed reading of the point, so what comes out is a `C¹` parameterisation of an exact curve.
+        val u = v.coerceIn(0.0, 1.0) * (if (canal.closed) sts.size.toDouble() else (sts.size - 1).toDouble())
+        val seed = canal.spine.centreAt(u)
+        val near = sts[min(sts.size - 1, max(0, floor(u).toInt()))]
+        val t0 = spineTangentAt(canal.w1, canal.w2, seed, near.t) ?: near.t
+        val c = centreAt(canal.w1, canal.w2, seed, t0, canal.choice.a * canal.r, canal.choice.b * canal.r) ?: return null
+        val t = spineTangentAt(canal.w1, canal.w2, c, t0) ?: t0
+        return canalRawFrom(canal.w1, canal.w2, c, t, near.world(near.apex))
+    }
+
+    /**
      * One **rail** of a canal band: the curve the ball's contact traces on wall [side], stated as a chain of
      * cubics through points that are every one of them **exact** on both the sphere and the wall.
      *
@@ -9456,7 +9648,7 @@ object Blend3 {
     ): Pair<EdgeGeom?, Double?> {
         val (chain, tol) =
             fittedChain3(canal.fitted) { u ->
-                val raw = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b)
+                val raw = canalSpineRawAt(canal, u)
                 if (raw == null) {
                     null
                 } else if (side == 0) {
@@ -9481,6 +9673,23 @@ object Blend3 {
         val edge = Section3.edges(feature).first?.getOrNull(edgeIndex) ?: return null
         val canal = canalOf(feature, edge, edgeIndex, sec, choice)?.first ?: return null
         return canalMesh(canal)
+    }
+
+    /**
+     * **The spine a canal band was marched on** (OP-31, slice 5m) — each station's centre, its own tangent
+     * and how far along the run it stands. The seam a test asserts the march itself on: that consecutive
+     * tangents never reverse (there is no fold left to find) and that consecutive stations stand within the
+     * step the geometry derived. Null where this edge carries no canal at all.
+     */
+    internal fun canalSpine(
+        feature: Feature3,
+        edgeIndex: Int,
+        sec: BlendSection,
+        choice: BlendChoice,
+    ): List<Triple<Vec3, Vec3, Double>>? {
+        val edge = Section3.edges(feature).first?.getOrNull(edgeIndex) ?: return null
+        val canal = canalOf(feature, edge, edgeIndex, sec, choice)?.first ?: return null
+        return canal.stations.map { Triple(it.at, it.t, it.s) }
     }
 
     /**
@@ -9514,14 +9723,14 @@ object Blend3 {
         val fineArcs = 512
         val h = 1e-4
 
-        fun centre(u: Double): Vec3? = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b)?.at
+        fun centre(u: Double): Vec3? = canalSpineRawAt(canal, u)?.at
 
         fun sliceAt(
             u: Double,
             legs: Int,
             arcs: Int,
         ): Double {
-            val raw = canalRawAt(canal.w1, canal.w2, canal.path, canal.lens, u, canal.r, canal.choice.a, canal.choice.b) ?: return 0.0
+            val raw = canalSpineRawAt(canal, u) ?: return 0.0
             if (abs(raw.sweep) * canal.r <= GROW_MM) return 0.0
             val poly = canalSectionAt(canal.w1, canal.w2, raw, canal.r, legs, arcs, canal.choice.a, canal.choice.b, 0.0) ?: return 0.0
             var twice = 0.0
@@ -9560,12 +9769,18 @@ object Blend3 {
         ): Double {
             val n = canal.stations.size - 1
             if (n < 2) return 0.0
+            // **`s` is the spine's own parameter now** (OP-31, slice 5m): a station stands at its own arc
+            // length along the spine, so the quadrature's abscissae are those lengths and the weights are
+            // the steps between them — one and the same parameterisation, where the crease's station count
+            // and the spine's lengths used to be two.
+            val total = canal.stations.last().s
+            if (total <= Geom3.WELD_TOL) return 0.0
             var sum = 0.0
             for (k in 0 until n) {
                 val len = canal.stations[k + 1].s - canal.stations[k].s
                 if (len <= 0.0) continue
-                val u0 = k.toDouble() / n
-                val u1 = (k + 1).toDouble() / n
+                val u0 = canal.stations[k].s / total
+                val u1 = canal.stations[k + 1].s / total
                 val a0 = sliceAt(u0, legs, arcs)
                 val a1 = sliceAt(u1, legs, arcs)
                 sum +=

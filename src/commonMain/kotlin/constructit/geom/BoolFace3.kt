@@ -1135,13 +1135,27 @@ internal object BoolFace3 {
                 val (geom, fitted) =
                     creaseGeom(ci, cj, run, operandEdges)
                         ?: return null to Msgs.refusalSectionBoolTrimNotDetermined(name = names[i].label)
+                // **a crease is stated no tighter than a surface it cannot be told off** (OP-31, slice 5m;
+                // Tier B). A face carried on a **pipe** says how far its own spine may stand from the truth
+                // ([Pipe3.fitted]) and rides that number on the face; a curve that lies on that face — or
+                // that lies nearer it than the face's own statement, which is the same thing said honestly
+                // — cannot be surer of itself than the face is. Along a rounding's own tangency rail that
+                // is not a nicety but the whole reading: the band and the wall it runs out on are tangent
+                // there, so the curve a bore leaves on one of them stands microns from the other and the
+                // drawing genuinely cannot say which it is on. The crease's own fit residual is the other
+                // half of the statement, and what is stated is the larger of the two.
+                val onPipe =
+                    slotCarrier.mapNotNull { it?.pipe }.filter { pipe ->
+                        pipe.fitted > 0.0 && creaseSamples(geom).all { abs(pipe.offset(it)) <= pipe.fitted }
+                    }
+                val carried = max(max(ci.pipe?.fitted ?: 0.0, cj.pipe?.fitted ?: 0.0), onPipe.maxOfOrNull { it.fitted } ?: 0.0)
                 edges.add(
                     SolidEdge(
                         EdgeName.BoolCrease(i, j, k - at),
                         geom,
                         FacePair(names[i], names[j]),
                         null,
-                        fitted,
+                        if (carried > 0.0) max(fitted ?: 0.0, carried) else fitted,
                     ),
                 )
             }
@@ -1762,12 +1776,88 @@ internal object BoolFace3 {
         outline: List<ProfileElement>,
     ): List<ProfileElement>? {
         if (outline.isEmpty()) return outline
-        val t = mesh.triangles[piece.tris.first()]
-        val centre = (mesh.vertices[t.a] + mesh.vertices[t.b] + mesh.vertices[t.c]) * (1.0 / 3.0)
-        val inside = Patch(surface, pipe, outline).of(centre) ?: return null
-        if (Patch(surface, pipe, outline).contains(inside)) return outline
         val flipped = outline.reversed().map { reversedPiece(it) ?: return null }
-        return if (Patch(surface, pipe, flipped).contains(inside)) flipped else null
+        val asIs = Patch(surface, pipe, outline)
+        val other = Patch(surface, pipe, flipped)
+        // **the probe is the piece's own widest triangles, largest first** (OP-31, slice 5m). The question is
+        // which way round the trim was walked, and it is settled by a point the piece plainly has; the
+        // piece's *first* triangle is whichever one the mesh happens to list first, and where that one is a
+        // sliver — which is what a piece trimmed between two curved faces begins and ends with — its own
+        // centre stands within a chord's width of the outline itself, so **neither** winding contains it and
+        // a face the body plainly has is refused by name. Area orders the probes and the first one that
+        // answers decides, which is the same reading a canal's cap takes of its own ears
+        // ([Blend3] `widestEars`).
+        for (tri in piece.tris.sortedByDescending { triArea(mesh, it) }.take(8)) {
+            val t = mesh.triangles[tri]
+            val centre = (mesh.vertices[t.a] + mesh.vertices[t.b] + mesh.vertices[t.c]) * (1.0 / 3.0)
+            val inside = asIs.of(centre) ?: continue
+            if (asIs.contains(inside)) return outline
+            if (other.contains(inside)) return flipped
+        }
+        // **and a sliver keeps its operand's own sense** (OP-31, slice 5m). A piece of one or two triangles
+        // has no interior for a probe to stand in at all — its own centre is a chord's width from its own
+        // boundary, and a ring that fine may cross itself, so neither winding answers. There is still an
+        // answer to be had, and it is structural rather than measured: a boolean only ever **trims** a face,
+        // so what is left is the operand's own face with less of it and it is walked the way the operand
+        // walked it. The chart is the same chart, so the sense is the sign of the area the ring encloses in
+        // it. Anything with three triangles or more is decided by a probe above and never reaches here.
+        // **and a sliver runs the way its own triangles do** (OP-31, slice 5m). A piece of one or two
+        // triangles has no interior for a probe to stand in — its own centre is a chord's width from its own
+        // boundary, and a ring that fine may cross itself, so neither winding answers a containment. There
+        // is still an answer to be had and it needs nothing but the piece: a face's boundary is walked with
+        // the **material on its left**, which is to say it runs round the face the same way the face's own
+        // triangles do. Both are read in the one chart, so the two senses are the same number, and a
+        // triangle of the result mesh is wound outward by construction. Anything of three triangles or more
+        // is decided by a probe above and never reaches here.
+        if (piece.tris.size <= 2) {
+            val t = mesh.triangles[piece.tris.maxBy { triArea(mesh, it) }]
+            val a = asIs.of(mesh.vertices[t.a])
+            val b = asIs.of(mesh.vertices[t.b])
+            val c = asIs.of(mesh.vertices[t.c])
+            if (a != null && b != null && c != null) {
+                val twice = (b - a).cross(c - a)
+                val want =
+                    if (abs(twice) <= 1e-18) {
+                        0.0
+                    } else if (twice > 0.0) {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                if (want != 0.0) return if (chartSense(outline) == want) outline else flipped
+            }
+        }
+        return null
+    }
+
+    /** A crease sampled — enough points to say which surfaces it does and does not stand on. */
+    private fun creaseSamples(geom: EdgeGeom): List<Vec3> =
+        when (geom) {
+            is EdgeGeom.Straight -> listOf(geom.a, geom.b, (geom.a + geom.b) * 0.5)
+            is EdgeGeom.InSpace -> geom.chain.flatMap { span -> (0..4).map { Frames3.pointAt(span, it / 4.0) } }
+            is EdgeGeom.OnPlane -> emptyList()
+        }
+
+    /** Which way round a ring runs in its own chart — the sign of the area it encloses, or zero for none. */
+    private fun chartSense(ring: List<ProfileElement>): Double {
+        val a = GeomMath.signedArea(Loop(ring))
+        return if (abs(a) <= 1e-18) {
+            0.0
+        } else if (a > 0.0) {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+
+    /** Twice the area of triangle [i] of [mesh] — how much of a piece a probe point stands in the middle of. */
+    private fun triArea(
+        mesh: Mesh3,
+        i: Int,
+    ): Double {
+        val t = mesh.triangles[i]
+        val a = mesh.vertices[t.a]
+        return (mesh.vertices[t.b] - a).cross(mesh.vertices[t.c] - a).length()
     }
 
     /** One boundary piece walked the other way — the same curve, the other direction. */
