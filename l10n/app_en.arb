@@ -19569,7 +19569,7 @@
     },
     "x-translated": "d9b771ba"
   },
-  "refusal.blend.carriesNoRigidSection": "{name} carries no rigid section — the shape carried along it changes from one end of the run to the other — so the rounding this drawing states there is the ball's own canal band, and a chamfer or a drawn profile is not stated along it",
+  "refusal.blend.carriesNoRigidSection": "{name} carries no rigid section — the shape carried along it changes from one end of the run to the other — so a drawn profile is not stated along it; a crease like this one is rounded by the ball's own canal band and chamfered by the ruled strip between the two setback traces, and either of those is stated here",
   "@refusal.blend.carriesNoRigidSection": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
@@ -19612,6 +19612,96 @@
       "sizePhrase": {
         "type": "message"
       },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelStripIsNotPlane": "{name} is the ruled strip a chamfer {sizePhrase} leaves along {name2} — it runs between the setback traces on the two faces and the angle between them changes from one end of the run to the other, so it is neither a plane nor a surface of revolution and there is nothing to sketch on there; put a datum plane where you want to sketch",
+  "@refusal.blend.bevelStripIsNotPlane": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelDoesNotFitAlong": "a chamfer {sizePhrase} does not fit along {name} — a setback of that size runs off one of the two faces it is measured along before it reaches the end of the crease; state a smaller setback, or make the two faces larger",
+  "@refusal.blend.bevelDoesNotFitAlong": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelStripFoldsBack": "a chamfer {sizePhrase} is larger than the bend of {name}: the setback traces on the two faces turn back on themselves before the end of the crease, so the strip between them would run over the same ground twice — state a smaller setback, or round the crease instead",
+  "@refusal.blend.bevelStripFoldsBack": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "sizePhrase": {
+        "type": "message"
+      },
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelTapersToNothing": "the chamfer of {name} takes nothing at this end, where the two faces it stands between run tangent to one another, so it has no flat end there",
+  "@refusal.blend.bevelTapersToNothing": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelRunsRightRound": "{name} closes on itself, so the chamfer along it runs right round and has no flat end at all",
+  "@refusal.blend.bevelRunsRightRound": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelWallNotStatable": "{name} lies between {name2} and {name3}, and {name2} is neither a plane nor a cylinder this drawing can measure a setback along, so no chamfer can be carried along that crease",
+  "@refusal.blend.bevelWallNotStatable": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      },
+      "name3": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.blend.bevelTraceNotFollowed": "the chamfer of {name} cannot be carried along it — the setback traces on the two faces it stands between could not be followed from one end of the crease to the other",
+  "@refusal.blend.bevelTraceNotFollowed": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolBevelStrip": "this solid is a general boolean, and {name} of one of the two solids it was made from is the ruled strip a chamfer leaves along a crease whose angle changes — a surface this drawing states only as its own rulings, so there is nothing to trace a boolean's own triangles back to there and this body's faces stay emergent; make the boolean first and put the chamfer on its result",
+  "@refusal.section.boolBevelStrip": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why a section through a solid cannot be drawn and what to do instead. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
       "name": {
         "type": "message"
       }

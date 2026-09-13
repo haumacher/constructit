@@ -787,6 +787,18 @@ data class FacePatch(
      * no file.
      */
     val absent: Boolean = false,
+    /**
+     * Whether this face is a **ruled strip** — a family of straight rulings and no closed surface at all
+     * (OP-31, slice 5n): the bevel a constant setback leaves along a crease whose dihedral changes along the
+     * run, whose two rails are the setback traces on the two walls.
+     *
+     * It is a fourth statement beside [plane], [surface] and [pipe] rather than a case inside any of them,
+     * because a strip's chart is `(station, t)` and none of the three can say that. A section reads it on
+     * that chart — exact where the plane crosses a ruling, chords between two of them — and a **general boolean** has
+     * no carrier for it yet: the slot refuses by name there ([Msgs.refusalSectionBoolBevelStrip]) rather
+     * than letting the result's faces go emergent without saying so.
+     */
+    val ruled: Boolean = false,
 )
 
 /**
@@ -3451,6 +3463,11 @@ object Section3 {
                 // …and a canal band whose spine this drawing could not state at all — fewer than two
                 // stations — keeps the sentence slice 5f gave it, narrowed to that one case (slice 5l).
                 if (p.pipe != null) return null to Msgs.refusalSectionBoolCanalBand(name = p.name.label)
+                // **a bevel's ruled strip is the fifth carrier, and it is not built** (OP-31, slice 5n):
+                // the boolean would need a `sits` predicate on a bilinear patch and a trim in the strip's
+                // own `(station, t)`, and until it has them the slot says so in the words the canal band
+                // had before slice 5l gave it one
+                if (p.ruled) return null to Msgs.refusalSectionBoolBevelStrip(name = p.name.label)
                 // …and a face whose surface this drawing has no name for at all is the sink that stands
                 return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
             }

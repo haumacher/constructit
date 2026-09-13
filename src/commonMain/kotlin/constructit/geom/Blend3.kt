@@ -7084,7 +7084,7 @@ object Blend3 {
     private fun bandPatchesOf(d: Dressing): List<FacePatch> {
         // **a canal band is the one face this list states no carrier for** (OP-31, slice 5f): it is
         // neither a plane, nor a revolution, nor a ruled strip, and it says so where it is read
-        d.canal?.let { return listOf(canalBandPatch(it)) }
+        d.canal?.let { return listOf(if (it.bevel) bevelBandPatch(it) else canalBandPatch(it)) }
         val sections = orientedSections(d)
         val crease = d.crease ?: return emptyList()
         val el = soleElement(crease)
@@ -8813,6 +8813,13 @@ object Blend3 {
         val name: FaceName get() = FaceName.BlendBand(index, 0)
 
         val convex: Boolean get() = choice.convex
+
+        /**
+         * Whether this entry is the **ruled strip a bevel leaves** rather than the pipe a ball does (OP-31,
+         * slice 5n) — the one distinction the shared station machinery makes, and it is read off the section
+         * the step recorded rather than stored beside it (OP-1: a kind is structure, and it is already there).
+         */
+        val bevel: Boolean get() = sec.kind == BlendKind.CHAMFER
     }
 
     /** How far a canal band's fitted rail or sampled cut may stand from the truth, in mm. */
@@ -9368,6 +9375,9 @@ object Blend3 {
         choice: BlendChoice,
     ): Pair<Canal?, Msg?>? {
         val path = canalPath(edge) ?: return null
+        // **a bevel along such a crease is the ruled strip between the two setback traces** (OP-31, slice
+        // 5n), which is the other half of what a crease with no rigid section can carry — see [bevelOf]
+        if (sec.kind == BlendKind.CHAMFER) return bevelOf(feature, edge, index, sec, choice, path)
         if (sec.kind != BlendKind.FILLET) return null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
         val r = sec.size
         if (r <= Geom3.WELD_TOL) return null
@@ -9473,8 +9483,10 @@ object Blend3 {
             rings.add(
                 if (st.tip) {
                     // the tip steps to the tool's own safe side, the same way every leg does: away from
-                    // the region, so the tool does not *touch* the body where it has nothing left to take
-                    val tip = st.p1 - (st.at - st.p1) * (canal.grow / canal.r)
+                    // the region, so the tool does not *touch* the body where it has nothing left to take.
+                    // A **bevel**'s station already carries that one vertex ([bevelOf]) — the crease point
+                    // stepped out along the two walls' own bisector — so it is taken rather than derived.
+                    val tip = if (canal.bevel) st.world(st.poly[0]) else st.p1 - (st.at - st.p1) * (canal.grow / canal.r)
                     List(st.poly.size) { tip }
                 } else {
                     st.poly.map { st.world(it) + st.t * step }
@@ -9636,6 +9648,33 @@ object Blend3 {
     }
 
     /**
+     * **One station of this entry's run at [v] of its own length**, whichever kind of run it is (OP-31,
+     * slice 5n) — the one reading the rails, the figure and the section's own area are all taken through.
+     *
+     * A canal's is read on the **spine** it was marched on ([canalSpineRawAt]); a bevel's on the **crease**
+     * itself, which is its own parameterisation and needs no interpolant at all, because every ruling is a
+     * closed reading of the crease point under it.
+     */
+    private fun stationRawAt(
+        canal: Canal,
+        v: Double,
+    ): CanalRaw? =
+        if (canal.bevel) {
+            bevelRawAt(canal.w1, canal.w2, canal.path, canal.lens, v, canal.r, canal.choice.a, canal.choice.b)
+        } else {
+            canalSpineRawAt(canal, v)
+        }
+
+    /** Where station [k] of a bevel stands in the crease's own parameter — the count's own even spread. */
+    private fun bevelParam(
+        canal: Canal,
+        k: Int,
+    ): Double {
+        val n = if (canal.closed) canal.stations.size else canal.stations.size - 1
+        return if (n <= 0) 0.0 else k.toDouble() / n
+    }
+
+    /**
      * One **rail** of a canal band: the curve the ball's contact traces on wall [side], stated as a chain of
      * cubics through points that are every one of them **exact** on both the sphere and the wall.
      *
@@ -9648,7 +9687,7 @@ object Blend3 {
     ): Pair<EdgeGeom?, Double?> {
         val (chain, tol) =
             fittedChain3(canal.fitted) { u ->
-                val raw = canalSpineRawAt(canal, u)
+                val raw = stationRawAt(canal, u)
                 if (raw == null) {
                     null
                 } else if (side == 0) {
@@ -9723,16 +9762,27 @@ object Blend3 {
         val fineArcs = 512
         val h = 1e-4
 
-        fun centre(u: Double): Vec3? = canalSpineRawAt(canal, u)?.at
+        fun centre(u: Double): Vec3? = stationRawAt(canal, u)?.at
 
         fun sliceAt(
             u: Double,
             legs: Int,
             arcs: Int,
         ): Double {
-            val raw = canalSpineRawAt(canal, u) ?: return 0.0
-            if (abs(raw.sweep) * canal.r <= GROW_MM) return 0.0
-            val poly = canalSectionAt(canal.w1, canal.w2, raw, canal.r, legs, arcs, canal.choice.a, canal.choice.b, 0.0) ?: return 0.0
+            val raw = stationRawAt(canal, u) ?: return 0.0
+            // **a bevel's section is the region between its ruling and the two walls' own traces** (OP-31,
+            // slice 5n) — at a plane pair the triangle with two sides `d` and the dihedral `α(s)` between
+            // them, `½ d² sin α`, and on a curved wall that triangle plus the wall's own segment. Where it
+            // is shallower than the tool's own step-off the tool comes to a point and takes nothing, and the
+            // figure says the same.
+            val poly =
+                if (canal.bevel) {
+                    if (bevelDepth(raw) <= canal.grow) return 0.0
+                    bevelSectionAt(canal.w1, canal.w2, raw, legs, canal.choice.a, canal.choice.b, 0.0) ?: return 0.0
+                } else {
+                    if (abs(raw.sweep) * canal.r <= GROW_MM) return 0.0
+                    canalSectionAt(canal.w1, canal.w2, raw, canal.r, legs, arcs, canal.choice.a, canal.choice.b, 0.0) ?: return 0.0
+                }
             var twice = 0.0
             var mx = 0.0
             var my = 0.0
@@ -9779,8 +9829,11 @@ object Blend3 {
             for (k in 0 until n) {
                 val len = canal.stations[k + 1].s - canal.stations[k].s
                 if (len <= 0.0) continue
-                val u0 = canal.stations[k].s / total
-                val u1 = canal.stations[k + 1].s / total
+                // …and the abscissa is the run's **own** parameter: a canal's stations are marched at equal
+                // steps along the spine, so its own arc length says where they stand; a bevel's are spread
+                // at equal parameter along the crease, and that is what states them (OP-31, slice 5n)
+                val u0 = if (canal.bevel) bevelParam(canal, k) else canal.stations[k].s / total
+                val u1 = if (canal.bevel) bevelParam(canal, k + 1) else canal.stations[k + 1].s / total
                 val a0 = sliceAt(u0, legs, arcs)
                 val a1 = sliceAt(u1, legs, arcs)
                 sum +=
@@ -9817,6 +9870,22 @@ object Blend3 {
         val chorded = quadrature(canal.stations.size, canal.arcSteps, true)
         val skin = strip(wallSkin(canal.w1), wallSkin(canal.w2))
         val stepped = strip(canal.grow, canal.grow)
+        if (canal.bevel) {
+            // **a bevel's step-off gains the body nothing** (OP-31, slice 5n), and the bracket says so: its
+            // two legs are stepped **out** of the region — into air where the strip is taken and into
+            // material where it is added — so the tool covers more than the section and removes no more
+            // than it, while the **ruling** is not stepped off at all but extended past each rail, which
+            // is the same nothing one step further. What the tool really does gain is its two end rings,
+            // moved a step past the crease's own ends so that they cross the body rather than stand on its
+            // vertices ([canalMesh]) — one section's area times that step, at each free end.
+            val ends =
+                if (canal.closed) {
+                    0.0
+                } else {
+                    canal.grow * (sliceAt(0.0, fineLegs, fineArcs) + sliceAt(1.0, fineLegs, fineArcs))
+                }
+            return (min(exact, chorded) - skin) to (max(exact, chorded) + ends)
+        }
         return (min(exact, chorded) - skin) to (max(exact, chorded) + stepped)
     }
 
@@ -9836,6 +9905,388 @@ object Blend3 {
         for (j in legs until 2 * legs) l2 += (st.poly[j + 1] - st.poly[j]).length()
         return l1 * t1 + l2 * t2
     }
+
+    // ---- the bevel along a crease with no rigid section (OP-31, slice 5n) ----
+
+    /**
+     * **A constant-setback chamfer along a crease of changing dihedral is the ruled strip between the two
+     * setback traces on the two walls** (OP-31, slice 5n) — session 84's own sentence, built:
+     *
+     * > *"a constant-setback chamfer along a crease of changing dihedral is the ruled strip between the two
+     * > setback traces on the two walls, which is a **loft between two fitted curves** and not the ball's
+     * > canal — its own tool, its own cut reader and its own figure."*
+     *
+     * *What is carried, and from where.* Session 76 decided the convention a chamfer is stated under — **the
+     * setback runs along the carrier** — and it holds here word for word: at each station the setback point
+     * on wall *i* is the point of wall *i* standing a distance [BlendSection.size] from the crease point,
+     * measured **in the plane square to the crease at that station**, along that wall's own trace in it. On
+     * a plane wall that is a straight step and on a curved one a step along the wall's own section curve,
+     * which is precisely what [FilletMath.setback] does one dimension down — so a chamfer along a *straight*
+     * crease between two planes comes out of this construction vertex for vertex, and no dressed body moves.
+     *
+     * *Why this cannot fold where the canal could.* The canal's stations had to be marched on the **spine**
+     * (slice 5m), because the crease's own normal planes stop foliating the spine once the ball is large
+     * against the crease's bend. A bevel has no spine: every ruling is read from the crease point alone —
+     * apex, frame, two traces — so station → ruling is a reparameterisation of the crease itself and there
+     * is nothing in it to fold. What **can** degenerate is the strip: a setback trace is an in-face offset
+     * of the crease, so two rulings cross once the setback outruns the wall's own bend or the wall's own
+     * extent, and that is stated as what it is — the two rails stop advancing along the run — and refused
+     * by name ([Msgs.refusalBlendBevelStripFoldsBack]) rather than built inside out.
+     *
+     * *The figure.* At each station the removed section is the region between the ruling and the two wall
+     * traces, which at a plane pair is the triangle with sides `d`, `d` and the dihedral `α(s)` between them
+     * — area `½ d² sin α(s)` — and on a curved wall is that triangle plus the wall's own segment. It is read
+     * as the section's exact area and carried through Pappus' own volume element `∫A(s)(1 − κ x̄) ds` over
+     * the crease, bracketed by the tessellation exactly as slice 5f brackets the canal ([canalRemoval],
+     * which serves both because a station is a station).
+     */
+    private const val BEVEL_TRACE_STEPS = 32
+
+    /**
+     * The point of [w] standing a setback of [d] from the crease point [from], measured **in the station's
+     * own plane** along [w]'s own trace in it (OP-31, slice 5n).
+     *
+     * The walk steps along the trace's own tangent — the perpendicular of the wall's projected gradient —
+     * and pulls each step back **onto** the wall ([onWall]), so every point of it is on the surface to
+     * machine precision; what is accumulated is the **arc** through each pair rather than their chord (the
+     * turn between the two tangents states it), so the distance reached is the trace's own arc length and
+     * not a polygon's. A **plane** wall takes one step and the answer is closed.
+     *
+     * *Which way along the trace.* Away from the crease and into the region the bevel takes: of the two
+     * directions the trace offers, the one along which [other]'s own signed distance moves to the region's
+     * side ([sOther], the crease's scored sector). Where the two walls run **tangent** in this plane neither
+     * direction leaves the other wall and no setback is stated at all — the run's own tip, which the caller
+     * reads as a taper rather than as a failure.
+     */
+    private fun setbackOnWall(
+        w: Wall,
+        other: Wall,
+        place: Placement,
+        from: Vec2,
+        d: Double,
+        sOther: Int,
+        /** Which way the run was going on this wall at a neighbouring station — see [bevelRawAt]. */
+        hint: Vec3?,
+    ): Vec2? {
+        if (d <= Geom3.WELD_TOL) return null
+
+        fun traceDir(
+            q: Vec2,
+            prev: Vec2?,
+        ): Vec2? {
+            val g = w.grad(place.at(q)) ?: return null
+            val gp = Vec2(g.dot(place.cx), g.dot(place.cy))
+            if (gp.length() <= Vec2.EPS) return null
+            val dir = gp.normalized().perp()
+            return if (prev != null && dir.dot(prev) < 0.0) dir * -1.0 else dir
+        }
+        val start = traceDir(from, null) ?: return null
+        val og = other.grad(place.at(from)) ?: return null
+        val ogp = Vec2(og.dot(place.cx), og.dot(place.cy))
+        if (ogp.length() <= Vec2.EPS) return null
+        val lean = start.dot(ogp.normalized())
+        // **where the two walls run tangent neither way along this trace leaves the other wall** — the
+        // discriminant is even in the step there, so the direction is not the station's to state and is
+        // carried in from a neighbour instead ([bevelRawAt]); with no neighbour to carry it, nothing is
+        // stated at all
+        var dir =
+            if (abs(lean) > TANGENT_TOL) {
+                if (lean * sOther >= 0.0) start else start * -1.0
+            } else {
+                val h = hint ?: return null
+                val hp = Vec2(h.dot(place.cx), h.dot(place.cy))
+                if (hp.length() <= Vec2.EPS) return null
+                if (start.dot(hp) >= 0.0) start else start * -1.0
+            }
+        val n = if (w.plane != null) 1 else BEVEL_TRACE_STEPS
+        val h = d / n
+        var q = from
+        var acc = 0.0
+        repeat(n) {
+            val nxt = onWall(w, place, q + dir * h) ?: return null
+            val nd = traceDir(nxt, dir) ?: return null
+            val chord = (place.at(nxt) - place.at(q)).length()
+            if (chord <= 1e-15) return null
+            val turn = acos(dir.dot(nd).coerceIn(-1.0, 1.0))
+            val len = if (turn <= 1e-9) chord else chord * (turn / 2.0) / sin(turn / 2.0)
+            if (acc + len >= d) return onWall(w, place, q + (nxt - q) * ((d - acc) / len))
+            acc += len
+            q = nxt
+            dir = nd
+        }
+        return onWall(w, place, q + dir * (d - acc))
+    }
+
+    /**
+     * The **bevel's own station** over crease parameter [u]: the crease point itself, the frame of its normal
+     * plane, and the two setback points the ruling runs between (OP-31, slice 5n).
+     *
+     * The frame is re-centred on the crease's **exact** own point — the one point of the plane that lies on
+     * both walls ([apexAt]) — rather than on the carrier's, because a fitted crease's carrier is only fitted
+     * while its point on the two walls is not. So a bevel along the quartic two unlike rounds cross in is
+     * stated to the same precision as one along an ellipse.
+     */
+    private fun bevelRawAt(
+        w1: Wall,
+        w2: Wall,
+        path: Path3,
+        lens: List<Double>,
+        u: Double,
+        d: Double,
+        s1: Int,
+        s2: Int,
+    ): CanalRaw? {
+        bevelRawFrom(w1, w2, path, lens, u, d, s1, s2, null, null)?.let { return it }
+        // …and a station where the two walls run **tangent** states no direction of its own, so the run's is
+        // carried in from a neighbour: one point of an otherwise ordinary run, read exactly the way slice
+        // 5m's march carries its tangent through the canal's own tip
+        for (delta in listOf(0.02, 0.06, 0.15)) {
+            val v = if (u <= 0.5) min(1.0, u + delta) else max(0.0, u - delta)
+            val near = bevelRawFrom(w1, w2, path, lens, v, d, s1, s2, null, null) ?: continue
+            val h1 = near.p1 - near.at
+            val h2 = near.p2 - near.at
+            if (h1.length() <= Vec3.EPS || h2.length() <= Vec3.EPS) continue
+            bevelRawFrom(w1, w2, path, lens, u, d, s1, s2, h1.normalized(), h2.normalized())?.let { return it }
+        }
+        return null
+    }
+
+    /** [bevelRawAt]'s own reading, with the two directions the run carries in where a station states none. */
+    private fun bevelRawFrom(
+        w1: Wall,
+        w2: Wall,
+        path: Path3,
+        lens: List<Double>,
+        u: Double,
+        d: Double,
+        s1: Int,
+        s2: Int,
+        hint1: Vec3?,
+        hint2: Vec3?,
+    ): CanalRaw? {
+        val h = 1e-5
+        val m = alongPath(path, lens, u)
+        val mA = alongPath(path, lens, (u - h).coerceIn(0.0, 1.0))
+        val mB = alongPath(path, lens, (u + h).coerceIn(0.0, 1.0))
+        var tau = mB - mA
+        if (tau.length() <= Vec3.EPS) return null
+        tau = tau.normalized()
+        val g1 = w1.grad(m) ?: return null
+        val g2 = w2.grad(m) ?: return null
+        var seed = g1 * -s1.toDouble() + g2 * -s2.toDouble()
+        seed -= tau * seed.dot(tau)
+        if (seed.length() <= Vec3.EPS) return null
+        val ax = seed.normalized()
+        val seek = Placement(m, ax, tau.cross(ax).normalized())
+        // …and where the two walls run **tangent** the two equations of the apex are one and the Newton has
+        // nothing to solve, while the crease's own carrier already stands on both walls there — so the
+        // carrier states the point and the solve is not asked (OP-31, slice 5n)
+        val apex =
+            apexAt(w1, w2, seek, Vec2(0.0, 0.0))
+                ?: Vec2(0.0, 0.0).takeIf { abs(w1.out(m)) <= ON_WALL_TOL && abs(w2.out(m)) <= ON_WALL_TOL }
+                ?: return null
+        val place = Placement(seek.at(apex), seek.cx, seek.cy)
+        val q1 = setbackOnWall(w1, w2, place, Vec2(0.0, 0.0), d, s2, hint1) ?: return null
+        val q2 = setbackOnWall(w2, w1, place, Vec2(0.0, 0.0), d, s1, hint2) ?: return null
+        return CanalRaw(place.origin, tau, place, place.at(q1), place.at(q2), 0.0, 0.0, Vec2(0.0, 0.0))
+    }
+
+    /**
+     * The section a bevel station carries: the **ruling** between the two setback points, and the two walls'
+     * own traces back to the crease point between them.
+     *
+     * The two legs are stepped off the walls exactly as a canal's are ([canalSectionAt]'s own rule — *a tool
+     * never shares a face with the body*), and the **ruling is not**: it is the bevel face itself and has to
+     * pass through the two rails exactly. It is *extended* by the same step-off at each end instead, so the
+     * tool's ruled face crosses each wall transversally a step past the rail rather than standing tangent
+     * along it — which is the one contact a general boolean has no answer for.
+     */
+    private fun bevelSectionAt(
+        w1: Wall,
+        w2: Wall,
+        raw: CanalRaw,
+        legSteps: Int,
+        s1: Int,
+        s2: Int,
+        grow: Double,
+    ): List<Vec2>? {
+        val q1 = localOf(raw, raw.p1)
+        val q2 = localOf(raw, raw.p2)
+        val ruling = q2 - q1
+        if (ruling.length() <= Geom3.WELD_TOL) return null
+        val u = ruling.normalized()
+        val out = ArrayList<Vec2>(2 * legSteps + 1)
+        out.add(q1 - u * grow)
+        out.addAll(legOf(w1, raw.place, q1, raw.apex, legSteps, -s1 * grow) ?: return null)
+        val g1 = w1.grad(raw.place.at(raw.apex)) ?: return null
+        val g2 = w2.grad(raw.place.at(raw.apex)) ?: return null
+        val outward =
+            (
+                Vec2(g1.dot(raw.place.cx), g1.dot(raw.place.cy)) * -s1.toDouble() +
+                    Vec2(g2.dot(raw.place.cx), g2.dot(raw.place.cy)) * -s2.toDouble()
+            ).normalized()
+        out.add(raw.apex + outward * grow)
+        out.addAll((legOf(w2, raw.place, q2, raw.apex, legSteps, -s2 * grow) ?: return null).reversed())
+        out.add(q2 + u * grow)
+        return out
+    }
+
+    /** A world point of [raw]'s own station plane, in that plane's own coordinates. */
+    private fun localOf(
+        raw: CanalRaw,
+        p: Vec3,
+    ): Vec2 = Vec2((p - raw.at).dot(raw.place.cx), (p - raw.at).dot(raw.place.cy))
+
+    /**
+     * **How deep the bevel bites at this station** — the crease point's own distance from the ruling, which
+     * is what falls to nothing where the two walls run tangent and the strip lies in their common plane.
+     */
+    private fun bevelDepth(raw: CanalRaw): Double {
+        val q1 = localOf(raw, raw.p1)
+        val q2 = localOf(raw, raw.p2)
+        val v = q2 - q1
+        if (v.length() <= Geom3.WELD_TOL) return 0.0
+        return abs(v.cross(raw.apex - q1)) / v.length()
+    }
+
+    /** How far the true strip stands from the chord between two stations — the count's own refinement rule. */
+    private fun bevelChordMiss(
+        w1: Wall,
+        w2: Wall,
+        path: Path3,
+        lens: List<Double>,
+        d: Double,
+        s1: Int,
+        s2: Int,
+        us: List<Double>,
+        set: List<CanalRaw>,
+    ): Double {
+        var worst = 0.0
+        for (k in 0 until set.size - 1) {
+            val a = set[k]
+            val b = set[k + 1]
+            val raw = bevelRawAt(w1, w2, path, lens, (us[k] + us[k + 1]) / 2.0, d, s1, s2) ?: continue
+            worst = max(worst, (raw.at - (a.at + b.at) * 0.5).length())
+            worst = max(worst, (raw.p1 - (a.p1 + b.p1) * 0.5).length())
+            worst = max(worst, (raw.p2 - (a.p2 + b.p2) * 0.5).length())
+        }
+        return worst
+    }
+
+    /** Where the stations stand along the crease — its own parameter, and a closed run says its last once. */
+    private fun stationParams(
+        n: Int,
+        closed: Boolean,
+    ): List<Double> = if (closed) (0 until n).map { it.toDouble() / n } else (0..n).map { it.toDouble() / n }
+
+    /**
+     * The whole **bevel strip** along [edge], as an ordinary entry of an ordinary dressing (OP-31, slice 5n).
+     *
+     * It comes back as a [Canal] because a station is a station: once the ruling stands in the station's own
+     * polygon where the ball's arc would, the loft, the two caps, the strip a neighbouring band is ended by
+     * and Pappus' own quadrature are the very same code. What differs is the four readings a *surface* is
+     * asked for — the band patch, the rails, the section's own polygon and the cut — and each of those asks
+     * [Canal.bevel].
+     */
+    private fun bevelOf(
+        feature: Feature3,
+        edge: SolidEdge,
+        index: Int,
+        sec: BlendSection,
+        choice: BlendChoice,
+        path: Path3,
+    ): Pair<Canal?, Msg?> {
+        val d = sec.size
+        if (d <= Geom3.WELD_TOL) return null to Msgs.refusalBlendThisHasNoSizeAll(word = sec.kind.word)
+        val notFollowed = Msgs.refusalBlendBevelTraceNotFollowed(name = edge.name.label)
+        val faces = Section3.faces(feature).first ?: return null to notFollowed
+        val f1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to notFollowed
+        val f2 = faces.firstOrNull { it.name == edge.between.b } ?: return null to notFollowed
+        val w1 =
+            wallOf(f1) ?: return null to
+                Msgs.refusalBlendBevelWallNotStatable(name = edge.name.label, name2 = f1.name.label, name3 = f2.name.label)
+        val w2 =
+            wallOf(f2) ?: return null to
+                Msgs.refusalBlendBevelWallNotStatable(name = edge.name.label, name2 = f2.name.label, name3 = f1.name.label)
+        val s1 = choice.a
+        val s2 = choice.b
+        val lens = path.elements.map { pieceLength(it) }
+        val notFitting = Msgs.refusalBlendBevelDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+        if (lens.sum() <= Geom3.WELD_TOL) return null to notFitting
+        val closed = (path.start != null && path.end != null && (path.start!! - path.end!!).length() <= Geom3.WELD_TOL)
+        // **the count is the traces' own** (OP-21): it starts at eight and is doubled until the chord between
+        // two stations stands inside the tessellation tolerance of the strip it spans — derived at build time
+        // from the geometry, stored nowhere and stated in no file
+        var n = 8
+        var us = stationParams(n, closed)
+        var set = us.map { bevelRawAt(w1, w2, path, lens, it, d, s1, s2) ?: return null to notFitting }
+        var halvings = 0
+        while (halvings < 6 && n < 512) {
+            val miss = bevelChordMiss(w1, w2, path, lens, d, s1, s2, us, set)
+            halvings++
+            n *= 2
+            us = stationParams(n, closed)
+            set = us.map { bevelRawAt(w1, w2, path, lens, it, d, s1, s2) ?: return null to notFitting }
+            if (miss <= GeomMath.TESS_TOL_MM) break
+        }
+        // **the strip degenerates where a setback outruns the wall's own bend** — a setback trace is an
+        // in-face offset of the crease, and an offset develops a cusp once the offset reaches the trace's own
+        // centre of curvature. Said as the strip's own fact: two neighbouring rulings cross, which is the two
+        // rails ceasing to advance along the run.
+        for (k in 0 until set.size - 1) {
+            val a = set[k]
+            val b = set[k + 1]
+            val t = b.at - a.at
+            if (t.length() <= Geom3.WELD_TOL) return null to notFitting
+            if ((b.p1 - a.p1).dot(t) <= 0.0 || (b.p2 - a.p2).dot(t) <= 0.0) {
+                return null to Msgs.refusalBlendBevelStripFoldsBack(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+            }
+        }
+        val legSteps = legStepsFor(w1, w2, set)
+        val grow = canalGrow(w1, w2)
+        val stations = ArrayList<CanalStation>(set.size)
+        var s = 0.0
+        for ((k, raw) in set.withIndex()) {
+            if (k > 0) s += (raw.at - set[k - 1].at).length()
+            val poly = bevelSectionAt(w1, w2, raw, legSteps, s1, s2, grow) ?: return null to notFitting
+            // …and where the two walls run tangent the strip lies **in** their common plane and takes
+            // nothing at all: the ring collapses on the one vertex that already stands clear of the body,
+            // exactly as a canal's tip does, so the tool comes to a point instead of laying a flat face on a
+            // flat face
+            val tip = bevelDepth(raw) <= grow
+            stations.add(
+                CanalStation(
+                    raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2,
+                    if (tip) List(poly.size) { poly[legSteps] } else poly,
+                    0.0, 0.0, raw.apex, s, tip,
+                ),
+            )
+        }
+        if (stations.count { !it.tip } < 2) return null to notFitting
+        return Canal(index, edge, sec, choice, d, stations, w1, w2, path, lens, closed, 1, CANAL_FIT_TOL_MM, grow) to null
+    }
+
+    /**
+     * The bevel strip as a face of the dressed body — **a ruled strip**, which is neither a plane, nor a
+     * surface of revolution, nor the pipe a canal band is (OP-31, slice 5n).
+     *
+     * It carries no carrier: a general boolean has no fifth one yet, and the slot says so by name where one
+     * is asked for ([FacePatch.ruled]). Its two rails are in the edge list as fitted chains with the
+     * tolerance they reached, and its own cut is read through the rulings ([canalCut], marched on the
+     * strip's own `(station, t)` chart).
+     */
+    private fun bevelBandPatch(canal: Canal): FacePatch =
+        FacePatch(
+            canal.name,
+            null,
+            emptyList(),
+            Msgs.refusalBlendBevelStripIsNotPlane(name = canal.name.label, sizePhrase = canal.sec.sizePhrase(), name2 = canal.edge.name.label),
+            null,
+            canal.fitted,
+            null,
+            false,
+            true,
+        )
 
     // ---- the canal corner: the ball pivoting about a slanted or a ring upright (OP-31, slice 5h) ----
 
@@ -11270,9 +11721,21 @@ object Blend3 {
             val name = FaceName.BlendCap(canal.index, atStart)
             val st = if (atStart) canal.stations.first() else canal.stations.last()
             if (canal.closed) {
-                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalRunsRightRound(name = canal.edge.name.label), absent = true)
+                val why =
+                    if (canal.bevel) {
+                        Msgs.refusalBlendBevelRunsRightRound(name = canal.edge.name.label)
+                    } else {
+                        Msgs.refusalBlendCanalRunsRightRound(name = canal.edge.name.label)
+                    }
+                FacePatch(name, null, emptyList(), why, absent = true)
             } else if (st.tip) {
-                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalTapersToNothing(name = canal.edge.name.label), absent = true)
+                val why =
+                    if (canal.bevel) {
+                        Msgs.refusalBlendBevelTapersToNothing(name = canal.edge.name.label)
+                    } else {
+                        Msgs.refusalBlendCanalTapersToNothing(name = canal.edge.name.label)
+                    }
+                FacePatch(name, null, emptyList(), why, absent = true)
             } else {
                 // …and the step is the canal's **own** step-off and not the bare micron: the tool's end ring
                 // is moved by [Canal.grow] ([canalMesh]), so that is where the body's own cap actually
@@ -11287,10 +11750,17 @@ object Blend3 {
                 val legs = (poly.size - canal.arcSteps) / 2
                 val out = ArrayList<ProfileElement>(2 * legs + 1)
                 for (k in 0 until 2 * legs) out.add(ProfileElement.Seg(Segment(poly[k], poly[k + 1])))
+                // …and the one piece that closes the ring is what the band's own section ends with: the
+                // ball's arc for a canal, and for a **bevel** the ruling itself, which is one straight side
+                // (OP-31, slice 5n)
                 out.add(
-                    ProfileElement.ArcE(
-                        Arc(Vec2(0.0, 0.0), canal.r, (st.a1 + st.sweep * (if (canal.stations.first() === st) 1.0 else 1.0)) * flip, st.a1 * flip, flip * st.sweep < 0.0),
-                    ),
+                    if (canal.bevel) {
+                        ProfileElement.Seg(Segment(poly[2 * legs], poly[0]))
+                    } else {
+                        ProfileElement.ArcE(
+                            Arc(Vec2(0.0, 0.0), canal.r, (st.a1 + st.sweep * (if (canal.stations.first() === st) 1.0 else 1.0)) * flip, st.a1 * flip, flip * st.sweep < 0.0),
+                        )
+                    },
                 )
                 FacePatch(name, plane, out, null, null, null)
             }
@@ -11312,11 +11782,13 @@ object Blend3 {
         sec: BlendSection,
     ): Pair<BlendChoice?, Msg?>? {
         val path = canalPath(edge) ?: return null
-        // **only the ball rolls along a crease with no rigid section** (OP-31, slice 5f; session 84): a
-        // chamfer's setback and a drawn profile are stated in the crease's own normal section, and here
-        // there is no one section to state them in. The canal is the rounding, and it is said so rather
-        // than left to the catalogue's own sentence, which would advise a straight edge instead.
-        if (sec.kind != BlendKind.FILLET) return null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
+        // **a ball and a bevel, and nothing else, run along a crease with no rigid section** (OP-31, slices
+        // 5f and 5n). A **drawn profile** is stated in the crease's own normal section and there is no one
+        // section to state it in here, so it is refused in the sentence that says which two are — and said
+        // rather than left to the catalogue's, which would advise a straight edge instead.
+        if (sec.kind != BlendKind.FILLET && sec.kind != BlendKind.CHAMFER) {
+            return null to Msgs.refusalBlendCarriesNoRigidSection(name = edge.name.label)
+        }
         val r = sec.size
         if (r <= Geom3.WELD_TOL) return null
         val faces = Section3.faces(feature).first ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = edge.name.label)
@@ -11356,13 +11828,40 @@ object Blend3 {
                 3 -> listOf(1 to 1, 1 to -1, -1 to 1, -1 to -1).first { it !in found }
                 else -> return null to Msgs.refusalBlendCanalNotSimpleCrease(name = edge.name.label)
             }
-        // …and the ball has to fit in it: its centre stands `r` from both walls, and the crease's own point
-        // has to lie **outside** the ball, or there is no material between the two to take away
-        val raw =
-            canalRawAt(w1, w2, path, lens, 0.5, r, sector.first, sector.second) ?: return null to
-                Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
-        if ((raw.place.at(raw.apex) - raw.at).length() <= r + Geom3.WELD_TOL) {
-            return null to Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+        if (sec.kind == BlendKind.CHAMFER) {
+            // **and a setback has to stay on the wall it is measured along** (OP-31, slice 5n): a setback
+            // trace is an in-face offset of the crease and it degenerates where it leaves the wall's own
+            // extent, which the construction itself cannot see — the surface carries on past its own trim.
+            // So the body is asked, at stations spread along the crease: a point just **inside** the wall at
+            // each setback is material where the bevel is taken and void where it is added, and where it is
+            // not the trace has run off the face and the bevel is refused by name.
+            val clear = 2.0 * canalGrow(w1, w2)
+            // …the region the bevel takes lies on the scored side of each wall, and the **material** is on
+            // that same side at a convex crease and on the other at a concave one — so a point stepped off
+            // the setback into the material is inside the body in both cases, and where it is not the trace
+            // has run off the face it is measured along
+            val mat = if (found.size == 1) 1.0 else -1.0
+            for (k in 0..8) {
+                val probe =
+                    bevelRawAt(w1, w2, path, lens, k / 8.0, r, sector.first, sector.second) ?: return null to
+                        Msgs.refusalBlendBevelDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+                for ((w, p) in listOf(w1 to probe.p1, w2 to probe.p2)) {
+                    val g = w.grad(p) ?: continue
+                    val side = (if (w === w1) sector.first else sector.second).toDouble()
+                    if (!Geom3.encloses(mesh, p + g * (clear * side * mat))) {
+                        return null to Msgs.refusalBlendBevelDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+                    }
+                }
+            }
+        } else {
+            // …and the ball has to fit in it: its centre stands `r` from both walls, and the crease's own
+            // point has to lie **outside** the ball, or there is no material between the two to take away
+            val raw =
+                canalRawAt(w1, w2, path, lens, 0.5, r, sector.first, sector.second) ?: return null to
+                    Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+            if ((raw.place.at(raw.apex) - raw.at).length() <= r + Geom3.WELD_TOL) {
+                return null to Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
+            }
         }
         val choice = BlendChoice(sector.first, sector.second, 0, found.size == 1)
         // **a gesture is declined where the band cannot be had, not left to fail at build time** (OP-3): the
@@ -11488,13 +11987,22 @@ object Blend3 {
         // it **across** the run rather than along it, and a reader that only sampled the stations would find
         // one point where the cut has a whole curve. The chart is `(station, arc)`, the crossing is the zero
         // isoline of the plane's own signed distance on it, and the cells are walked as squares.
+        // …and a **bevel**'s band is marched on the very same chart with `t` along its own **ruling** in
+        // place of the ball's arc (OP-31, slice 5n): a point interpolated along a straight ruling is exactly
+        // on the strip, so what comes back is exact where the plane crosses each ruling and chords between
+        // two rulings — the same honesty class, and the same reader, because a level plane crosses a strip
+        // that travels **across** the run exactly as it crosses a canal band that does.
         val arcs = max(8, canal.arcSteps)
         val at = ArrayList<List<Vec3>>(canal.stations.size)
         for (st in canal.stations) {
             at.add(
                 (0..arcs).map { j ->
-                    val a = st.a1 + st.sweep * j / arcs
-                    st.at + st.ax * (canal.r * cos(a)) + st.ay * (canal.r * sin(a))
+                    if (canal.bevel) {
+                        st.p1 + (st.p2 - st.p1) * (j.toDouble() / arcs)
+                    } else {
+                        val a = st.a1 + st.sweep * j / arcs
+                        st.at + st.ax * (canal.r * cos(a)) + st.ay * (canal.r * sin(a))
+                    }
                 },
             )
         }

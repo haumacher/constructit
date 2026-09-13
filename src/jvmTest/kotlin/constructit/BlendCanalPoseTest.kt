@@ -145,11 +145,27 @@ class BlendCanalPoseTest {
         on: SolidRef,
         address: List<Int>,
         size: Double,
+    ): Pair<SolidRef?, String?> = blend(cx, on, address, size, BlendKind.FILLET)
+
+    /** The same gesture with the chamfer's own kind — the ruled strip of slice 5n. */
+    private fun bevel(
+        cx: Construction,
+        on: SolidRef,
+        address: List<Int>,
+        size: Double,
+    ): Pair<SolidRef?, String?> = blend(cx, on, address, size, BlendKind.CHAMFER)
+
+    private fun blend(
+        cx: Construction,
+        on: SolidRef,
+        address: List<Int>,
+        size: Double,
+        kind: BlendKind,
     ): Pair<SolidRef?, String?> {
         val body = Evaluator().solid(on)
-        val (choices, why) = Blend3.choicesFor(body, address, BlendSection(BlendKind.FILLET, size))
+        val (choices, why) = Blend3.choicesFor(body, address, BlendSection(kind, size))
         if (choices == null) return null to (why?.render() ?: "no choice")
-        val ref = cx.blendAll(on, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(size.mm), null, address, choices)))
+        val ref = cx.blendAll(on, cx.planeXY(), listOf(Construction.BlendRun(kind, cx.const(size.mm), null, address, choices)))
         val r = Evaluator().eval(ref.node)
         if (r is EvalResult.Invalid) return null to r.why.render()
         return ref to null
@@ -297,6 +313,40 @@ class BlendCanalPoseTest {
             val (out, why) = round(cx, assertNotNull(two), listOf(mitre), 1.0)
             val body = Evaluator().solid(assertNotNull(out, "${pose.what}: the canal band builds: $why"))
             assertManifold(body.mesh, "${pose.what}: the canal band")
+            before to before - Geom3.volume(body.mesh)
+        }
+    }
+
+    /**
+     * **…and so does the **bevel** along that same mitre** (OP-31, slice 5n) — the ruled strip between the
+     * two setback traces. Every ruling of it is read in the crease's own frame: the apex solved on both
+     * walls, the two traces walked in the plane square to the crease, the legs stepped off the walls'
+     * own skins. So it owes this class's claim exactly as the canal does — it takes what it takes on `XY`,
+     * on every plane the drawing can be sketched on.
+     */
+    @Test
+    fun theRuledStripAlongAnEllipticalMitreTakesTheSameMaterialInEveryPose() {
+        assertSameInEveryPose("the ruled strip a bevel leaves along an elliptical mitre") { pose ->
+            val cx = Construction()
+            val box = prismOn(pose, cx, listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth)), height)
+            val s0 = Evaluator().solid(box)
+            val corner = at(pose, width, depth, height)
+            val top =
+                edgesAt(s0, corner).filter { i ->
+                    val p = assertNotNull(Blend3.edgePath(edgesOf(s0)[i]).first)
+                    abs((p.start!! - at(pose, 0.0, 0.0, height)).dot(frame(pose).third)) < 1e-9 &&
+                        abs((p.end!! - at(pose, 0.0, 0.0, height)).dot(frame(pose).third)) < 1e-9
+                }
+            assertEquals(2, top.size, "${pose.what}: two top edges share the far corner")
+            val (two, whyTwo) = round(cx, box, top, 4.0)
+            val rounded = Evaluator().solid(assertNotNull(two, "${pose.what}: two rounds build: $whyTwo"))
+            assertManifold(rounded.mesh, "${pose.what}: two rounds")
+            val before = Geom3.volume(rounded.mesh)
+            val es = edgesOf(rounded)
+            val mitre = assertNotNull(es.indices.firstOrNull { es[it].name is EdgeName.BlendMitre && es[it].reason == null }, "${pose.what}: the two bands cross in a mitre")
+            val (out, why) = bevel(cx, assertNotNull(two), listOf(mitre), 1.0)
+            val body = Evaluator().solid(assertNotNull(out, "${pose.what}: the ruled strip builds: $why"))
+            assertManifold(body.mesh, "${pose.what}: the ruled strip")
             before to before - Geom3.volume(body.mesh)
         }
     }
