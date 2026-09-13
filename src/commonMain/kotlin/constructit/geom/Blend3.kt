@@ -8800,6 +8800,11 @@ object Blend3 {
          * (OP-31, slice 5f). See [canalGrow].
          */
         val grow: Double,
+        /**
+         * How nearly the two walls may run parallel before this drawing may not tell them apart (OP-31,
+         * slice 5s) — the crease's own tolerance, read one dimension over. See [tangencyTolOf].
+         */
+        val tangentTol: Double,
     ) {
         /**
          * **The spine between the stations** — the Catmull–Rom through them, with the tolerance the curve
@@ -8824,6 +8829,16 @@ object Blend3 {
 
     /** How far a canal band's fitted rail or sampled cut may stand from the truth, in mm. */
     private const val CANAL_FIT_TOL_MM = 1e-4
+
+    /**
+     * **What fraction of the rectangle a chord and its sagitta span the circular segment between them
+     * actually is** — two thirds, exactly, to the order a tessellation sagitta has (OP-31, slice 5s).
+     *
+     * A parabola through the chord's two ends and its own midpoint encloses `⅔ c h`, and a circular arc is
+     * that parabola to `O(h³/c)`. It is what turns a wall's stated tessellation **tolerance** into the area
+     * that wall's own skin can really hand back along a leg, which is the figure's own lower bound.
+     */
+    private const val SEGMENT_OF_ITS_RECTANGLE = 2.0 / 3.0
 
     /**
      * **How far a canal's tool steps off the walls it rolls on** (OP-31, slice 5f) — and why it is not the
@@ -9084,6 +9099,8 @@ object Blend3 {
         /** Which side of each wall the ball's centre stands on — the crease's own scored sector. */
         s1: Int,
         s2: Int,
+        /** How nearly the two offsets may run parallel and still state a direction — see [tangencyTolOf]. */
+        tol: Double,
     ): CanalRaw? {
         val h = 1e-5
         val m = alongPath(path, lens, u)
@@ -9097,8 +9114,59 @@ object Blend3 {
         // stands square to the *spine*, which is where the two tangencies lie exactly (see [Wall]), and it
         // is read from the two gradients **at this very point** rather than from two neighbouring solves
         // (OP-31, slice 5m — see [spineTangentAt]).
-        val t = spineTangentAt(w1, w2, c, tau) ?: tau
-        return canalRawFrom(w1, w2, c, t, m)
+        val t = spineTangentAt(w1, w2, c, tau, tol) ?: tau
+        val raw = canalRawFrom(w1, w2, c, t, m) ?: return null
+        // **and at a tip the spine states no direction of its own** (OP-31, slice 5s). The two walls run
+        // tangent there, so **four** branches of the two offsets' intersection cross at that one point —
+        // one per side of each wall's own axis plane — and only one of them faces the material. The cross
+        // product that reads the tangent is the difference of two parallel normals there: nothing at all
+        // where the crease is **exact**, and the crease's own fitting tolerance where it is **fitted**,
+        // whose *direction* is noise and chose the branch. What a tip's direction is, is the crease's: the
+        // crease is the trim and it leaves the tip into the material. So a station that comes out a tip is
+        // read again on the crease's own tangent, which is the same reading slice 5f states a tip with.
+        if (abs(raw.sweep) * r <= GROW_MM) return canalRawFrom(w1, w2, c, tau, m) ?: raw
+        return raw
+    }
+
+    /**
+     * **How nearly two walls must run parallel before this drawing may not tell them apart** (OP-31, slice
+     * 5s) — the number [spineTangentAt] declares a tangency at, and it is the **crease's own** tolerance
+     * rather than an absolute.
+     *
+     * *Why an absolute will not do, and what the wrong answer looked like.* A canal's spine is the two
+     * offsets' intersection curve and its tangent is `∇f₁ × ∇f₂`; where the two walls run **tangent** —
+     * the run's own tip — that cross product vanishes and **four** branches of the intersection cross at
+     * one point, one per side of each wall's own axis plane. Only one of them faces the material, and which
+     * one is a fact the *crease* states: the crease is the trim, and it leaves the tip toward the material.
+     * But the tip is only known as well as the crease's own curve is: where the crease is **exact** (the
+     * ellipse two equal rounds cross in) the cross product really is nothing there and the march carries
+     * the crease's direction through, which is what a tip is; where it is **fitted** (the quartic two
+     * *unlike* rounds cross in, `SolidEdge.fitted`) the tip stands a fitting tolerance off the true
+     * crossing, the cross product is that far from nothing rather than nothing at all, and its direction —
+     * which is then noise — chose the branch. It chose the wrong one, and the canal along a fitted quartic
+     * stood on the **inner** branch of the smaller cylinder.
+     *
+     * *The number.* Perturbing the point by `δ` turns a cylinder's own gradient by `δ / R`, so the
+     * direction of `∇f₁ × ∇f₂` is uncertain by about `(δ / R) / sin θ` and is worth nothing once
+     * `sin θ ≲ δ / R` — with `δ` the tolerance the crease's curve is stated to and `R` the **smaller** of
+     * the two walls' radii, since a plane's gradient does not move at all. That is the same sentence slice
+     * 5m wrote for a curve against a surface — *a crease is stated no tighter than a surface it cannot be
+     * told off* — said here for two surfaces against each other. Where the crease is exact the old absolute
+     * [TANGENT_TOL] is what is left, so nothing a drawing already builds moves.
+     */
+    private fun tangencyTolOf(
+        edge: SolidEdge,
+        w1: Wall,
+        w2: Wall,
+    ): Double {
+        val delta = edge.fitted ?: return TANGENT_TOL
+        val least =
+            listOfNotNull(
+                w1.radius.takeIf { w1.plane == null },
+                w2.radius.takeIf { w2.plane == null },
+            ).minOrNull() ?: return TANGENT_TOL
+        if (least <= Geom3.WELD_TOL) return TANGENT_TOL
+        return max(TANGENT_TOL, delta / least)
     }
 
     /**
@@ -9120,11 +9188,13 @@ object Blend3 {
         w2: Wall,
         c: Vec3,
         prev: Vec3?,
+        /** How nearly the two offsets may run parallel and still state a direction — see [tangencyTolOf]. */
+        tol: Double,
     ): Vec3? {
         val g1 = w1.grad(c) ?: return null
         val g2 = w2.grad(c) ?: return null
         val x = g1.cross(g2)
-        if (x.length() <= TANGENT_TOL) return null
+        if (x.length() <= tol) return null
         val u = x.normalized()
         return if (prev != null && u.dot(prev) < 0.0) -u else u
     }
@@ -9223,10 +9293,12 @@ object Blend3 {
         s2: Int,
         closed: Boolean,
         step: Double,
+        /** How nearly the two offsets may run parallel and still state a direction — see [tangencyTolOf]. */
+        tol: Double,
     ): List<CanalRaw>? {
         if (step <= Geom3.WELD_TOL) return null
-        val first = canalRawAt(w1, w2, path, lens, 0.0, r, s1, s2) ?: return null
-        val last = if (closed) first else canalRawAt(w1, w2, path, lens, 1.0, r, s1, s2) ?: return null
+        val first = canalRawAt(w1, w2, path, lens, 0.0, r, s1, s2, tol) ?: return null
+        val last = if (closed) first else canalRawAt(w1, w2, path, lens, 1.0, r, s1, s2, tol) ?: return null
         val out = ArrayList<CanalRaw>()
         out.add(first)
         var cur = first
@@ -9238,7 +9310,7 @@ object Blend3 {
         while (k < guard) {
             k++
             val c = centreAt(w1, w2, cur.at + cur.t * step, cur.t, s1 * r, s2 * r) ?: return null
-            val t = spineTangentAt(w1, w2, c, cur.t) ?: cur.t
+            val t = spineTangentAt(w1, w2, c, cur.t, tol) ?: cur.t
             val raw = canalRawFrom(w1, w2, c, t, cur.place.at(cur.apex)) ?: return null
             if (closed) {
                 if (k >= 3 && (raw.at - first.at).dot(first.t) >= 0.0 && (raw.at - first.at).length() <= step) {
@@ -9278,6 +9350,8 @@ object Blend3 {
         s1: Int,
         s2: Int,
         closed: Boolean,
+        /** How nearly the two offsets may run parallel and still state a direction — see [tangencyTolOf]. */
+        tol: Double,
     ): Double {
         var worst = 0.0
         for (k in 0 until (if (closed) set.size else set.size - 1)) {
@@ -9288,7 +9362,7 @@ object Blend3 {
             if (t.length() <= Vec3.EPS) continue
             t = t.normalized()
             val c = centreAt(w1, w2, mid, t, s1 * r, s2 * r) ?: continue
-            val raw = canalRawFrom(w1, w2, c, spineTangentAt(w1, w2, c, t) ?: t, a.place.at(a.apex)) ?: continue
+            val raw = canalRawFrom(w1, w2, c, spineTangentAt(w1, w2, c, t, tol) ?: t, a.place.at(a.apex)) ?: continue
             worst = max(worst, (raw.at - mid).length())
             worst = max(worst, (raw.p1 - (a.p1 + b.p1) * 0.5).length())
             worst = max(worst, (raw.p2 - (a.p2 + b.p2) * 0.5).length())
@@ -9403,16 +9477,20 @@ object Blend3 {
         val creaseLen = lens.sum()
         if (creaseLen <= Geom3.WELD_TOL) return null to notFitting
         var step = creaseLen / 8.0
-        var set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step) ?: return null to notFitting
+        // **and the branch is the crease's own** (OP-31, slice 5s): the two offsets cross four branches at
+        // the run's tip, and which of them faces the material is a fact the crease states — read at the
+        // tolerance the crease's own curve is stated to ([tangencyTolOf]), never at an absolute
+        val tol = tangencyTolOf(edge, w1, w2)
+        var set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step, tol) ?: return null to notFitting
         var halvings = 0
         // …and what is measured is the miss of the set being **replaced**, so the run is always marched one
         // level finer than the level that came inside the tolerance — slice 5f's own doubling, said for a
         // step rather than for a count
         while (halvings < 8 && set.size < 512) {
-            val miss = chordMiss(w1, w2, set, r, s1, s2, closed)
+            val miss = chordMiss(w1, w2, set, r, s1, s2, closed, tol)
             halvings++
             step /= 2.0
-            set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step) ?: return null to notFitting
+            set = marchSpine(w1, w2, path, lens, r, s1, s2, closed, step, tol) ?: return null to notFitting
             if (miss <= GeomMath.TESS_TOL_MM) break
         }
         val arcSteps = max(1, GeomMath.chordSteps(r, set.maxOf { abs(it.sweep) }, GeomMath.TESS_TOL_MM))
@@ -9441,7 +9519,7 @@ object Blend3 {
         // to fold. Session 84's *"the crease's normal planes stop foliating the spine once the ball is
         // large against the crease's own bend"* was a property of the reading and never of the band, and
         // the refusal it earned (`refusal.blend.canalBallLargerThanBend`) is retired with its case.
-        return Canal(index, edge, sec, choice, r, stations, w1, w2, path, lens, closed, arcSteps, CANAL_FIT_TOL_MM, grow) to null
+        return Canal(index, edge, sec, choice, r, stations, w1, w2, path, lens, closed, arcSteps, CANAL_FIT_TOL_MM, grow, tol) to null
     }
 
     /**
@@ -9641,9 +9719,9 @@ object Blend3 {
         val u = v.coerceIn(0.0, 1.0) * (if (canal.closed) sts.size.toDouble() else (sts.size - 1).toDouble())
         val seed = canal.spine.centreAt(u)
         val near = sts[min(sts.size - 1, max(0, floor(u).toInt()))]
-        val t0 = spineTangentAt(canal.w1, canal.w2, seed, near.t) ?: near.t
+        val t0 = spineTangentAt(canal.w1, canal.w2, seed, near.t, canal.tangentTol) ?: near.t
         val c = centreAt(canal.w1, canal.w2, seed, t0, canal.choice.a * canal.r, canal.choice.b * canal.r) ?: return null
-        val t = spineTangentAt(canal.w1, canal.w2, c, t0) ?: t0
+        val t = spineTangentAt(canal.w1, canal.w2, c, t0, canal.tangentTol) ?: t0
         return canalRawFrom(canal.w1, canal.w2, c, t, near.world(near.apex))
     }
 
@@ -9868,7 +9946,15 @@ object Blend3 {
         }
         val exact = quadrature(fineLegs, fineArcs, true)
         val chorded = quadrature(canal.stations.size, canal.arcSteps, true)
-        val skin = strip(wallSkin(canal.w1), wallSkin(canal.w2))
+        // **and the strip is a circular segment, not a rectangle** (OP-31, slice 5s). [strip] measures the
+        // leg's own length times the tolerance the wall's triangles may stand inside its true surface; what
+        // the body actually gives back along that leg is the region between each tessellation chord and its
+        // own arc, which is a **circular segment** — two thirds of the rectangle the chord and the sagitta
+        // span, exactly (`A = ⅔ c h` to the order a sagitta this small has), and nothing at all at the ends
+        // of every chord. So the whole-leg rectangle was half again as much ground as the body can hand
+        // back, and the figure's lower bound stood that much too low: on the unlike-size mitre at
+        // `r = 0.5` it was **negative**, which is a bracket that admits a body that removes nothing.
+        val skin = SEGMENT_OF_ITS_RECTANGLE * strip(wallSkin(canal.w1), wallSkin(canal.w2))
         val stepped = strip(canal.grow, canal.grow)
         if (canal.bevel) {
             // **a bevel's step-off gains the body nothing** (OP-31, slice 5n), and the bracket says so: its
@@ -10263,7 +10349,7 @@ object Blend3 {
             )
         }
         if (stations.count { !it.tip } < 2) return null to notFitting
-        return Canal(index, edge, sec, choice, d, stations, w1, w2, path, lens, closed, 1, CANAL_FIT_TOL_MM, grow) to null
+        return Canal(index, edge, sec, choice, d, stations, w1, w2, path, lens, closed, 1, CANAL_FIT_TOL_MM, grow, TANGENT_TOL) to null
     }
 
     /**
@@ -11857,7 +11943,7 @@ object Blend3 {
             // …and the ball has to fit in it: its centre stands `r` from both walls, and the crease's own
             // point has to lie **outside** the ball, or there is no material between the two to take away
             val raw =
-                canalRawAt(w1, w2, path, lens, 0.5, r, sector.first, sector.second) ?: return null to
+                canalRawAt(w1, w2, path, lens, 0.5, r, sector.first, sector.second, tangencyTolOf(edge, w1, w2)) ?: return null to
                     Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)
             if ((raw.place.at(raw.apex) - raw.at).length() <= r + Geom3.WELD_TOL) {
                 return null to Msgs.refusalBlendCanalDoesNotFitAlong(sizePhrase = sec.sizePhrase(), name = edge.name.label)

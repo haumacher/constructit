@@ -134,6 +134,75 @@ class BlendCanalSweepTest {
         println("== the canal sweep: ${built + refused} cells — $built built, $refused refused by name, 0 residue")
     }
 
+    /**
+     * **…and so does every ball along a crease the two rounds' own sizes make a *fitted quartic*** (OP-31,
+     * slice 5s). Where the two rounds are **unlike**, the mitre between them is no plane ellipse but the
+     * quartic slice 5a fits, and the canal's spine is the two offset cylinders' intersection — which crosses
+     * **four** branches at the run's own tip, one per side of each wall's axis, and marched onto the wrong
+     * one the tool takes a razor-thin sliver five millimetres from the corner and leaves the corner sharp.
+     * That body passed the figure this sweep held the elliptical column to, because the bracket's lower
+     * bound was a **negative** number at the smallest ball. So this column reads the figure's own lower
+     * bound too: a removal, never a licence.
+     */
+    @Test
+    fun everyBallAlongAFittedQuarticBuildsInBothRoutesOrRefusesByName() {
+        var built = 0
+        var refused = 0
+        for ((bigR, smallR) in listOf(4.0 to 3.0, 5.0 to 3.0, 6.0 to 4.0)) {
+            val block = blockRoundedAlternately(bigR, smallR)
+            val mitres = quarticMitresOf(Evaluator().solid(block.rounded))
+            assertEquals(4, mitres.size, "four unlike rounds meet in four fitted quartics (R=$bigR/$smallR): $mitres")
+            val sets =
+                listOf(
+                    Triple("one mitre", listOf(mitres[0]), false),
+                    Triple("four mitres in one gesture", mitres, false),
+                    Triple("four mitres one gesture at a time", mitres, true),
+                )
+            for ((what, addresses, sequential) in sets) {
+                for (rc in balls) {
+                    val cell = "R=$bigR/$smallR quartic($what) rc=$rc"
+                    val (body, why) = canalled(block, addresses, rc, sequential)
+                    if (body == null) {
+                        val reason = assertNotNull(why, "a cell that does not build has a reason: $cell")
+                        assertTrue(namesSomething(reason), "$cell is refused without naming anything: $reason")
+                        refused++
+                        println("$cell | refused | — | ${reason.take(80)}")
+                        continue
+                    }
+                    assertManifold(body.mesh, cell)
+                    for (m in addresses) {
+                        val choice = assertNotNull(Blend3.choicesFor(Evaluator().solid(block.rounded), listOf(m), BlendSection(BlendKind.FILLET, rc)).first, "$cell scores mitre $m")[0]
+                        val tool = assertNotNull(Blend3.canalToolMesh(Evaluator().solid(block.rounded).feature, m, BlendSection(BlendKind.FILLET, rc), choice), "$cell: mitre $m has a tool")
+                        assertManifold(tool, "$cell: the tool along mitre $m")
+                    }
+                    val took = volumeOf(block.rounded, cell) - Geom3.volume(body.mesh)
+                    val (lo, hi) = bracketOf(block, addresses, rc, sequential)
+                    assertTrue(lo > 0.0, "$cell: the figure's own lower bound is $lo — a bracket that admits a body removing nothing")
+                    assertTrue(took in lo..hi, "$cell takes $took, outside the figure [$lo, $hi] the algebra states")
+                    val faces = assertNotNull(Section3.faces(body.feature).first, "$cell names its faces")
+                    for (m in addresses) {
+                        val band = assertNotNull(faces.firstOrNull { it.name == FaceName.BlendBand(m, 0) }, "$cell: the canal along mitre $m is a face")
+                        assertNotNull(band.reason, "$cell: …which is no plane and says so")
+                    }
+                    built++
+                    println("$cell | built | $took | [$lo, $hi]")
+                }
+            }
+            // …and all four in one gesture, or one gesture at a time, is one and the same body
+            for (rc in balls) {
+                val (one, _) = canalled(block, mitres, rc, false)
+                val (seq, _) = canalled(block, mitres, rc, true)
+                assertTrue((one == null) == (seq == null), "R=$bigR/$smallR rc=$rc: the two canal routes disagree about whether the band can be had")
+                if (one == null || seq == null) continue
+                val v1 = Geom3.volume(one.mesh)
+                val v2 = Geom3.volume(seq.mesh)
+                assertTrue(abs(v1 - v2) <= 1e-7 * v1, "R=$bigR/$smallR rc=$rc: four canals in one gesture and in four give $v1 against $v2")
+            }
+        }
+        assertEquals(3 * balls.size * 3, built + refused, "every cell of the unlike-size column is read")
+        println("== the fitted-quartic column: ${built + refused} cells — $built built, $refused refused by name, 0 residue")
+    }
+
     // ---- fixtures ----
 
     private class Block(val cx: Construction, val rounded: SolidRef)
@@ -156,6 +225,28 @@ class BlendCanalSweepTest {
         for (e in tops) {
             val choices = assertNotNull(Blend3.choicesFor(Evaluator().solid(on), listOf(e), sec).first, "top edge $e is scored")
             on = cx.blendAll(on, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(bigR.mm), null, listOf(e), choices)))
+        }
+        return Block(cx, on)
+    }
+
+    /**
+     * The block with its four top edges rounded **alternately** at [bigR] and [smallR], one gesture each —
+     * so that every one of the four mitres is the *fitted quartic* two unlike rounds cross in.
+     */
+    private fun blockRoundedAlternately(
+        bigR: Double,
+        smallR: Double,
+    ): Block {
+        val cx = Construction()
+        val box = prism(cx, listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth)), height)
+        val tops = topEdges(Evaluator().solid(box))
+        assertEquals(4, tops.size, "a block has four top edges")
+        var on = box
+        for ((k, e) in tops.withIndex()) {
+            val size = if (k % 2 == 0) bigR else smallR
+            val sec = BlendSection(BlendKind.FILLET, size)
+            val choices = assertNotNull(Blend3.choicesFor(Evaluator().solid(on), listOf(e), sec).first, "top edge $e is scored at $size")
+            on = cx.blendAll(on, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(size.mm), null, listOf(e), choices)))
         }
         return Block(cx, on)
     }
@@ -203,6 +294,12 @@ class BlendCanalSweepTest {
             on = cx.blendAll(on, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(rc.mm), null, step, choices)))
         }
         return lo to hi
+    }
+
+    /** The four mitres two **unlike** rounds leave — fitted quartics, which no plane carries. */
+    private fun quarticMitresOf(s: Solid3): List<Int> {
+        val es = assertNotNull(Section3.edges(s.feature).first, "it names its edges")
+        return es.indices.filter { es[it].name is EdgeName.BlendMitre && es[it].reason == null && es[it].geom is EdgeGeom.InSpace }
     }
 
     private fun mitresOf(s: Solid3): List<Int> {

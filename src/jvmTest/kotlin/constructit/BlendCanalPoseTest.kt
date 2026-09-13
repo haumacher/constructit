@@ -352,6 +352,48 @@ class BlendCanalPoseTest {
     }
 
     /**
+     * **…and so does the canal along the *fitted quartic* two **unlike** rounds cross in** (OP-31, slice 5s).
+     *
+     * Where the two rounds are of one size the mitre is a plane ellipse, stated **exactly**; where they are
+     * not it is the quartic slice 5a fits, and the run's own tip is then known only as well as that fit is.
+     * The spine is the two offset cylinders' intersection, which crosses **four** branches at that tip — one
+     * per side of each wall's own axis — and the direction read off the two gradients there is the crease's
+     * fitting tolerance rather than nothing at all, so it chose the branch, and it chose the wrong one. What
+     * decides it now is the crease's own tangent, which is a fact of the body and not of the pose; this is
+     * the class that says so.
+     */
+    @Test
+    fun theCanalAlongAFittedQuarticTakesTheSameMaterialInEveryPose() {
+        assertSameInEveryPose("the canal band along the fitted quartic of two unlike rounds") { pose ->
+            val cx = Construction()
+            val box = prismOn(pose, cx, listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth)), height)
+            val s0 = Evaluator().solid(box)
+            val corner = at(pose, width, depth, height)
+            val top =
+                edgesAt(s0, corner).filter { i ->
+                    val p = assertNotNull(Blend3.edgePath(edgesOf(s0)[i]).first)
+                    abs((p.start!! - at(pose, 0.0, 0.0, height)).dot(frame(pose).third)) < 1e-9 &&
+                        abs((p.end!! - at(pose, 0.0, 0.0, height)).dot(frame(pose).third)) < 1e-9
+                }
+            assertEquals(2, top.size, "${pose.what}: two top edges share the far corner")
+            var on = box
+            for ((k, e) in top.withIndex()) {
+                val (next, whyOne) = round(cx, on, listOf(e), if (k == 0) 4.0 else 3.0)
+                on = assertNotNull(next, "${pose.what}: top edge $e rounds: $whyOne")
+            }
+            val rounded = Evaluator().solid(on)
+            assertManifold(rounded.mesh, "${pose.what}: two unlike rounds")
+            val before = Geom3.volume(rounded.mesh)
+            val es = edgesOf(rounded)
+            val mitre = assertNotNull(es.indices.firstOrNull { es[it].name is EdgeName.BlendMitre && es[it].reason == null }, "${pose.what}: the two bands cross in a mitre")
+            val (out, why) = round(cx, on, listOf(mitre), 1.5)
+            val body = Evaluator().solid(assertNotNull(out, "${pose.what}: the canal along the quartic builds: $why"))
+            assertManifold(body.mesh, "${pose.what}: the canal along the quartic")
+            before to before - Geom3.volume(body.mesh)
+        }
+    }
+
+    /**
      * **…and so does the **tight bend**, the ball large against the crease's own curvature** (OP-31, slice
      * 5m). Slice 5f refused this size by name, because its stations were spread along the crease and the
      * crease's normal planes stop foliating the spine there. Marched on the spine itself the band is an
