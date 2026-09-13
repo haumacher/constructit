@@ -173,32 +173,87 @@ internal object BoolFace3 {
 
         private val rings: List<List<Vec2>> by lazy { outline.map { GeomMath.tessellatePiece(it, 1e-3) } }
 
-        /** Whether the trim is made of **closed loops** — then its winding states containment exactly. */
-        private val closedRings: Boolean by lazy { loops.isNotEmpty() && loops.all { (it.first() - it.last()).length() <= CHART_JOIN } }
+        /**
+         * **How far two pieces of this trim may stand apart and still be one boundary** (OP-31, slice 5l).
+         *
+         * A face's outline is a **cycle by construction** — one walk, stated piece by piece — but the pieces
+         * are stated to their own tolerances: an exact crease against a fitted one, a chain through points
+         * exact on two surfaces against the cylinder's own ruling. So two consecutive pieces of one boundary
+         * may fail to meet by a fraction of a tessellation tolerance, and the question every reader below
+         * asks is whether a gap is the trim's own statement or a **second loop** beginning. The measure is
+         * the trim's own size: a gap small against the chart's own extent is the statement's, a gap of the
+         * order of that extent is a new loop's. Nothing here is a number about the world — it is a ratio of
+         * the face to itself, so it says the same thing at every size.
+         */
+        private val bridgeTol: Double by lazy {
+            var lo = Vec2(Double.MAX_VALUE, Double.MAX_VALUE)
+            var hi = Vec2(-Double.MAX_VALUE, -Double.MAX_VALUE)
+            for (r in rings) {
+                for (q in r) {
+                    lo = Vec2(min(lo.x, q.x), min(lo.y, q.y))
+                    hi = Vec2(max(hi.x, q.x), max(hi.y, q.y))
+                }
+            }
+            if (hi.x < lo.x) CHART_JOIN else max(CHART_JOIN, 0.02 * (hi - lo).length())
+        }
 
-        /** The trim's own loops, each chained from the boundary pieces that meet end to end. */
-        private val loops: List<List<Vec2>> by lazy {
+        /**
+         * **The trim's own runs, with the chart's turn unwrapped and its own gaps bridged** (OP-31, slice 5l).
+         *
+         * The pieces are taken in the order the walk stated them, `θ` unwrapped across each join — a boundary
+         * that crosses the chart's seam says `+π` and `−π` for one point — and a join wider than [bridgeTol]
+         * starts a new run. What comes back is one polyline per run, in the chart's **covering** space,
+         * which is the only place the question *"does this run close on itself?"* has an answer that does
+         * not need a case for the seam.
+         */
+        private val runs: List<List<Vec2>> by lazy {
             val out = ArrayList<List<Vec2>>()
             var run = ArrayList<Vec2>()
+            var off = 0.0
             for (ring in rings) {
-                if (run.isEmpty()) {
-                    run.addAll(ring)
-                    continue
+                if (ring.isEmpty()) continue
+                if (run.isNotEmpty()) {
+                    val prev = run.last()
+                    val k = round((prev.x - (ring.first().x + off)) / TWO_PI)
+                    val tryOff = off + k * TWO_PI
+                    if ((Vec2(ring.first().x + tryOff, ring.first().y) - prev).length() <= bridgeTol) {
+                        off = tryOff
+                    } else {
+                        out.add(run)
+                        run = ArrayList()
+                        off = 0.0
+                    }
                 }
-                if ((run.last() - ring.first()).length() <= CHART_JOIN) {
-                    for (k in 1 until ring.size) run.add(ring[k])
-                } else {
-                    out.add(run)
-                    run = ArrayList(ring)
-                }
-                if (run.size > 2 && (run.first() - run.last()).length() <= CHART_JOIN) {
-                    out.add(run)
-                    run = ArrayList()
+                // …and **within** a piece nothing is unwrapped: a boundary piece is stated in the chart as
+                // one continuous curve, so a whole ring really does run from `0` to `2π` and re-wrapping it
+                // point by point would fold it onto its own first point.
+                for (q in ring) {
+                    val at = Vec2(q.x + off, q.y)
+                    if (run.isEmpty() || (at - run.last()).length() > 1e-12) run.add(at)
                 }
             }
             if (run.isNotEmpty()) out.add(run)
             out
         }
+
+        /** A run that advances a whole turn goes **round** the chart: it is extended rather than closed. */
+        private fun wraps(run: List<Vec2>): Boolean = abs(run.last().x - run.first().x) > PI
+
+        /**
+         * Whether the trim is made of **closed loops** — then its winding states containment exactly.
+         *
+         * Read off the trim's own bridged [runs] since OP-31's slice 5l, and that is the whole of the
+         * change: a run that returns to where it began is a loop however many of its joins were only as
+         * good as a fitted piece's own tolerance, and a run that goes **round** the chart — a bore's rim,
+         * the circle a pin's cylinder is cut at — is not a loop and never becomes one, because what closes
+         * it is the carrier's own natural end, which the trim does not state.
+         */
+        private val closedRings: Boolean by lazy {
+            runs.isNotEmpty() && runs.all { it.size > 2 && !wraps(it) && (it.first() - it.last()).length() <= bridgeTol }
+        }
+
+        /** The trim's own loops: the bridged runs that close on themselves. */
+        private val loops: List<List<Vec2>> get() = runs
 
         /** The winding number of the trim's loops about [q] — positive where the material is (OP-14). */
         private fun winding(q: Vec2): Int {
@@ -305,12 +360,14 @@ internal object BoolFace3 {
             }
             val dys = if (tPeriod == null) listOf(0.0) else listOf(-tPeriod, 0.0, tPeriod)
             // **a trim that closes on itself is read by its winding** (OP-31, slice 5l), and only one that
-            // does *not* — a bore's whole cylinder, a ring's whole meridian, whose boundary is two runs
-            // spanning the chart's own period and no loop at all — falls back to the side of the nearest
+            // does *not* — a bore's whole cylinder, a ring's whole meridian, whose boundary is a run that
+            // goes round the chart and closes on no loop at all — falls back to the side of the nearest
             // piece. The nearest-piece rule is a *local* statement: it says the truth beside the boundary
             // and guesses far from it, and a band that goes a quarter of the way round has a whole far side
             // where it guessed — which is how a rounding's band came back claiming the ruling on the
-            // opposite side of its own cylinder.
+            // opposite side of its own cylinder. What decides between the two is [closedRings], and since
+            // this slice it is asked of the trim's own **bridged** runs rather than of a fixed number
+            // against the gaps a fitted piece leaves where it meets an exact one.
             if (closedRings) {
                 for (dx in listOf(-TWO_PI, 0.0, TWO_PI)) {
                     for (dy in dys) {

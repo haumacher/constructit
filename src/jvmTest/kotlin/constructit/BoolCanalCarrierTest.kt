@@ -308,6 +308,12 @@ class BoolCanalCarrierTest {
         if (closesOrSaysWhy(bored, Plane3(Vec3(0.0, 0.0, 17.5), Vec3.X, Vec3.Y), "the level section at z = 17.5")) closed++
         if (closesOrSaysWhy(bored, Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z), "a vertical section through the bore")) closed++
         if (closesOrSaysWhy(bored, Plane3(Vec3(30.0, 22.0, 14.0), Vec3.X, Vec3(0.0, cos(PI / 7), sin(PI / 7))), "a tilted section through the bore")) closed++
+        // **the measure of this slice's own open ground** (OP-31, slice 5l). Before the trim was bridged and
+        // the section's pieces carried their trim's own tolerance, *none* of the three closed and each broke
+        // at a neighbouring band; the level and the tilted close now. The one still open is the **vertical**
+        // plane, which breaks at the bore's own cylinder — a face whose trim goes **round** the chart and
+        // closes on no loop at all, so containment on it is still read by the nearest piece it can find.
+        assertTrue(closed >= 2, "the level and the tilted sections through a bored canal band close: $closed of 3")
         println("canal carrier | bore through the band | $closed of 3 sections close")
         println("canal carrier | bore through the band | ${fs.size} faces, ${bands.size} band piece(s)")
     }

@@ -1023,6 +1023,17 @@ data class DrawnPiece(
      * chaining itself is geometric, and nothing decides differently for knowing this.
      */
     val from: Msg? = null,
+    /**
+     * **How far this piece's own two ends may stand from the truth**, in millimetres — the tolerance the
+     * face it is the cut of states about its own **trim** ([FacePatch.fitted], OP-31's Tier B, slice 5l).
+     *
+     * The curve itself may be exact — a plane against a cylinder is an ellipse whatever bit the cylinder —
+     * and *where it starts and ends* is still only as good as the boundary that clipped it: a rail a fitted
+     * crease left, a chain through points exact on two surfaces. Two such pieces of one section therefore
+     * meet to **that** number and to no better one, which is what [Section3.regionsOf]'s chain asks of them.
+     * Null where the piece's ends are exact.
+     */
+    val fitted: Double? = null,
 )
 
 /**
@@ -2509,11 +2520,24 @@ object Section3 {
         return out.ifEmpty { null } to null
     }
 
-    /** How near two pieces must come to be one chain: exact against exact is exact, a chord is a chord. */
+    /**
+     * How near two pieces must come to be one chain: exact against exact is exact, a chord is a chord — and
+     * **a piece clipped by a fitted trim is as good as that trim says and no better** (OP-31, slice 5l).
+     *
+     * The third term is the one this slice owed. A bored dressed body's section is exact curves throughout —
+     * a cylinder's ruling, a band's own line — and each of them **ends** where the boolean's own trim says,
+     * which is a chain of cubics through points exact on two surfaces with a tolerance stated on it. Two such
+     * ends met thirteen microns apart against a chain tolerance of one nanometre, and a section made
+     * entirely of exact curves refused to close.
+     */
     private fun tolBetween(
         a: DrawnPiece,
         b: DrawnPiece,
-    ): Double = if (a.approximated || b.approximated) GeomMath.TESS_TOL_MM else CHAIN_TOL
+    ): Double =
+        max(
+            if (a.approximated || b.approximated) GeomMath.TESS_TOL_MM else CHAIN_TOL,
+            max(a.fitted ?: 0.0, b.fitted ?: 0.0),
+        )
 
     /**
      * The loops sorted into areas: the ones no other contains are outers, the rest are their holes — and
@@ -2568,9 +2592,12 @@ object Section3 {
             // …each piece carrying the name of the face it is the cut of, so a loop that does not close can
             // say where (OP-31, slice 5p)
             val label = patch.name.label
-            edge.curve?.let { drawn.add(DrawnPiece(it, false, label)) }
-            edge.sampled?.let { pts -> drawn.addAll(polylinePieces(pts).map { DrawnPiece(it, true, label) }) }
-            drawn.addAll(extra.map { DrawnPiece(it.piece, it.approximated, it.from ?: label) })
+            // …and each carrying the tolerance the face states about its own trim, because that is how near
+            // two of them can be asked to meet (OP-31, slice 5l)
+            val tol = patch.fitted
+            edge.curve?.let { drawn.add(DrawnPiece(it, false, label, tol)) }
+            edge.sampled?.let { pts -> drawn.addAll(polylinePieces(pts).map { DrawnPiece(it, true, label, tol) }) }
+            drawn.addAll(extra.map { DrawnPiece(it.piece, it.approximated, it.from ?: label, it.fitted ?: tol) })
         }
         val (es, whyEdges) = edges(feature)
         val corners =
