@@ -70,6 +70,12 @@ internal object BoolFace3 {
     /** Directions whose 2D cross product is under this count as parallel — a corner two lines do not fix. */
     private const val CORNER_EPS = 1e-9
 
+    /**
+     * How near two boundary pieces have to come, in the chart's own mixed units, to be one loop — a chart
+     * piece's two ends are computed from two runs and agree only to the tolerance each was fitted to.
+     */
+    private const val CHART_JOIN = 0.05
+
     /** Below this a run's own coordinate counts as **constant**: a ring, or a ruling. */
     private const val ISO_TOL = 1e-9
 
@@ -92,12 +98,30 @@ internal object BoolFace3 {
         val outline: List<ProfileElement>,
         /** The exact curved carrier, for a face that is not flat. */
         val surface: Surface3?,
+        /**
+         * The **pipe surface along a fitted spine** a canal band is (OP-31, slice 5l) — the fourth carrier,
+         * beside the plane and the revolution, and the only one whose surface is itself Tier B.
+         */
+        val pipe: Pipe3? = null,
+        /**
+         * For a slot that names **no surface of its operand at all** — a tombstone the operand's own reader
+         * left, a band end a corner or a mitre claimed, a removed rounding — the operand's own reason for it
+         * (OP-31, slice 5l). A boolean did not take such a face away, because there never was one to take;
+         * the result says so in the operand's own words rather than claiming a removal it did not make.
+         */
+        val reason: Msg? = null,
     ) {
         /** The planar outline as rings, tessellated once — a **predicate**'s resolution and nothing more. */
         val rings: List<List<Vec2>> by lazy { if (plane == null) emptyList() else Project3.ringsOf(outline) }
 
         /** The curved carrier's own `(θ, t)` reader, built once. */
-        val patch: Patch? by lazy { surface?.let { Patch(it, outline) } }
+        val patch: Patch? by lazy {
+            when {
+                surface != null -> Patch(surface, null, outline)
+                pipe != null -> Patch(null, pipe, outline)
+                else -> null
+            }
+        }
     }
 
     // ---- a curved carrier's own (θ, t) frame ----
@@ -111,25 +135,87 @@ internal object BoolFace3 {
      * of *every* band this drawing names rather than only of the two that happen to be graphs over the axis.
      */
     class Patch(
-        val surface: Surface3,
+        val surface: Surface3?,
+        /**
+         * The **pipe** this face is a patch of, where it is a canal band (OP-31, slice 5l). Exactly one of
+         * [surface] and this is non-null, and the chart below is the same two coordinates for both: `θ` is
+         * the turn — a revolution's about its axis, a pipe's **arc** about its spine — and `t` the parameter
+         * along the other family, a revolution's meridian or a pipe's **station**.
+         */
+        val pipe: Pipe3?,
         /** The trim, directed **material to the left**; empty means the carrier's whole natural extent. */
         val outline: List<ProfileElement>,
     ) {
-        val meridian: ProfileElement? = surface.meridianCurve
+        val meridian: ProfileElement? = surface?.meridianCurve
 
-        /** The meridian's period, where it closes on itself (a whole ring's), else null. */
-        val tPeriod: Double? = if (meridian is ProfileElement.CircleE) TWO_PI else null
+        /** The meridian's period, where it closes on itself (a whole ring's, a closed spine's), else null. */
+        val tPeriod: Double? =
+            if (pipe != null) {
+                if (pipe.closed) pipe.length else null
+            } else if (meridian is ProfileElement.CircleE) {
+                TWO_PI
+            } else {
+                null
+            }
 
         /** The meridian's own parameter interval, for a carrier that states no trim of its own. */
         val tRange: Pair<Double, Double> =
-            when (val m = meridian) {
-                is ProfileElement.Seg -> 0.0 to (m.segment.b - m.segment.a).length()
-                is ProfileElement.ArcE -> 0.0 to abs(GeomMath.sweep(m.arc))
-                is ProfileElement.CircleE -> 0.0 to TWO_PI
-                else -> 0.0 to 0.0
+            if (pipe != null) {
+                0.0 to pipe.length
+            } else {
+                when (val m = meridian) {
+                    is ProfileElement.Seg -> 0.0 to (m.segment.b - m.segment.a).length()
+                    is ProfileElement.ArcE -> 0.0 to abs(GeomMath.sweep(m.arc))
+                    is ProfileElement.CircleE -> 0.0 to TWO_PI
+                    else -> 0.0 to 0.0
+                }
             }
 
         private val rings: List<List<Vec2>> by lazy { outline.map { GeomMath.tessellatePiece(it, 1e-3) } }
+
+        /** Whether the trim is made of **closed loops** — then its winding states containment exactly. */
+        private val closedRings: Boolean by lazy { loops.isNotEmpty() && loops.all { (it.first() - it.last()).length() <= CHART_JOIN } }
+
+        /** The trim's own loops, each chained from the boundary pieces that meet end to end. */
+        private val loops: List<List<Vec2>> by lazy {
+            val out = ArrayList<List<Vec2>>()
+            var run = ArrayList<Vec2>()
+            for (ring in rings) {
+                if (run.isEmpty()) {
+                    run.addAll(ring)
+                    continue
+                }
+                if ((run.last() - ring.first()).length() <= CHART_JOIN) {
+                    for (k in 1 until ring.size) run.add(ring[k])
+                } else {
+                    out.add(run)
+                    run = ArrayList(ring)
+                }
+                if (run.size > 2 && (run.first() - run.last()).length() <= CHART_JOIN) {
+                    out.add(run)
+                    run = ArrayList()
+                }
+            }
+            if (run.isNotEmpty()) out.add(run)
+            out
+        }
+
+        /** The winding number of the trim's loops about [q] — positive where the material is (OP-14). */
+        private fun winding(q: Vec2): Int {
+            var w = 0
+            for (loop in loops) {
+                for (i in loop.indices) {
+                    val a = loop[i]
+                    val b = loop[(i + 1) % loop.size]
+                    if (a.y <= q.y) {
+                        if (b.y > q.y && (b - a).cross(q - a) > 0.0) w++
+                    } else if (b.y <= q.y && (b - a).cross(q - a) < 0.0) {
+                        w--
+                    }
+                }
+            }
+            return w
+        }
 
         /** Where the meridian's own parameter starts, as an angle, for a curved meridian. */
         private val tStart: Double =
@@ -151,6 +237,8 @@ internal object BoolFace3 {
             th: Double,
             t: Double,
         ): Vec3? {
+            pipe?.let { return it.world(th, t) }
+            val surface = this.surface ?: return null
             val sr =
                 when (val m = meridian) {
                     is ProfileElement.Seg -> {
@@ -170,6 +258,8 @@ internal object BoolFace3 {
 
         /** Where the world point [p] stands in this chart: `θ` in `(−π, π]`, `t` the meridian's parameter. */
         fun of(p: Vec3): Vec2? {
+            pipe?.let { return it.chartOf(p) }
+            val surface = this.surface ?: return null
             val rel = p - surface.origin
             val axial = rel.dot(surface.axis)
             val rad = rel - surface.axis * axial
@@ -202,6 +292,8 @@ internal object BoolFace3 {
          */
         fun contains(q: Vec2): Boolean {
             if (outline.isEmpty()) {
+                if (pipe != null) return q.y >= -1e-9 && q.y <= pipe.length + 1e-9
+                val surface = this.surface ?: return false
                 if (!surface.full) {
                     var t = q.x
                     while (t < surface.turnStart - 1e-12) t += TWO_PI
@@ -211,9 +303,24 @@ internal object BoolFace3 {
                 if (tPeriod != null) return true
                 return q.y >= tRange.first - 1e-9 && q.y <= tRange.second + 1e-9
             }
+            val dys = if (tPeriod == null) listOf(0.0) else listOf(-tPeriod, 0.0, tPeriod)
+            // **a trim that closes on itself is read by its winding** (OP-31, slice 5l), and only one that
+            // does *not* — a bore's whole cylinder, a ring's whole meridian, whose boundary is two runs
+            // spanning the chart's own period and no loop at all — falls back to the side of the nearest
+            // piece. The nearest-piece rule is a *local* statement: it says the truth beside the boundary
+            // and guesses far from it, and a band that goes a quarter of the way round has a whole far side
+            // where it guessed — which is how a rounding's band came back claiming the ruling on the
+            // opposite side of its own cylinder.
+            if (closedRings) {
+                for (dx in listOf(-TWO_PI, 0.0, TWO_PI)) {
+                    for (dy in dys) {
+                        if (winding(Vec2(q.x + dx, q.y + dy)) > 0) return true
+                    }
+                }
+                return false
+            }
             var best = Double.MAX_VALUE
             var side = false
-            val dys = if (tPeriod == null) listOf(0.0) else listOf(-tPeriod, 0.0, tPeriod)
             for (ring in rings) {
                 for (dx in listOf(-TWO_PI, 0.0, TWO_PI)) {
                     for (dy in dys) {
@@ -257,6 +364,9 @@ internal object BoolFace3 {
             if (abs(abs(pa.normal.normalized().dot(pb.normal.normalized())) - 1.0) > 1e-9) return false
             return abs(pb.distanceTo(pa.origin)) <= 1e-7
         }
+        // a **pipe** is never read as one surface with another: two canal bands that happen to touch are
+        // two faces of the body, and the one thing this predicate must not do is merge them (slice 5l)
+        if (a.pipe != null || b.pipe != null) return false
         val sa = a.surface ?: return false
         val sb = b.surface ?: return false
         if (abs(abs(sa.axis.dot(sb.axis)) - 1.0) > 1e-9) return false
@@ -310,6 +420,9 @@ internal object BoolFace3 {
         p: Vec3,
     ): Double {
         c.plane?.let { return it.distanceTo(p) }
+        // **the pipe's own signed distance** (OP-31, slice 5l): `|p − c(s*)| − r`, the station solved by
+        // the nearest point of the spine — which is all a carrier is ever asked for
+        c.pipe?.let { return it.offset(p) }
         val s = c.surface ?: return Double.MAX_VALUE
         val rel = p - s.origin
         val axial = rel.dot(s.axis)
@@ -343,6 +456,7 @@ internal object BoolFace3 {
         p: Vec3,
     ): Vec3 {
         c.plane?.let { return it.normal.normalized() }
+        c.pipe?.let { return it.gradient(p) }
         val s = c.surface ?: return Vec3(0.0, 0.0, 0.0)
         val rel = p - s.origin
         val axial = rel.dot(s.axis)
@@ -373,7 +487,7 @@ internal object BoolFace3 {
     }
 
     /** Whether this carrier states an exact surface at all — the one thing the whole assembly needs of it. */
-    private fun carried(c: Carrier): Boolean = c.plane != null || c.surface != null
+    private fun carried(c: Carrier): Boolean = c.plane != null || c.surface != null || c.pipe != null
 
     // ---- solving: a corner is a triple point, a trace is a projection ----
 
@@ -474,13 +588,20 @@ internal object BoolFace3 {
         val pa = a.plane
         val pb = b.plane
         if (pa != null && pb != null) return null
+        // **a pipe meets every other carrier in a curve this drawing has no name for** (OP-31, slice 5l):
+        // a plane against a pipe along a bending spine is no conic, and a cylinder against one is no
+        // quartic anyone has tabulated. So the crease is the fitted chain through points exact on both
+        // that [creaseGeom] falls back to — the very answer two skew cylinders get (slice 5c).
+        if (a.pipe != null || b.pipe != null) return null
         val out = ArrayList<Pair<Plane3, ProfileElement>>()
         if (pa != null && b.surface != null) {
             b.surface.meridianCurve?.let { m -> Revolve3.planeCut(frameOf(b.surface), m, pa)?.let { cs -> out.addAll(cs.map { pa to it }) } }
             out.addAll(tangentRings(b.surface, pa))
+            out.addAll(tangentRulings(b.surface, pa))
         } else if (pb != null && a.surface != null) {
             a.surface.meridianCurve?.let { m -> Revolve3.planeCut(frameOf(a.surface), m, pb)?.let { cs -> out.addAll(cs.map { pb to it }) } }
             out.addAll(tangentRings(a.surface, pb))
+            out.addAll(tangentRulings(a.surface, pb))
         } else {
             val sa = a.surface ?: return null
             val sb = b.surface ?: return null
@@ -512,6 +633,32 @@ internal object BoolFace3 {
         return touchPoints(m, Line(Vec2(s0, 0.0), Vec2(0.0, 1.0)), TOUCH_TOL)
             .filter { it.y > Geom3.WELD_TOL }
             .map { plane to ProfileElement.CircleE(Circle(plane.toLocal(s.origin + s.axis * s0), it.y), true) }
+    }
+
+    /**
+     * The **ruling** where a cylinder is tangent to a plane **parallel to its own axis** — the crease every
+     * rounding along a straight edge makes, and the twin of [tangentRings] one turn over (OP-31, slice 5l).
+     *
+     * A fillet's band runs tangent onto the two faces it rounds. Where one of those is a plane *square* to
+     * the band's axis the touch is a circle and [tangentRings] states it; where it is a plane **containing**
+     * the axis direction — which is the ordinary case at a straight edge, the face the band rolls onto — the
+     * touch is one **ruling**, and a crossing solved as a quadratic has there the same double root
+     * arithmetic loses. It is found by distance instead and the line it names is exact.
+     */
+    private fun tangentRulings(
+        s: Surface3,
+        plane: Plane3,
+    ): List<Pair<Plane3, ProfileElement>> {
+        val band = s.band as? Revolve3.Band.Cylinder ?: return emptyList()
+        val n = plane.normal.normalized()
+        if (abs(s.axis.dot(n)) > 1e-9) return emptyList()
+        val d = plane.distanceTo(s.origin)
+        if (abs(abs(d) - band.r) > TOUCH_TOL) return emptyList()
+        val foot = s.origin - n * d
+        val a = plane.toLocal(foot + s.axis * band.s0)
+        val b = plane.toLocal(foot + s.axis * band.s1)
+        if ((b - a).length() <= Vec2.EPS) return emptyList()
+        return listOf(plane to ProfileElement.Seg(Segment(a, b)))
     }
 
     /** How near a meridian has to come to a line to **touch** it, in mm — a tangency, not a crossing. */
@@ -694,9 +841,88 @@ internal object BoolFace3 {
         val closed: Boolean,
     )
 
+    /**
+     * **A crease between two faces of one operand is that operand's own crease** (OP-31, slice 5l) — the
+     * second half of item 4's rule, and the half it never needed until a tangency turned up.
+     *
+     * A boolean never moves a surface; it moves no *crease between two surfaces of one operand* either. It
+     * only ever trims one. So where a run of a result face's boundary faces a neighbour **of the same
+     * operand**, the curve along it is the curve that operand already states — and for a rounding's rail
+     * that matters absolutely: the rail is a **tangency**, where the two-surface Newton that states every
+     * other crease is singular, and the only statement of it anywhere is the one the rounding itself made
+     * (a chain through points exact on both the ball and the wall, [Blend3]'s own).
+     *
+     * The curve is used as what the engine's own boundary walk is pulled onto, which is exactly how a fitted
+     * crease has been stated since slice 5c — only the target is the drawing's curve instead of a solve.
+     */
+    private class OperandCrease(path: Path3, val fitted: Double?) {
+        private val pts: List<Vec3> = sample(path)
+
+        fun nearest(q: Vec3): Vec3? {
+            if (pts.size < 2) return pts.firstOrNull()
+            var best: Vec3? = null
+            var bestD = Double.MAX_VALUE
+            for (i in 0 until pts.size - 1) {
+                val a = pts[i]
+                val ab = pts[i + 1] - a
+                val len2 = ab.dot(ab)
+                if (len2 <= 0.0) continue
+                val u = ((q - a).dot(ab) / len2).coerceIn(0.0, 1.0)
+                val foot = a + ab * u
+                val d = (q - foot).length()
+                if (d < bestD) {
+                    bestD = d
+                    best = foot
+                }
+            }
+            return best
+        }
+
+        companion object {
+            private fun sample(path: Path3): List<Vec3> {
+                val out = ArrayList<Vec3>()
+                val per = max(8, 512 / max(1, path.elements.size))
+                for (el in path.elements) {
+                    for (k in 0..per) {
+                        val p = Frames3.pointAt(el, k.toDouble() / per)
+                        if (out.isEmpty() || (p - out.last()).length() > 1e-12) out.add(p)
+                    }
+                }
+                return out
+            }
+        }
+    }
+
+    /** The crease the operand states between its own faces [a] and [b], where it states one. */
+    private fun operandCrease(
+        edges: List<List<SolidEdge>>,
+        a: Carrier,
+        b: Carrier,
+    ): OperandCrease? {
+        if (a.operand != b.operand || a.name == b.name) return null
+        val list = edges.getOrNull(a.operand) ?: return null
+        for (e in list) {
+            if (e.reason != null) continue
+            if (!e.between.sameAs(a.name, b.name)) continue
+            // …read as the **curve** it is and not as a carrier to blend along: [Blend3.edgePath] declines
+            // a fitted chain on purpose (a chain carries no rigid section), and what is wanted here is only
+            // the points it runs through
+            val path =
+                when (val g = e.geom) {
+                    is EdgeGeom.InSpace -> Path3(g.chain)
+                    is EdgeGeom.Straight -> Path3(listOf(Curve3Element.Seg3(g.a, g.b)))
+                    is EdgeGeom.OnPlane -> Intersect3.liftedRun(listOf(g.piece), g.plane, g.piece is ProfileElement.CircleE || g.piece is ProfileElement.EllipseE).first
+                }
+            if (path.elements.isEmpty()) continue
+            return OperandCrease(path, e.fitted)
+        }
+        return null
+    }
+
     fun assemble(
         carriers: List<Carrier>,
         r: BoolMesh,
+        operandEdges: List<List<SolidEdge>> = emptyList(),
     ): Pair<BoolProvenance?, Msg?> {
         val mesh = r.mesh
         val n = mesh.triangles.size
@@ -705,6 +931,7 @@ internal object BoolFace3 {
         val tol = max(1e-6, CARRIER_ULPS * MeshCanon.F32_ULP * scale)
 
         // ---- 1. every triangle onto the carrier it is a piece of ----
+        val anyPipe = carriers.any { it.pipe != null }
         val onCarrier = IntArray(n)
         val hints = HashMap<Long, Int>()
         var last = -1
@@ -716,7 +943,7 @@ internal object BoolFace3 {
             val centre = (va + vb + vc) * (1.0 / 3.0)
             val key = planeKey(va, vb, vc)
             var pick = -1
-            for (h in listOf(hints[key] ?: -1, last)) {
+            for (h in if (anyPipe) emptyList() else listOf(hints[key] ?: -1, last)) {
                 if (h >= 0 && sits(carriers[h], va, vb, vc, centre, tol, inside = true)) {
                     pick = h
                     break
@@ -827,9 +1054,13 @@ internal object BoolFace3 {
             if (pi < 0) {
                 val k = -1 - pi
                 val c = carriers[k]
+                val own = c.reason
                 val why =
                     if (absorbed[k] >= 0) {
                         Msgs.refusalSectionBoolFaceCoplanar(name = carriers[absorbed[k]].name.label)
+                    } else if (own != null) {
+                        // the operand never had this face: its own reason, not a removal (slice 5l)
+                        Msgs.refusalSectionBoolFaceAbsentInOperand(which = if (c.operand == 0) "a" else "b", reason = own)
                     } else {
                         Msgs.refusalSectionBoolFaceConsumed(which = if (c.operand == 0) "a" else "b")
                     }
@@ -839,7 +1070,7 @@ internal object BoolFace3 {
             }
             val self = slotCarrier[slot] ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
             val built =
-                outlineOf(mesh, pieces[pi], pieceOf, slotOfPiece, slotCarrier, self, owner, tol)
+                outlineOf(mesh, pieces[pi], pieceOf, slotOfPiece, slotCarrier, self, owner, tol, operandEdges)
                     ?: return null to (
                         if (self.plane != null) {
                             Msgs.refusalSectionBoolCornerNotDetermined()
@@ -851,18 +1082,30 @@ internal object BoolFace3 {
             if (self.plane != null) {
                 patches.add(FacePatch(names[slot], self.plane, outline, null, null, fitted))
             } else {
-                val surface = self.surface ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+                val surface = self.surface
+                val pipe = self.pipe
+                if (surface == null && pipe == null) return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
                 val oriented =
-                    orientedTrim(mesh, pieces[pi], surface, outline)
+                    orientedTrim(mesh, surface, pipe, pieces[pi], outline)
                         ?: return null to Msgs.refusalSectionBoolTrimNotDetermined(name = names[slot].label)
+                // **a canal band keeps being a canal band through the boolean** (OP-31, slice 5l): it is the
+                // operand's own pipe surface, trimmed, and it says so in the words slice 5f gave it rather
+                // than claiming a family of revolution it does not belong to.
+                val why =
+                    if (pipe != null) {
+                        Msgs.refusalSectionBoolFaceIsCanal(name = names[slot].label)
+                    } else {
+                        Msgs.refusalSectionBoolFaceIsCurved(name = names[slot].label, what = surface!!.band.label)
+                    }
                 patches.add(
                     FacePatch(
                         names[slot],
                         null,
                         oriented,
-                        Msgs.refusalSectionBoolFaceIsCurved(name = names[slot].label, what = surface.band.label),
+                        why,
                         surface,
-                        fitted,
+                        if (pipe == null) fitted else max(fitted ?: 0.0, pipe.fitted),
+                        pipe,
                     ),
                 )
             }
@@ -890,7 +1133,7 @@ internal object BoolFace3 {
                 val ci = slotCarrier[i] ?: return null to Msgs.refusalSectionBoolCornerNotDetermined()
                 val cj = slotCarrier[j] ?: return null to Msgs.refusalSectionBoolCornerNotDetermined()
                 val (geom, fitted) =
-                    creaseGeom(ci, cj, run)
+                    creaseGeom(ci, cj, run, operandEdges)
                         ?: return null to Msgs.refusalSectionBoolTrimNotDetermined(name = names[i].label)
                 edges.add(
                     SolidEdge(
@@ -915,6 +1158,7 @@ internal object BoolFace3 {
         a: Carrier,
         b: Carrier,
         run: Run,
+        edges: List<List<SolidEdge>>,
     ): Pair<EdgeGeom, Double?>? {
         val pa = a.plane
         val pb = b.plane
@@ -928,10 +1172,10 @@ internal object BoolFace3 {
                 if (piece != null) return EdgeGeom.OnPlane(pick.first, piece) to null
             }
         }
-        val at = tracer(a, b, run) ?: return null
-        val (chain, worst) = Blend3.fittedChain3(FIT_TOL, at) ?: return null
+        val trace = tracer(a, b, run, operandCrease(edges, a, b)) ?: return null
+        val (chain, worst) = Blend3.fittedChain3(FIT_TOL, trace::at) ?: return null
         if (chain.isEmpty()) return null
-        return EdgeGeom.InSpace(chain) to worst
+        return EdgeGeom.InSpace(chain) to max(worst, trace.slack)
     }
 
     /** A point the run really passes through — the engine's own middle, which is what scores a branch. */
@@ -1003,6 +1247,9 @@ internal object BoolFace3 {
         c: Carrier,
         base: Double,
     ): Double {
+        // a pipe's recognition tolerance is the ball's own chord tolerance **plus** how far its spine may
+        // stand from the truth, which is the one carrier whose surface is itself Tier B (OP-31, slice 5l)
+        c.pipe?.let { return max(base, 2.0 * (GeomMath.effectiveTol(it.radius) + it.fitted)) }
         val s = c.surface ?: return base
         val reach =
             when (val band = s.band) {
@@ -1015,29 +1262,83 @@ internal object BoolFace3 {
         return max(base, 2.0 * reach)
     }
 
+    /** [q] pulled onto the exact surface of [c] alone — Newton along that surface's own gradient. */
+    private fun ontoSurface(
+        c: Carrier,
+        q: Vec3,
+    ): Vec3? {
+        var p = q
+        repeat(24) {
+            val f = offCarrier(c, p)
+            if (abs(f) <= 1e-12) return p
+            val g = gradCarrier(c, p)
+            val gg = g.dot(g)
+            if (gg <= 1e-18) return null
+            p -= g * (f / gg)
+        }
+        return if (abs(offCarrier(c, p)) <= 1e-9) p else null
+    }
+
     /**
      * The run read as a **curve**: the engine's boundary walk pulled onto the exact curve the two carriers
      * meet in, parameterised by the walk's own arc length.
+     *
+     * *And where the two carriers are **tangent** along it* (OP-31, slice 5l). A rounding's band runs tangent
+     * onto the faces it rounds — that is what a rounding *is* — so a dressed body through a boolean has a
+     * crease along every one of its rails where the two surfaces meeting there have the **same normal**, and
+     * the two-surface Newton that states every other crease is singular by construction rather than by
+     * accident. There the walk is pulled onto **one** of the two exactly and how far it then stood off the
+     * other is measured and carried in [slack], so the answer is a chain of points exact on one surface and
+     * within a stated distance of the other — Tier B, said out loud, and never passed off as exact.
      */
+    private class Trace(
+        private val a: Carrier,
+        private val b: Carrier,
+        private val guide: List<Vec3>,
+        private val cum: DoubleArray,
+        private val total: Double,
+        private val off: (Carrier, Vec3) -> Double,
+        private val onCrease: (Carrier, Carrier, Vec3) -> Vec3?,
+        private val onSurface: (Carrier, Vec3) -> Vec3?,
+        private val stated: OperandCrease?,
+    ) {
+        /** How far the worst point handed back stood off the carrier it could not be solved onto, in mm. */
+        var slack: Double = 0.0
+            private set
+
+        fun at(u: Double): Vec3? {
+            val s = (u.coerceIn(0.0, 1.0)) * total
+            var k = 0
+            while (k < guide.size - 2 && cum[k + 1] < s) k++
+            val span = cum[k + 1] - cum[k]
+            val f = if (span <= 0.0) 0.0 else (s - cum[k]) / span
+            val seed = guide[k] + (guide[k + 1] - guide[k]) * f
+            // the operand's own crease first, where it states one — see [OperandCrease]
+            stated?.nearest(seed)?.let {
+                stated.fitted?.let { w -> if (w > slack) slack = w }
+                return it
+            }
+            onCrease(a, b, seed)?.let { return it }
+            val p = onSurface(a, seed) ?: onSurface(b, seed) ?: return null
+            val miss = min(abs(off(a, p)), abs(off(b, p)))
+            if (miss > slack) slack = miss
+            return p
+        }
+    }
+
     private fun tracer(
         a: Carrier,
         b: Carrier,
         run: Run,
-    ): ((Double) -> Vec3?)? {
+        stated: OperandCrease?,
+    ): Trace? {
         val guide = run.guide
         if (guide.size < 2) return null
         val cum = DoubleArray(guide.size)
         for (i in 1 until guide.size) cum[i] = cum[i - 1] + (guide[i] - guide[i - 1]).length()
         val total = cum[guide.size - 1]
         if (total <= Geom3.WELD_TOL) return null
-        return { u ->
-            val s = (u.coerceIn(0.0, 1.0)) * total
-            var k = 0
-            while (k < guide.size - 2 && cum[k + 1] < s) k++
-            val span = cum[k + 1] - cum[k]
-            val f = if (span <= 0.0) 0.0 else (s - cum[k]) / span
-            ontoCrease(a, b, guide[k] + (guide[k + 1] - guide[k]) * f)
-        }
+        return Trace(a, b, guide, cum, total, ::offCarrier, ::ontoCrease, ::ontoSurface, stated)
     }
 
     // ---- one face's own boundary ----
@@ -1061,6 +1362,7 @@ internal object BoolFace3 {
         self: Carrier,
         owner: Map<Long, Int>,
         tol: Double,
+        edges: List<List<SolidEdge>>,
     ): Triple<List<ProfileElement>, List<Run>, Double?>? {
         val mine = piece.tris.toHashSet()
         val out = HashMap<Int, MutableList<IntArray>>()
@@ -1093,7 +1395,7 @@ internal object BoolFace3 {
                     if (at == first) break
                 }
                 if (at != first || loop.size < 3) return null
-                val made = runsOfLoop(mesh, loop, slotCarrier, self, tol) ?: return null
+                val made = runsOfLoop(mesh, loop, slotCarrier, self, tol, edges) ?: return null
                 outline.addAll(made.second)
                 runs.addAll(made.first)
                 made.third?.let { w -> fitted = max(fitted ?: 0.0, w) }
@@ -1110,6 +1412,7 @@ internal object BoolFace3 {
         slotCarrier: List<Carrier?>,
         self: Carrier,
         tol: Double,
+        edges: List<List<SolidEdge>>,
     ): Triple<List<Run>, List<ProfileElement>, Double?>? {
         val m = loop.size
         // start the walk at a run boundary, and at the one with the smallest canonical vertex, so which
@@ -1122,7 +1425,7 @@ internal object BoolFace3 {
         // **a loop with one neighbour all the way round is a closed crease** and has no corner at all — a
         // bore's rim on the face it opens in, a ring where a band hands over. Item 4 could not have one
         // (three planes never make one) and refused the loop; a curved carrier makes it ordinary.
-        if (head < 0) return closedLoop(mesh, loop, slotCarrier, self)
+        if (head < 0) return closedLoop(mesh, loop, slotCarrier, self, edges)
         val groups = ArrayList<IntArray>()
         val walks = ArrayList<List<Int>>()
         var i = 0
@@ -1142,6 +1445,7 @@ internal object BoolFace3 {
         // every corner is where **three** carriers meet: this face and the neighbours on either side of it
         val corners = ArrayList<Vec3>(groups.size)
         val g = groups.size
+        var tangentCorner: Double? = null
         for (k in groups.indices) {
             val prev = neighbours[k]
             val next = neighbours[(k + 1) % g]
@@ -1155,7 +1459,28 @@ internal object BoolFace3 {
                     val lb = creaseLine(self.plane, next.plane) ?: return null
                     self.plane.toWorld(cross2(la, lb) ?: return null)
                 } else {
-                    triplePoint(self, prev, next, vertex) ?: return null
+                    // **a corner where two of the three carriers run tangent** (OP-31, slice 5l). A canal
+                    // band's two rails *are* its tangencies with the walls it rolls on — that is what a
+                    // rounding is — so where a rail runs off the end of its own band the three surfaces
+                    // meeting there have two parallel normals, and the triple point is singular by
+                    // construction rather than by accident: Newton there either stalls or walks off to some
+                    // far branch of the same three surfaces. So the exact solve is **scored against the
+                    // engine's own vertex** like every other branch choice in this drawing (OP-1) rather
+                    // than trusted: the nearest of the triple point, the two determined creases and this
+                    // carrier's own surface wins, and where the winner is not the triple point how far it
+                    // stood from that vertex is carried as the face's own fitted tolerance rather than
+                    // passed off as exact.
+                    val exact = triplePoint(self, prev, next, vertex)
+                    val fallbacks = listOfNotNull(ontoCrease(self, prev, vertex), ontoCrease(self, next, vertex), ontoSurface(self, vertex))
+                    val near = fallbacks.minByOrNull { (it - vertex).length() }
+                    if (exact != null && (near == null || (exact - vertex).length() <= (near - vertex).length())) {
+                        exact
+                    } else if (near != null) {
+                        tangentCorner = max(tangentCorner ?: 0.0, (near - vertex).length())
+                        near
+                    } else {
+                        return null
+                    }
                 }
             // a corner on a **curved** carrier stands where the engine cut a chord, so the check is the
             // chord's own tolerance there rather than float32's (see [carrierTol])
@@ -1166,15 +1491,34 @@ internal object BoolFace3 {
         val runs = ArrayList<Run>(groups.size)
         val drawn = ArrayList<ProfileElement>(groups.size)
         var fitted: Double? = null
+        // **one loop of a curved face's boundary is one loop of its chart** (OP-31, slice 5l). Each run is
+        // unwrapped against its *own* guide, so two runs that meet at a corner may come back on two
+        // different turns of the chart — and the boundary then reads as several open arcs rather than as
+        // the closed loop the face really has, which is exactly what makes a containment test fall back on
+        // guessing (see [Patch.contains]). So each run is carried onto the turn the last one ended on.
+        val period = self.patch?.tPeriod
+        var tail: Vec2? = null
         for (k in groups.indices) {
             val from = corners[(k + g - 1) % g]
             val to = corners[k]
             val run = Run(groups[k][0], groups[k][1], groups[k][2], from, to, walks[k].map { mesh.vertices[it] }, false)
             runs.add(run)
-            val (piece, worst) = trimPiece(self, neighbours[k], run) ?: return null
-            drawn.addAll(piece)
+            val (piece, worst) = trimPiece(self, neighbours[k], run, edges) ?: return null
+            val onTurn =
+                if (self.plane != null || piece.isEmpty()) {
+                    piece
+                } else {
+                    val head = GeomMath.startOf(piece.first())
+                    val t0 = tail
+                    val dx = if (t0 == null) 0.0 else TWO_PI * round((t0.x - head.x) / TWO_PI)
+                    val dy = if (t0 == null || period == null) 0.0 else period * round((t0.y - head.y) / period)
+                    if (dx == 0.0 && dy == 0.0) piece else piece.map { GeomMath.transform(it, Affine(1.0, 0.0, 0.0, 1.0, dx, dy)) }
+                }
+            if (self.plane == null && onTurn.isNotEmpty()) tail = GeomMath.endOf(onTurn.last())
+            drawn.addAll(onTurn)
             worst?.let { w -> fitted = max(fitted ?: 0.0, w) }
         }
+        tangentCorner?.let { w -> fitted = max(fitted ?: 0.0, w) }
         return Triple(runs, drawn, fitted)
     }
 
@@ -1184,6 +1528,7 @@ internal object BoolFace3 {
         loop: List<IntArray>,
         slotCarrier: List<Carrier?>,
         self: Carrier,
+        edges: List<List<SolidEdge>>,
     ): Triple<List<Run>, List<ProfileElement>, Double?>? {
         val other = slotCarrier.getOrNull(loop[0][2]) ?: return null
         if (!carried(other)) return null
@@ -1202,7 +1547,7 @@ internal object BoolFace3 {
                 walk.map { mesh.vertices[it] },
                 true,
             )
-        val (piece, worst) = trimPiece(self, other, run) ?: return null
+        val (piece, worst) = trimPiece(self, other, run, edges) ?: return null
         return Triple(listOf(run), piece, worst)
     }
 
@@ -1219,6 +1564,7 @@ internal object BoolFace3 {
         self: Carrier,
         other: Carrier,
         run: Run,
+        edges: List<List<SolidEdge>>,
     ): Pair<List<ProfileElement>, Double?>? {
         val plane = self.plane
         if (plane != null) {
@@ -1237,13 +1583,13 @@ internal object BoolFace3 {
                     }
                 }
             }
-            val at = tracer(self, other, run) ?: return null
-            val (chain, worst) = Blend3.fittedChain(FIT_TOL) { u -> at(u)?.let { plane.toLocal(it) } } ?: return null
+            val trace = tracer(self, other, run, operandCrease(edges, self, other)) ?: return null
+            val (chain, worst) = Blend3.fittedChain(FIT_TOL) { u -> trace.at(u)?.let { plane.toLocal(it) } } ?: return null
             if (chain.isEmpty()) return null
-            return chain to worst
+            return chain to max(worst, trace.slack)
         }
         val patch = self.patch ?: return null
-        return chartPiece(patch, self, other, run)
+        return chartPiece(patch, self, other, run, edges)
     }
 
     /** Whether the two planes are the same plane — the crease's own plane read back as this face's. */
@@ -1279,8 +1625,10 @@ internal object BoolFace3 {
         self: Carrier,
         other: Carrier,
         run: Run,
+        edges: List<List<SolidEdge>>,
     ): Pair<List<ProfileElement>, Double?>? {
-        val at = exactAt(self, other, run) ?: tracer(self, other, run) ?: return null
+        val trace = if (exactAt(self, other, run) == null) tracer(self, other, run, operandCrease(edges, self, other)) else null
+        val at = exactAt(self, other, run) ?: trace?.let { t -> { u: Double -> t.at(u) } } ?: return null
         val guideTh = DoubleArray(run.guide.size)
         var prev = 0.0
         for ((i, q) in run.guide.withIndex()) {
@@ -1322,7 +1670,7 @@ internal object BoolFace3 {
         }
         val (chain, worst) = Blend3.fittedChain(FIT_TOL) { u -> chart(u) } ?: return null
         if (chain.isEmpty()) return null
-        return chain to worst
+        return chain to max(worst, trace?.slack ?: 0.0)
     }
 
     /** A closed run's own turn in `θ` — plus or minus a whole circle, which way the walk went. */
@@ -1408,17 +1756,18 @@ internal object BoolFace3 {
      */
     private fun orientedTrim(
         mesh: Mesh3,
+        surface: Surface3?,
+        pipe: Pipe3?,
         piece: Piece,
-        surface: Surface3,
         outline: List<ProfileElement>,
     ): List<ProfileElement>? {
         if (outline.isEmpty()) return outline
         val t = mesh.triangles[piece.tris.first()]
         val centre = (mesh.vertices[t.a] + mesh.vertices[t.b] + mesh.vertices[t.c]) * (1.0 / 3.0)
-        val inside = Patch(surface, outline).of(centre) ?: return null
-        if (Patch(surface, outline).contains(inside)) return outline
+        val inside = Patch(surface, pipe, outline).of(centre) ?: return null
+        if (Patch(surface, pipe, outline).contains(inside)) return outline
         val flipped = outline.reversed().map { reversedPiece(it) ?: return null }
-        return if (Patch(surface, flipped).contains(inside)) flipped else null
+        return if (Patch(surface, pipe, flipped).contains(inside)) flipped else null
     }
 
     /** One boundary piece walked the other way — the same curve, the other direction. */
@@ -1461,8 +1810,10 @@ internal object BoolFace3 {
             if (!inside || c.rings.isEmpty()) return true
             return RegionBool.contains(c.rings, plane.toLocal(centre))
         }
-        c.surface ?: return false
+        if (c.surface == null && c.pipe == null) return false
         val ct = carrierTol(c, tol)
+        // a pipe's own box is the cheap reject a face list of thirty carriers needs (OP-31, slice 5l)
+        c.pipe?.let { if (!it.near(va, ct) || !it.near(vb, ct) || !it.near(vc, ct)) return false }
         if (abs(offCarrier(c, va)) > ct) return false
         if (abs(offCarrier(c, vb)) > ct) return false
         if (abs(offCarrier(c, vc)) > ct) return false
@@ -1576,6 +1927,13 @@ internal object BoolFace3 {
 
     // ---- reading a curved result face: the cut, and the sketch space that declines ----
 
+    /** Whether the chart point [q] lies on the pipe face [outline] trims out of [pipe] — the one predicate. */
+    fun onPipe(
+        pipe: Pipe3,
+        outline: List<ProfileElement>,
+        q: Vec2,
+    ): Boolean = Patch(null, pipe, outline).contains(q)
+
     /**
      * A **curved** face of a general boolean's result, cut by a plane: the exact curves
      * [Revolve3.planeCut]'s table gives, clipped to the face's own trim, and the chart's own marching where
@@ -1585,8 +1943,13 @@ internal object BoolFace3 {
         patch: FacePatch,
         cut: Plane3,
     ): Pair<List<ProfileElement>, List<List<Vec2>>>? {
+        // **a canal band's cut is marched on its own chart** (OP-31, slice 5l), which is the same sentence
+        // slice 5f wrote for a canal band of a dressed body: a pipe along a bending spine has no
+        // characteristic this drawing names against a plane, so the cut is the zero isoline of the plane's
+        // own signed distance over `(arc, station)`, walked as cells and returned as chords, flagged.
+        patch.pipe?.let { return emptyList<ProfileElement>() to marched(Patch(null, it, patch.outline), cut) }
         val surface = patch.surface ?: return null
-        val chart = Patch(surface, patch.outline)
+        val chart = Patch(surface, null, patch.outline)
         val meridian = surface.meridianCurve ?: return null
         val exact = Revolve3.planeCut(frameOf(surface), meridian, cut)
         if (exact != null) {
@@ -1679,10 +2042,33 @@ internal object BoolFace3 {
     ): List<List<Vec2>> {
         val thSteps = 192
         val tSteps = 48
-        val th0 = if (chart.surface.full) -PI else min(chart.surface.turnStart, chart.surface.turnEnd)
-        val thSpan = if (chart.surface.full) TWO_PI else abs(chart.surface.turnEnd - chart.surface.turnStart)
-        val t0 = chart.tRange.first
-        val tSpan = chart.tRange.second - chart.tRange.first
+        val surface = chart.surface
+        var th0 = if (surface == null || surface.full) -PI else min(surface.turnStart, surface.turnEnd)
+        var thSpan = if (surface == null || surface.full) TWO_PI else abs(surface.turnEnd - surface.turnStart)
+        var t0 = chart.tRange.first
+        var tSpan = chart.tRange.second - chart.tRange.first
+        // **the grid is laid over the face's own trim and not over the whole family** (OP-31, slice 5l). A
+        // canal band is a *narrow* strip of its own pipe — a quarter of a radian out of a whole turn — so a
+        // grid spread over the natural extent puts a dozen columns on the face and hands back a cut in
+        // fragments, where one laid on the trim's own box puts every cell where the material is.
+        if (chart.outline.isNotEmpty()) {
+            var lo = Vec2(Double.MAX_VALUE, Double.MAX_VALUE)
+            var hi = Vec2(-Double.MAX_VALUE, -Double.MAX_VALUE)
+            for (e in chart.outline) {
+                for (q in GeomMath.tessellatePiece(e, 1e-3)) {
+                    lo = Vec2(min(lo.x, q.x), min(lo.y, q.y))
+                    hi = Vec2(max(hi.x, q.x), max(hi.y, q.y))
+                }
+            }
+            if (hi.x > lo.x && hi.y > lo.y) {
+                val padX = (hi.x - lo.x) * 0.02
+                val padY = (hi.y - lo.y) * 0.02
+                th0 = lo.x - padX
+                thSpan = (hi.x - lo.x) + 2.0 * padX
+                t0 = lo.y - padY
+                tSpan = (hi.y - lo.y) + 2.0 * padY
+            }
+        }
         if (thSpan <= 0.0 || tSpan <= 0.0) return emptyList()
         val segs = ArrayList<Pair<Vec2, Vec2>>()
         for (i in 0 until thSteps) {

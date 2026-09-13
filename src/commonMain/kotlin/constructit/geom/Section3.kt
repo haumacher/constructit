@@ -6,6 +6,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
@@ -402,6 +403,287 @@ data class Surface3(
 }
 
 /**
+ * One **station** of a pipe surface's spine (OP-31, slice 5l): a point of the spine that is *exact* — the
+ * ball's own centre, solved to machine precision against the two walls it rolls on — together with the
+ * spine's tangent there and the reference direction the arc coordinate is measured from.
+ *
+ * [s] is the arc length from the run's start, and it is the chart's own second coordinate.
+ */
+data class PipeStation(
+    val at: Vec3,
+    val tangent: Vec3,
+    val ref: Vec3,
+    val s: Double,
+) {
+    /** The frame's third leg, derived rather than stored so the three cannot drift apart. */
+    val binormal: Vec3 get() = tangent.cross(ref)
+}
+
+/**
+ * **The fourth carrier**: the pipe surface a ball of constant radius leaves along a spine (OP-31, slice 5l).
+ *
+ * *Why it had to become one.* Slice 5f built the canal band — the rounding of a crease whose section changes
+ * along its run — and its note said, of the three prerequisites it had been given, that *"a canal is an
+ * **ordinary entry** of an ordinary dressing, so no fourth carrier"*. That was true of every reader the
+ * drawing had then, because a canal band's surface was only ever *drawn*, never *looked a triangle up
+ * against*. Through a general boolean it has to be: [BoolFace3] places a result triangle on an operand face
+ * by asking each carrier whether the triangle sits on it, and a canal band was neither a plane nor a
+ * [Surface3], so a body carrying one refused its whole face list. So the vocabulary gains its fourth
+ * carrier, and it is the one surface the rolling ball has always been defined as.
+ *
+ * *What it is.* The envelope of the spheres of radius [radius] centred on the spine: in the plane normal to
+ * the spine at any station the characteristic is the **circle of radius `r` about that station**, exactly
+ * (slice 5f's own one-line proof). So the surface's own signed distance is `|p − c(s*)| − r`, where `s*` is
+ * the station whose normal plane carries `p`, and its gradient is the unit radial there — which is all a
+ * carrier is ever asked for.
+ *
+ * *What is exact and what is fitted* (Tier B). Every [stations] entry is a point of the true spine solved to
+ * machine precision; the curve **between** two of them is a Catmull–Rom interpolant, and [fitted] is how far
+ * that interpolant may stand from the truth, measured by the builder against the two walls themselves rather
+ * than asserted. Every reading below is therefore exact at the knots and within [fitted] between them, and
+ * that number rides on the face ([FacePatch.fitted]) and on every crease fitted against it.
+ */
+data class Pipe3(
+    val stations: List<PipeStation>,
+    val radius: Double,
+    /** Whether the spine closes on itself — then the chart's second coordinate wraps by [length]. */
+    val closed: Boolean,
+    /** How far the interpolated spine may stand from the true one, in mm. */
+    val fitted: Double,
+) {
+    /** The whole run's length — the chart's `t` range, and its period where the spine closes. */
+    val length: Double by lazy {
+        if (stations.isEmpty()) {
+            0.0
+        } else if (closed) {
+            stations.last().s + (stations.first().at - stations.last().at).length()
+        } else {
+            stations.last().s
+        }
+    }
+
+    /** A box every point of this surface lies in — a cheap reject before the station solve ([offset]). */
+    private val box: Pair<Vec3, Vec3> by lazy {
+        var lo = Vec3(Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE)
+        var hi = Vec3(-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE)
+        for (st in stations) {
+            lo = Vec3(min(lo.x, st.at.x), min(lo.y, st.at.y), min(lo.z, st.at.z))
+            hi = Vec3(max(hi.x, st.at.x), max(hi.y, st.at.y), max(hi.z, st.at.z))
+        }
+        val pad = Vec3(radius, radius, radius)
+        (lo - pad) to (hi + pad)
+    }
+
+    /** The station at index [i], reflected past an open end and wrapped round a closed one. */
+    private fun pt(i: Int): Vec3 {
+        val n = stations.size
+        if (n == 0) return Vec3(0.0, 0.0, 0.0)
+        if (closed) return stations[((i % n) + n) % n].at
+        if (i < 0) return stations[0].at * 2.0 - stations[min(1, n - 1)].at
+        if (i >= n) return stations[n - 1].at * 2.0 - stations[max(0, n - 2)].at
+        return stations[i].at
+    }
+
+    private fun refAt(i: Int): PipeStation = stations[((i % stations.size) + stations.size) % stations.size]
+
+    /** The spine at index parameter [u] — Catmull–Rom through every station, `C¹` along the whole run. */
+    fun centreAt(u: Double): Vec3 {
+        if (stations.isEmpty()) return Vec3(0.0, 0.0, 0.0)
+        val i = floor(u).toInt()
+        val f = u - i
+        val p0 = pt(i - 1)
+        val p1 = pt(i)
+        val p2 = pt(i + 1)
+        val p3 = pt(i + 2)
+        val a = p1 * 2.0
+        val b = p2 - p0
+        val c = p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3
+        val d = p1 * 3.0 - p0 - p2 * 3.0 + p3
+        return (a + b * f + c * (f * f) + d * (f * f * f)) * 0.5
+    }
+
+    /** The spine's own tangent at index parameter [u], unit. */
+    fun tangentAt(u: Double): Vec3 {
+        if (stations.isEmpty()) return Vec3(1.0, 0.0, 0.0)
+        val i = floor(u).toInt()
+        val f = u - i
+        val p0 = pt(i - 1)
+        val p1 = pt(i)
+        val p2 = pt(i + 1)
+        val p3 = pt(i + 2)
+        val b = p2 - p0
+        val c = p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3
+        val d = p1 * 3.0 - p0 - p2 * 3.0 + p3
+        val v = (b + c * (2.0 * f) + d * (3.0 * f * f)) * 0.5
+        if (v.length() > Vec3.EPS) return v.normalized()
+        val st = refAt(i)
+        return st.tangent
+    }
+
+    /** The frame at index parameter [u]: the reference direction the arc is measured from, and its mate. */
+    fun frameAt(u: Double): Pair<Vec3, Vec3> {
+        val tan = tangentAt(u)
+        if (stations.isEmpty()) return Vec3(0.0, 1.0, 0.0) to Vec3(0.0, 0.0, 1.0)
+        val i = floor(u).toInt()
+        val f = u - i
+        val a = refAt(i).ref
+        val b = refAt(i + 1).ref
+        var r = a * (1.0 - f) + b * f
+        r -= tan * r.dot(tan)
+        if (r.length() <= Vec3.EPS) {
+            r = refAt(i).ref - tan * refAt(i).ref.dot(tan)
+            val any = if (abs(tan.x) < 0.9) Vec3(1.0, 0.0, 0.0) else Vec3(0.0, 1.0, 0.0)
+            val q = (any - tan * any.dot(tan)).normalized()
+            return q to tan.cross(q)
+        }
+        val ru = r.normalized()
+        return ru to tan.cross(ru)
+    }
+
+    /** The arc length at index parameter [u] — the chart's own second coordinate. */
+    fun arcLengthAt(u: Double): Double {
+        if (stations.isEmpty()) return 0.0
+        val n = stations.size
+        val i = floor(u).toInt()
+        val f = u - i
+        val s0 =
+            if (i in 0 until n) {
+                stations[i].s
+            } else if (i < 0) {
+                stations[0].s
+            } else {
+                length
+            }
+        val s1 = if (i + 1 in 0 until n) stations[i + 1].s else length
+        return s0 + (s1 - s0) * f
+    }
+
+    /** The index parameter the arc length [t] stands at — [arcLengthAt]'s own inverse. */
+    fun indexAt(t: Double): Double {
+        val n = stations.size
+        if (n < 2) return 0.0
+        if (t <= stations[0].s) return 0.0
+        for (i in 0 until n - 1) {
+            if (t <= stations[i + 1].s) {
+                val span = stations[i + 1].s - stations[i].s
+                return i + (if (span <= Vec3.EPS) 0.0 else (t - stations[i].s) / span)
+            }
+        }
+        if (!closed) return (n - 1).toDouble()
+        val span = length - stations[n - 1].s
+        return (n - 1) + (if (span <= Vec3.EPS) 0.0 else ((t - stations[n - 1].s) / span).coerceIn(0.0, 1.0))
+    }
+
+    /**
+     * The index parameter of the station whose normal plane carries [p] — the nearest point of the spine,
+     * found by a scan over the knots and then a golden-section descent between its two neighbours.
+     *
+     * It is the *nearest* point and not a root of `(p − c)·c′` chosen at random, which is what makes the
+     * answer single-valued wherever the ball is smaller than the spine's own bend — the very condition
+     * slice 5f already refuses a run by ([Msgs.refusalBlendCanalBallLargerThanBend]).
+     */
+    fun stationOf(p: Vec3): Double {
+        val n = stations.size
+        if (n == 0) return 0.0
+        if (n == 1) return 0.0
+        var best = 0
+        var bestD = Double.MAX_VALUE
+        for (i in 0 until n) {
+            val d = (p - stations[i].at).length()
+            if (d < bestD) {
+                bestD = d
+                best = i
+            }
+        }
+        var lo = (best - 1).toDouble()
+        var hi = (best + 1).toDouble()
+        if (!closed) {
+            lo = max(0.0, lo)
+            hi = min((n - 1).toDouble(), hi)
+        }
+        if (hi - lo <= 1e-12) return lo
+        // golden section on |p − c(u)|², which is unimodal over one knot's neighbourhood
+        val g = 0.6180339887498949
+        var x1 = hi - g * (hi - lo)
+        var x2 = lo + g * (hi - lo)
+        var f1 = sqDist(p, centreAt(x1))
+        var f2 = sqDist(p, centreAt(x2))
+        repeat(48) {
+            if (f1 < f2) {
+                hi = x2
+                x2 = x1
+                f2 = f1
+                x1 = hi - g * (hi - lo)
+                f1 = sqDist(p, centreAt(x1))
+            } else {
+                lo = x1
+                x1 = x2
+                f1 = f2
+                x2 = lo + g * (hi - lo)
+                f2 = sqDist(p, centreAt(x2))
+            }
+        }
+        return (lo + hi) / 2.0
+    }
+
+    private fun sqDist(
+        a: Vec3,
+        b: Vec3,
+    ): Double = (a - b).let { it.dot(it) }
+
+    /**
+     * Whether [p] stands within [slack] of the box this surface lies in — a **cheap reject** for a lookup
+     * that is about to ask every carrier of a face list the same question, and nothing else.
+     *
+     * It is deliberately *not* inside [offset]: a Newton step that walks outside the box must still be
+     * given the true distance and the true gradient, or the solve diverges instead of coming back.
+     */
+    fun near(
+        p: Vec3,
+        slack: Double,
+    ): Boolean {
+        if (stations.isEmpty()) return false
+        val (lo, hi) = box
+        return p.x >= lo.x - slack && p.y >= lo.y - slack && p.z >= lo.z - slack &&
+            p.x <= hi.x + slack && p.y <= hi.y + slack && p.z <= hi.z + slack
+    }
+
+    /** How far [p] stands off this surface, signed — zero exactly on it, positive outside the pipe. */
+    fun offset(p: Vec3): Double {
+        if (stations.isEmpty()) return Double.MAX_VALUE
+        return (p - centreAt(stationOf(p))).length() - radius
+    }
+
+    /** The gradient of [offset] at [p] — the unit radial out of the spine, wherever it is defined. */
+    fun gradient(p: Vec3): Vec3 {
+        if (stations.isEmpty()) return Vec3(0.0, 0.0, 0.0)
+        val d = p - centreAt(stationOf(p))
+        return if (d.length() > Vec3.EPS) d.normalized() else Vec3(0.0, 0.0, 0.0)
+    }
+
+    /** Where [p] stands in this surface's own `(arc, station)` chart, or null where the frame degenerates. */
+    fun chartOf(p: Vec3): Vec2? {
+        if (stations.isEmpty()) return null
+        val u = stationOf(p)
+        val d = p - centreAt(u)
+        if (d.length() <= Vec3.EPS) return null
+        val (r, b) = frameAt(u)
+        return Vec2(atan2(d.dot(b), d.dot(r)), arcLengthAt(u))
+    }
+
+    /** The world point at arc [th] of station [t] — the chart's own inverse. */
+    fun world(
+        th: Double,
+        t: Double,
+    ): Vec3? {
+        if (stations.isEmpty()) return null
+        val u = indexAt(t)
+        val (r, b) = frameAt(u)
+        return centreAt(u) + (r * cos(th) + b * sin(th)) * radius
+    }
+}
+
+/**
  * The **two named faces an edge bounds** (OP-8, session 71 slice 1) — stated by the feature that built the
  * edge, never discovered from triangles.
  *
@@ -474,6 +756,34 @@ data class FacePatch(
      * in its own vocabulary says nothing, and only a producer that fitted something fills this in.
      */
     val fitted: Double? = null,
+    /**
+     * The **pipe surface** this face is a patch of, where it is the canal a rolling ball leaves (OP-31,
+     * slice 5l) — the fourth carrier of this drawing's surface vocabulary, beside [plane] and [surface].
+     *
+     * Non-null for a canal band and for a canal corner, and for nothing else. It is a sibling of [surface]
+     * rather than a case inside it because a [Surface3] is a *revolution* through and through — an origin,
+     * an axis, a turn interval and a meridian in that axis' own half-plane — and a pipe along a spine that
+     * bends is none of those things. Every reader that dispatches on "is this a revolution" therefore keeps
+     * meaning what it meant, and the readers that want a carrier ask for either.
+     *
+     * A face that carries one still carries a [reason]: a canal band is no plane and there is nothing to
+     * sketch on it, which is the sentence it has had since slice 5f.
+     */
+    val pipe: Pipe3? = null,
+    /**
+     * Whether this slot names **no surface of the body at all** (OP-31, slice 5l).
+     *
+     * The face list is structural, so nothing may ever drop out of it (OP-3): a rounding that was removed,
+     * a band end a corner claimed, a cap that stands flush in a face the body already has, a run that tapers
+     * to nothing — each keeps its slot and says so in a [reason]. Every one of those is a slot with *no
+     * triangle of the body on it*, and that is a different fact from *"a surface this drawing cannot name"*,
+     * which is OP-9's sink. A boolean has to tell them apart: the first carries no carrier and costs the
+     * result nothing, while the second is what makes a whole face list refuse.
+     *
+     * Derived, never stored — it is a statement about the slot the producer has just made, and it appears in
+     * no file.
+     */
+    val absent: Boolean = false,
 )
 
 /**
@@ -1898,6 +2208,17 @@ object Section3 {
             if (edge > tol) return null
             return kotlin.math.sqrt(d * d + edge * edge)
         }
+        // **a canal band answers a 3D pick too** (OP-31, slice 5l): the pipe's own signed distance, and
+        // the band's own trim read in its `(arc, station)` chart to say the hit is on *this* face
+        patch.pipe?.let { pipe ->
+            val off = abs(pipe.offset(at))
+            if (off > tol) return null
+            if (patch.outline.isNotEmpty()) {
+                val q = pipe.chartOf(at) ?: return null
+                if (!BoolFace3.onPipe(pipe, patch.outline, q)) return null
+            }
+            return off
+        }
         val surface = patch.surface ?: return null
         val off = surfaceOff(surface, at, tol) ?: return null
         return if (off > tol) null else off
@@ -2128,11 +2449,23 @@ object Section3 {
     private fun chainLoops(pieces: List<DrawnPiece>): Pair<List<Loop>?, Msg?> {
         val left = pieces.filter { (GeomMath.endOf(it.piece) - GeomMath.startOf(it.piece)).length() > Geom3.WELD_TOL }.toMutableList()
         val out = ArrayList<Loop>()
+        // **a piece that closes on itself is a loop on its own** (OP-31, slice 5l) — a bore's own circle
+        // where a plane crosses it square, the ellipse an oblique one leaves. It begins and ends at the same
+        // point, so the chain below cannot pick it up at all, and dropping it silently is how a bored body's
+        // level section came back with the block's own area and no hole in it.
+        for (p in pieces) {
+            if (p.piece is ProfileElement.CircleE || p.piece is ProfileElement.EllipseE) out.add(Loop(listOf(p.piece)))
+        }
         while (left.isNotEmpty()) {
             var tail = left.removeAt(0)
             val run = arrayListOf(tail.piece)
             val head = tail
-            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > tolBetween(head, tail)) {
+            // **a single piece is never a loop by being shorter than the tolerance** (OP-31, slice 5l). A
+            // *sampled* run reaches this list as one chord per sample ([polylinePieces]), and a chord of a
+            // finely marched cut is shorter than [GeomMath.TESS_TOL_MM] — so the very first chord of a canal
+            // band's own cut read as a closed loop of its own, and the section refused with the whole rest
+            // of its boundary still on the table. A run of one closes only where it closes **exactly**.
+            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > (if (run.size < 2) CHAIN_TOL else tolBetween(head, tail))) {
                 val end = GeomMath.endOf(run.last())
 
                 fun reach(d: DrawnPiece): Double = min((GeomMath.startOf(d.piece) - end).length(), (GeomMath.endOf(d.piece) - end).length())
@@ -2142,10 +2475,14 @@ object Section3 {
                 // parallel to its own axis, chained to the flat end of the very band it belongs to, missed
                 // by five microns and the whole section refused. An **exact** neighbour is still preferred
                 // wherever there is one, so nothing that chained before chains differently now.
+                // …and where the tolerance is a chord's rather than a number's, the **nearest** piece is
+                // taken and not the first one in the list that happens to be within it (OP-31, slice 5l):
+                // a sampled run arrives as a hundred chords each shorter than that tolerance, so "the
+                // first within reach" steps over its own neighbours and strands them.
                 val at =
                     left.indexOfFirst { reach(it) <= CHAIN_TOL }
                         .takeIf { it >= 0 }
-                        ?: left.indexOfFirst { reach(it) <= tolBetween(tail, it) }
+                        ?: left.indices.filter { reach(left[it]) <= tolBetween(tail, left[it]) }.minByOrNull { reach(left[it]) }
                 if (at == null || at < 0) return null to (tail.from ?: head.from)
                 val piece = left.removeAt(at)
                 tail = piece
@@ -2355,7 +2692,7 @@ object Section3 {
         // the boolean left on it — which is stated in the surface's own `(θ, t)` and read there
         // ([BoolFace3.cutPatch]). Where the table has no name for the curve the chart is marched instead and
         // the answer is chords, flagged (OP-15).
-        if (feature is Feature3.MeshBoolean && patch.surface != null) {
+        if (feature is Feature3.MeshBoolean && (patch.surface != null || patch.pipe != null)) {
             BoolFace3.cutPatch(patch, cut)?.let { (exact, runs) ->
                 return bandCutToEdge(label, Revolve3.BandCut(if (runs.isEmpty()) exact else null, if (runs.isEmpty()) null else runs))
             }
@@ -3064,6 +3401,27 @@ object Section3 {
                     carriers.add(BoolFace3.Carrier(k, j, p.name, plane, p.outline, null))
                     continue
                 }
+                // **a slot that names no surface of the body at all costs the result nothing** (OP-31,
+                // slice 5l). A rounding that was removed, a band end a corner claimed, a cap standing flush
+                // in a face the body already has, a run that tapers to nothing: each keeps its slot and says
+                // so, and none of them has a triangle on it. That is a different fact from *"a surface this
+                // drawing cannot name"* — OP-9's sink, which still refuses the whole list — and until this
+                // slice told them apart, one tombstone cap of a dressed body refused every boolean made
+                // from it.
+                if (p.absent) {
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, emptyList(), null, reason = p.reason))
+                    continue
+                }
+                // **a canal band is a carrier now** (OP-31, slice 5l): the pipe surface of the rolling ball
+                // along its own spine, with its trim stated in that surface's `(arc, station)` chart. It is
+                // the fourth carrier slice 5f's note said was not needed — *"a canal is an ordinary entry of
+                // an ordinary dressing, so no fourth carrier"* — which was true of every reader the drawing
+                // had then, and false the moment a boolean had to trace a triangle back to one.
+                val pipe = p.pipe
+                if (pipe != null && pipe.stations.size >= 2) {
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, pipe))
+                    continue
+                }
                 // **A curved face is a carrier too** (slice 5c): the cylinder an extruded arc sweeps, the
                 // cone, sphere or torus a revolution's piece sweeps, the band a rounding is. Its trim is the
                 // patch's own `(θ, t)` outline, empty where the operand states none and the carrier's whole
@@ -3087,17 +3445,16 @@ object Section3 {
                     carriers.add(BoolFace3.Carrier(k, j, p.name, null, emptyList(), null))
                     continue
                 }
-                // **a canal band is the one face this drawing states and cannot yet carry** (OP-31, slice
-                // 5f; session 84): its surface is exact — the pipe of a ball of known radius along a known
-                // spine — but it is no plane and no surface of revolution, so there is no `(theta, t)` chart
-                // to state a trim in and no carrier to look a triangle up against. The whole face list
-                // stands or falls together (the rule above), so the body is mesh-only with a reason that
-                // names the band and the way round it. Queued as (5i).
-                if (p.name is FaceName.BlendBand) return null to Msgs.refusalSectionBoolCanalBand(name = p.name.label)
+                // …and a canal band whose spine this drawing could not state at all — fewer than two
+                // stations — keeps the sentence slice 5f gave it, narrowed to that one case (slice 5l).
+                if (p.pipe != null) return null to Msgs.refusalSectionBoolCanalBand(name = p.name.label)
                 // …and a face whose surface this drawing has no name for at all is the sink that stands
                 return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
             }
         }
-        return BoolFace3.assemble(carriers, r)
+        // …and each operand's own creases, because a crease between two faces of one operand is that
+        // operand's own curve and never a fit (OP-31, slice 5l — see [BoolFace3.OperandCrease])
+        val operandEdges = listOf(a, b).map { edges(it).first ?: emptyList() }
+        return BoolFace3.assemble(carriers, r, operandEdges)
     }
 }

@@ -23,6 +23,7 @@ import constructit.geom.EdgeGeom
 import constructit.geom.FaceName
 import constructit.geom.FacePatch
 import constructit.geom.Feature3
+import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.MeshBool
 import constructit.geom.Plane3
@@ -39,6 +40,9 @@ import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -492,17 +496,21 @@ class BooleanCurvedFaceTest {
     }
 
     /**
-     * **Two *equal* cylinders crossing** — the one whole case this slice cuts, and it refuses by name.
+     * **Two *equal* cylinders crossing** — slice 5c's one whole cut, retired in slice 5l.
      *
      * Two cylinders of the same radius whose axes meet are **tangent** to each other at the two points where
      * their crease crosses itself: their normals are parallel there, so the crease has no direction and no
-     * point of it can be pulled onto both surfaces at once. (What it really is, is two plane ellipses — a
-     * degenerate pair this drawing does not recognise; a future extension, and named as one.) The provenance
-     * refuses **wholly** rather than fitting through a singularity, which is the *watertight-or-refused* rule
-     * applied to a name.
+     * point of it could be pulled onto both surfaces at once by the two-surface Newton every other crease is
+     * stated by. Slice 5c refused the whole face list rather than fit through a singularity.
+     *
+     * Slice 5l had to meet that singularity head on — a rounding's **rail** is a tangency, and every dressed
+     * body through a boolean has two of them per band — so the corner and the crease are both scored against
+     * the engine's own boundary now: the walk is pulled onto **one** of the two surfaces exactly and how far
+     * it then stood off the other is measured and carried. So this body is named, and what it says about
+     * itself is the truth: every knot exact on one cylinder, every point within the stated tolerance of both.
      */
     @Test
-    fun twoEqualCylindersCrossingAreTangentAndRefuseByName() {
+    fun twoEqualCylindersCrossingMeetInAChainThroughTheirOwnTangency() {
         requireEngine()
         val cx = Construction()
         val main = cx.drill(5.0, 15.0, 10.0, -5.0, 50.0, "eq")
@@ -516,8 +524,28 @@ class BooleanCurvedFaceTest {
         val body = ev.solid(cx.union(main, branch))
         assertManifold(body.mesh, "two equal pipes crossing")
         val (faces, why) = Section3.faces(body.feature)
-        assertTrue(faces == null, "a crease through a tangency is not stated")
-        assertTrue(assertNotNull(why).contains("do not determine"), "…and the refusal says so: ${why?.render()}")
+        val fs = assertNotNull(faces, "the two pipes name their faces: ${why?.render()}")
+        assertTrue(cylinders(fs, 5.0).size >= 2, "each pipe keeps its own cylinder, in the pieces the other left of it")
+        val creases =
+            edgesOf(body.feature, "two equal pipes crossing").filter {
+                it.reason == null && it.geom is EdgeGeom.InSpace
+            }
+        assertTrue(creases.isNotEmpty(), "the crease where the two cylinders meet is stated")
+        for (c in creases) {
+            val tol = assertNotNull(c.fitted, "${c.name.label.render()} says how far it may be")
+
+            fun off(p: Vec3) = abs(hypot(p.y - 15.0, p.z - 10.0) - 5.0) to abs(hypot(p.x - 20.0, p.y - 15.0) - 5.0)
+            for (span in (c.geom as EdgeGeom.InSpace).chain) {
+                // every **knot** is exact on at least one of the two, which is what a fitted chain promises
+                val (ka, kb) = off(span.start)
+                assertTrue(min(ka, kb) <= 1e-6, "every knot is exact on one of the two cylinders — $ka, $kb")
+                for (k in 0..8) {
+                    val (a, b) = off(Frames3.pointAt(span, k / 8.0))
+                    assertTrue(max(a, b) <= tol + 1e-9, "…and every point stands within the stated $tol mm of both — $a, $b")
+                }
+            }
+        }
+        println("tangency | two equal pipes crossing | ${creases.size} crease(s), worst fit ${creases.mapNotNull { it.fitted }.max()}")
     }
 
     /**

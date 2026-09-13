@@ -5577,7 +5577,8 @@ object Blend3 {
             val n = patch.name
             if (n is FaceName.BlendCorner) {
                 val why = superseded[n.edges]
-                out.add(if (why == null) patch else patch.copy(plane = null, outline = emptyList(), reason = why, surface = null))
+                // …and a superseded corner is a slot with no surface on it at all (OP-31, slice 5l)
+                out.add(if (why == null) patch else patch.copy(plane = null, outline = emptyList(), reason = why, surface = null, pipe = null, absent = true))
                 continue
             }
             val cut = trims[patch.name]
@@ -5607,9 +5608,11 @@ object Blend3 {
             // edge already emits, so the bands of every entry after it keep their own numbers (OP-30)
             if (d == null) {
                 val why = tombstoneWords(f, k, baseEdges.getOrNull(f.targets[k]))
-                for (piece in 0 until f.bandsAt(k)) out.add(FacePatch(FaceName.BlendBand(f.targets[k], piece), null, emptyList(), why))
+                // a rounding that was removed left **no surface at all** behind, so each of its slots is a
+                // slot with nothing on it rather than a surface with no name (OP-31, slice 5l)
+                for (piece in 0 until f.bandsAt(k)) out.add(FacePatch(FaceName.BlendBand(f.targets[k], piece), null, emptyList(), why, absent = true))
                 for (slot in 0 until capSlotsAt(f, baseEdges, k)) {
-                    out.add(FacePatch(FaceName.BlendCap(f.targets[k], slot == 0), null, emptyList(), why))
+                    out.add(FacePatch(FaceName.BlendCap(f.targets[k], slot == 0), null, emptyList(), why, absent = true))
                 }
                 for (slot in f.corners.facesAt(k)) out.add(pool.take(slot) ?: goneFace(slot))
                 continue
@@ -5676,13 +5679,16 @@ object Blend3 {
             // the corner's own patch; a **notch** owns it, the cap standing flush in a face the body already
             // has (a curved band that ends on a meridian plane does this, and so does every straight one that
             // meets its neighbour at a right angle); or the drawing cannot read that end at all.
-            val why =
+            // …and the first two of those three say the slot names **no surface of the body at all**, which
+            // is a different fact from *"a surface this drawing cannot name"* and is what lets a boolean
+            // pass over the slot rather than refuse the whole list ([FacePatch.absent], OP-31 slice 5l).
+            val (why, gone) =
                 when {
-                    closed -> Msgs.refusalBlendEndClosedByACorner(name = name.label)
-                    made == null && free && standsInAFace(faces!!, piece!!, atStart) -> Msgs.refusalBlendCapStandsInAFace(name = name.label)
-                    else -> Msgs.refusalBlendNoNotchAtThisEnd(name = name.label)
+                    closed -> Msgs.refusalBlendEndClosedByACorner(name = name.label) to true
+                    made == null && free && standsInAFace(faces!!, piece!!, atStart) -> Msgs.refusalBlendCapStandsInAFace(name = name.label) to true
+                    else -> Msgs.refusalBlendNoNotchAtThisEnd(name = name.label) to false
                 }
-            out.add(made ?: FacePatch(name, null, emptyList(), why))
+            out.add(made ?: FacePatch(name, null, emptyList(), why, absent = gone))
         }
         return out
     }
@@ -6393,7 +6399,7 @@ object Blend3 {
 
     /** The same tombstone for a recorded **face** slot — a corner patch the body no longer has. */
     private fun goneFace(slot: CornerSlot): FacePatch =
-        FacePatch(slot.faceName, null, emptyList(), Msgs.refusalBlendCornerFaceGone(name = slot.faceName.label))
+        FacePatch(slot.faceName, null, emptyList(), Msgs.refusalBlendCornerFaceGone(name = slot.faceName.label), absent = true)
 
     /** How many free-end notch slots entry [k] owns: two per band, and none where its crease is not one run. */
     private fun notchSlotsAt(
@@ -9750,11 +9756,15 @@ object Blend3 {
             nameAt: (Int) -> FaceName,
         ): List<FacePatch> {
             val name = nameAt(0)
+            // **a pivot's corner face is a canal too** (OP-31, slice 5h), so it is the same carrier the
+            // band along a run is (slice 5l): the pipe of the ball along the spine the shared face and the
+            // upright set, charted in the very `(arc, station)` the corner's own reader already marches.
+            val pipe = pipeOf(stations.map { PipeStation(it.at, it.t, it.ax, it.s) }, r, false)
             return listOf(
                 FacePatch(
                     name,
                     null,
-                    emptyList(),
+                    pipeTrim(pipe, stations.map { it.a1 to it.sweep }, false),
                     Msgs.refusalBlendCornerCanalIsNotPlane(
                         name = name.label,
                         sizePhrase = sec.sizePhrase(),
@@ -9762,7 +9772,8 @@ object Blend3 {
                         name3 = pieces[bi].crease.edge.name.label,
                     ),
                     null,
-                    fitted,
+                    max(fitted, pipe.fitted),
+                    pipe,
                 ),
             )
         }
@@ -10896,16 +10907,144 @@ object Blend3 {
         return l1 * t1 + l2 * t2 + fourth * max(t1, t2)
     }
 
-    /** The band a canal leaves, as a face of the dressed body — no plane, no revolution, and it says so. */
-    private fun canalBandPatch(canal: Canal): FacePatch =
-        FacePatch(
+    /**
+     * The band a canal leaves, as a face of the dressed body — no plane and no revolution, and it says so;
+     * and since slice 5l it carries the **pipe surface** it is ([Pipe3]) with its trim stated in that
+     * surface's own `(arc, station)` chart, so that a general boolean can look a triangle up against it.
+     */
+    private fun canalBandPatch(canal: Canal): FacePatch {
+        // **the surface runs as far as the tool did**, which is [Canal.grow] past each free end: the loft's
+        // end ring is *moved* there rather than doubled ([canalMesh]), so over that last step the band is
+        // the last section carried straight along its own normal. Two extra stations state exactly that, and
+        // without them the body's own cap facet stands on a surface the carrier has already ended (OP-31,
+        // slice 5l).
+        val ends = if (canal.closed) 0.0 else canal.grow
+        val sts = ArrayList<PipeStation>(canal.stations.size + 2)
+        val arcs = ArrayList<Pair<Double, Double>>(canal.stations.size + 2)
+        val first = canal.stations.first()
+        val last = canal.stations.last()
+        if (!canal.closed) {
+            sts.add(PipeStation(first.at - first.t * ends, first.t, first.ax, 0.0))
+            arcs.add(first.a1 to first.sweep)
+        }
+        for (st in canal.stations) {
+            sts.add(PipeStation(st.at, st.t, st.ax, st.s + ends))
+            arcs.add(st.a1 to st.sweep)
+        }
+        if (!canal.closed) {
+            sts.add(PipeStation(last.at + last.t * ends, last.t, last.ax, last.s + 2.0 * ends))
+            arcs.add(last.a1 to last.sweep)
+        }
+        val pipe = pipeOf(sts, canal.r, canal.closed)
+        return FacePatch(
             canal.name,
             null,
-            emptyList(),
+            pipeTrim(pipe, arcs, canal.closed),
             Msgs.refusalBlendCanalBandIsNotPlane(name = canal.name.label, sizePhrase = canal.sec.sizePhrase(), name2 = canal.edge.name.label),
             null,
-            canal.fitted,
+            max(canal.fitted, pipe.fitted),
+            pipe,
         )
+    }
+
+    /**
+     * **A pipe surface from the stations its builder solved** (OP-31, slice 5l), with the tolerance the
+     * curve *between* two stations may stand from the truth — measured rather than asserted.
+     *
+     * The measurement is the spine's own: the same Catmull–Rom interpolant built through **half** the
+     * stations is asked for the ones it skipped, and the worst miss is carried. That is a conservative
+     * estimate of the full-resolution interpolant's own error (the scheme is fourth order, so halving the
+     * spacing divides the miss by about sixteen), it needs nothing but the stations themselves, and it
+     * therefore says the same thing for a canal band's spine and for a canal corner's.
+     */
+    private fun pipeOf(
+        stations: List<PipeStation>,
+        r: Double,
+        closed: Boolean,
+    ): Pipe3 {
+        var worst = 0.0
+        if (stations.size >= 9) {
+            val coarse = Pipe3(stations.filterIndexed { i, _ -> i % 2 == 0 }, r, closed, 0.0)
+            // …asked away from the two ends, where the half-resolution chain has lost the very stations
+            // that state how the run begins and would report its own reflection rather than the spine's bend
+            for (i in 3 until stations.size - 3) {
+                if (i % 2 == 1) worst = max(worst, (coarse.centreAt(i / 2.0) - stations[i].at).length())
+            }
+        }
+        return Pipe3(stations, r, closed, max(worst, 1e-12))
+    }
+
+    /**
+     * A canal's trim, stated in the pipe's own `(arc, station)` chart and directed **material to the left**
+     * (OP-31, slice 5l) — the convention [BoolFace3] reads every curved face's boundary under.
+     *
+     * The band is the strip between its two rails: the arc runs from `a1` to `a1 + sweep` at every station,
+     * so the boundary is the far rail walked forward along the run and the near rail walked back, closed at
+     * each free end by that end's own section. Where the spine **closes on itself** there are no ends and
+     * the two rails are two runs that span the chart's whole period, which is exactly what the chart's own
+     * wrap reads them as.
+     */
+    private fun pipeTrim(
+        pipe: Pipe3,
+        arcs: List<Pair<Double, Double>>,
+        closed: Boolean,
+    ): List<ProfileElement> {
+        if (pipe.stations.size < 2 || arcs.size != pipe.stations.size) return emptyList()
+        val lo = ArrayList<Vec2>(arcs.size + 1)
+        val hi = ArrayList<Vec2>(arcs.size + 1)
+        var prev = arcs[0].first
+        for ((k, st) in pipe.stations.withIndex()) {
+            val a = unwrapTurn(arcs[k].first, prev)
+            prev = a
+            lo.add(Vec2(a, st.s))
+            hi.add(Vec2(a + arcs[k].second, st.s))
+        }
+        if (closed) {
+            lo.add(Vec2(lo[0].x, pipe.length))
+            hi.add(Vec2(hi[0].x, pipe.length))
+        }
+        val ring = ArrayList<Vec2>(2 * hi.size + 2)
+        ring.addAll(hi)
+        if (!closed) ring.add(lo.last())
+        val out = ArrayList<ProfileElement>(2 * hi.size + 2)
+        if (closed) {
+            // two runs rather than one ring: the rails span the chart's whole period and never meet
+            for (k in 0 until hi.size - 1) out.add(ProfileElement.Seg(Segment(hi[k], hi[k + 1])))
+            for (k in lo.size - 1 downTo 1) out.add(ProfileElement.Seg(Segment(lo[k], lo[k - 1])))
+        } else {
+            for (k in lo.size - 1 downTo 0) ring.add(lo[k])
+            ring.add(hi[0])
+            for (k in 0 until ring.size - 1) {
+                if ((ring[k + 1] - ring[k]).length() <= 1e-12) continue
+                out.add(ProfileElement.Seg(Segment(ring[k], ring[k + 1])))
+            }
+        }
+        // **which way round is measured, not argued** — the same rule every oriented boundary in this
+        // drawing is settled by (OP-14): a point the band genuinely has is put to the trim, and the walk
+        // is turned where it says the material is on the other side. The ball's arc may run either way
+        // about the spine (`sweep` carries a sign), so neither winding is the one to assume.
+        var at = 0
+        for (k in arcs.indices) if (abs(arcs[k].second) > abs(arcs[at].second)) at = k
+        val probe = Vec2(unwrapTurn(arcs[at].first, lo[at].x) + arcs[at].second / 2.0, pipe.stations[at].s)
+        if (BoolFace3.onPipe(pipe, out, probe)) return out
+        val back = ArrayList<ProfileElement>(out.size)
+        for (k in out.indices.reversed()) {
+            val e = out[k] as ProfileElement.Seg
+            back.add(ProfileElement.Seg(Segment(e.segment.b, e.segment.a)))
+        }
+        return back
+    }
+
+    /** [x] moved by whole turns to lie within half a turn of [near] — the arc coordinate, kept continuous. */
+    private fun unwrapTurn(
+        x: Double,
+        near: Double,
+    ): Double {
+        var v = x
+        while (v - near > PI) v -= 2.0 * PI
+        while (near - v > PI) v += 2.0 * PI
+        return v
+    }
 
     /**
      * The two **flat ends** of a canal band: the section standing in the plane square to the spine, or —
@@ -10916,11 +11055,16 @@ object Blend3 {
             val name = FaceName.BlendCap(canal.index, atStart)
             val st = if (atStart) canal.stations.first() else canal.stations.last()
             if (canal.closed) {
-                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalRunsRightRound(name = canal.edge.name.label))
+                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalRunsRightRound(name = canal.edge.name.label), absent = true)
             } else if (st.tip) {
-                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalTapersToNothing(name = canal.edge.name.label))
+                FacePatch(name, null, emptyList(), Msgs.refusalBlendCanalTapersToNothing(name = canal.edge.name.label), absent = true)
             } else {
-                val origin = st.at + st.t * (if (atStart) -GROW_MM else GROW_MM)
+                // …and the step is the canal's **own** step-off and not the bare micron: the tool's end ring
+                // is moved by [Canal.grow] ([canalMesh]), so that is where the body's own cap actually
+                // stands. A cap patch stated a micron past the station instead was forty times a
+                // tessellation tolerance away from the facet it names — harmless to a section, and exactly
+                // what made a bored canal body's own cap facet lie on no carrier (OP-31, slice 5l).
+                val origin = st.at + st.t * (if (atStart) -canal.grow else canal.grow)
                 // the normal runs **out of the material**, which at a free end is back along the run
                 val plane = if (atStart) Plane3(origin, st.ax, -st.ay) else Plane3(origin, st.ax, st.ay)
                 val flip = if (atStart) -1.0 else 1.0
