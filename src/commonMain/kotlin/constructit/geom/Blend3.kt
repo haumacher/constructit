@@ -1115,9 +1115,14 @@ object Blend3 {
          */
         val grown: List<Vec2>,
         /**
-         * The **un**-stepped boundary, point for point with [grown] — what a ring standing on a **pivot
-         * axis** is placed from, and nothing else. See [toolMesh].
+         * The two **pivot twins**, point for point with [grown] — what a ring standing on a **pivot axis**
+         * is placed from, and nothing else: one leg left where the drawing put it because it lies *along*
+         * the axis, the other stepped off the shared face it would otherwise lie flat in (OP-31, slice 5v).
+         * See [toolMesh] and [axial].
          */
+        val axial1: List<Vec2>,
+        val axial2: List<Vec2>,
+        /** The wedge exactly as it was drawn — read for an area or a perimeter, never swept. */
         val plain: List<Vec2>,
         /** The same shape as an exact region, for the sweep along a crease that is not a straight run. */
         val grownRegion: Region,
@@ -1133,10 +1138,21 @@ object Blend3 {
         /** The surfaces [grown] is swept from, and which of them each of its chords lies on ([Grown.loop]). */
         val loop: List<ProfileElement>,
         val runs: List<Int>,
-        /** The same for [plain] — the ring a pivot axis runs through ([Grown.plainLoop]). */
-        val plainLoop: List<ProfileElement>,
-        val plainRuns: List<Int>,
+        /** The same for the two pivot twins — [runs] is the run map of all three ([Grown.axialLoop1]). */
+        val axialLoop1: List<ProfileElement>,
+        val axialLoop2: List<ProfileElement>,
     ) {
+        /**
+         * The pivot twin for a corner whose **shared** face is [shared]: the leg lying in that face is the
+         * one that is stepped, and the other — the one lying along the pivot axis — is left exactly where
+         * the drawing put it (OP-31, slice 5v).
+         */
+        fun axial(shared: FacePatch?): List<Vec2> = if (shared != null && shared.name == crease.face1.name) axial2 else axial1
+
+        /** The surfaces [axial] is swept from, in [runs]' own order. */
+        fun axialLoop(shared: FacePatch?): List<ProfileElement> =
+            if (shared != null && shared.name == crease.face1.name) axialLoop2 else axialLoop1
+
         /**
          * How long this piece's own run is — the segment's length where the crease is one straight run, and
          * the **crease's own** length where it is not.
@@ -1188,6 +1204,14 @@ object Blend3 {
      */
     private class Grown(
         val polygon: List<Vec2>,
+        /**
+         * The two **pivot** twins: [axial1] keeps the leg in the crease's *first* face where the drawing
+         * left it and steps the other, [axial2] the other way round. A ring standing on a pivot axis takes
+         * the one whose flat leg is the one lying **along** that axis (OP-31, slice 5v).
+         */
+        val axial1: List<Vec2>,
+        val axial2: List<Vec2>,
+        /** The wedge exactly as it was drawn, stepped nowhere — a **measurement** of it, and nothing else. */
         val plain: List<Vec2>,
         val region: Region,
         val stepped: Boolean,
@@ -1204,9 +1228,13 @@ object Blend3 {
         val loop: List<ProfileElement>,
         /** Which element of [loop] the chord from `polygon[m]` to `polygon[m + 1]` lies on. */
         val runs: List<Int>,
-        /** The same, for [plain]: the unstepped legs and the blend's curve, with no jog between them. */
-        val plainLoop: List<ProfileElement>,
-        val plainRuns: List<Int>,
+        /**
+         * The same, for the two pivot twins — one stepped leg, one flat one, and the jog onto the flat leg's
+         * own tangency of no length at all. Both have exactly [loop]'s elements in [loop]'s order, so
+         * [runs] is the run map of all three sections and a ring of any of them indexes the same way.
+         */
+        val axialLoop1: List<ProfileElement>,
+        val axialLoop2: List<ProfileElement>,
     )
 
     /**
@@ -1276,8 +1304,21 @@ object Blend3 {
         // section already carries as its first vertex (and as the stepped **corner** in the grown twin)
         val leg1 = GeomMath.tessellatePiece(sidePiece(crease.leg1, o, wedge.t1), GeomMath.TESS_TOL_MM).drop(1)
         val leg2 = GeomMath.tessellatePiece(sidePiece(crease.leg2, wedge.t2, o), GeomMath.TESS_TOL_MM).dropLast(1)
-        val plain = listOf(o) + leg1 + arc + leg2
         val grown = listOf(corner) + leg1.map { s1.step(it) } + arc + leg2.map { s2.step(it) }
+        // **and the two pivot twins, one leg stepped and one left where the drawing put it** (OP-31, slice
+        // 5v). A ring standing on a pivot axis may not step the leg that lies *along* that axis — a micron
+        // off it is swept into a zero-thickness disc — but its **other** leg lies flat in the shared face
+        // and is swept into a sector of that very face, which is the one contact this drawing may not hand
+        // the kernel. So neither the wholly plain section nor the wholly grown one is what such a ring
+        // wants: it wants the grown one's arithmetic with one leg's step set to nothing, which is the same
+        // points in the same order, the same jogs (one of them of no length) and the same run map.
+        val plain = listOf(o) + leg1 + arc + leg2
+        val f1 = s1.flat()
+        val f2 = s2.flat()
+        val c1 = f1.meet(s2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val c2 = s1.meet(f2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val axial1 = listOf(c1) + leg1 + arc + leg2.map { s2.step(it) }
+        val axial2 = listOf(c2) + leg1.map { s1.step(it) } + arc + leg2
         // **which statement each chord of the section is a chord of** (OP-31, slice 5w). The polygon is
         // walked in exactly the order it was built in — the leg out to the first tangency, the jog onto it,
         // the blend's own curve piece by piece, the jog back, the other leg home — so the map is stated
@@ -1296,15 +1337,6 @@ object Blend3 {
         for (j in 1 until arc.size) grownRuns.add(2 + arcRuns[j])
         grownRuns.add(2 + wedge.pieces.size)
         for (j in 0 until leg2.size) grownRuns.add(3 + wedge.pieces.size)
-        val plainRuns = ArrayList<Int>(plain.size)
-        for (j in 0 until leg1.size) plainRuns.add(0)
-        // …and in the unstepped twin the two jogs have no length, so they carry no surface of their own
-        plainRuns.add(0)
-        for (j in 1 until arc.size) plainRuns.add(1 + arcRuns[j])
-        plainRuns.add(wedge.pieces.size)
-        for (j in 0 until leg2.size) plainRuns.add(1 + wedge.pieces.size)
-        val plainLoop =
-            listOf(sidePiece(crease.leg1, o, wedge.t1)) + wedge.pieces + listOf(sidePiece(crease.leg2, wedge.t2, o))
         // the very same boundary as an exact loop: the two legs stepped off, a jog back onto each tangency,
         // and the blend's own curve between them untouched
         val loop =
@@ -1315,6 +1347,16 @@ object Blend3 {
             )
         val region = Region(if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop), emptyList())
         val grownLoop = loop.elements
+        // the two twins' own loops, element for element with [grownLoop]: the flat leg where the drawing
+        // drew it, its jog of no length at all, and the other leg stepped exactly as the grown twin steps it
+        val axialLoop1 =
+            listOf(f1.piece(c1, wedge.t1), ProfileElement.Seg(Segment(wedge.t1, wedge.t1))) +
+                wedge.pieces +
+                listOf(ProfileElement.Seg(Segment(wedge.t2, g2)), s2.piece(g2, c1))
+        val axialLoop2 =
+            listOf(s1.piece(c2, g1), ProfileElement.Seg(Segment(g1, wedge.t1))) +
+                wedge.pieces +
+                listOf(ProfileElement.Seg(Segment(wedge.t2, wedge.t2)), f2.piece(wedge.t2, c2))
         // **every section is stepped off now**, which is what [stepOf] made true: a round leg has an offset
         // of its own, so there is no longer a section that is swept as it was drawn. The flag stays because
         // it is what says a straight run's tube must be built by [toolMesh] — the only builder that carries
@@ -1326,20 +1368,22 @@ object Blend3 {
         if (grown.size < 3) return null to Msgs.refusalBlendRoundingOwnSectionHasFewer()
         // one winding for both, so index k of either ring is the same point of the same section
         return if (Geom3.polygonArea(grown) >= 0.0) {
-            Grown(grown, plain, region, stepped, grownLoop, grownRuns, plainLoop, plainRuns) to null
+            Grown(grown, axial1, axial2, plain, region, stepped, grownLoop, grownRuns, axialLoop1, axialLoop2) to null
         } else {
             // **the run map turns with the polygon**: [reversedFromFirst] keeps vertex 0 and reverses the
             // rest, so the chord that leaves vertex `m` of the turned ring is the chord that arrived at
             // vertex `N − 1 − m` of the original one.
             Grown(
                 reversedFromFirst(grown),
+                reversedFromFirst(axial1),
+                reversedFromFirst(axial2),
                 reversedFromFirst(plain),
                 region,
                 stepped,
                 grownLoop,
                 List(grownRuns.size) { m -> grownRuns[(grownRuns.size - 1 - m + grownRuns.size) % grownRuns.size] },
-                plainLoop,
-                List(plainRuns.size) { m -> plainRuns[(plainRuns.size - 1 - m + plainRuns.size) % plainRuns.size] },
+                axialLoop1,
+                axialLoop2,
             ) to null
         }
     }
@@ -1382,6 +1426,17 @@ object Blend3 {
 
         /** This leg after the step: the concentric circle, or null where it is a line. */
         val stepped: Circle? get() = circle?.let { Circle(it.center, it.radius + side * off) }
+
+        /**
+         * The same leg with **no step at all** — the leg where the drawing left it (OP-31, slice 5v).
+         *
+         * What it is for is the pivot: a ring standing on a pivot axis has *one* leg that may not move (it
+         * lies along the axis) and one that must (it lies in the shared face). So the section the pivot is
+         * swept with is stated from one stepped leg and one flat one, and everything else — the corner they
+         * meet at, the jog back onto each tangency, the run map — falls out of the very same arithmetic the
+         * grown twin is built by, which is why the two have the same points in the same order.
+         */
+        fun flat(): LegStep = LegStep(normal, circle, side, 0.0)
 
         /** The line this leg becomes, as `p·n = d` through the crease point at the origin — null for a circle. */
         val lineNormal: Vec2? get() = if (circle == null) normal else null
@@ -1716,6 +1771,8 @@ object Blend3 {
             choice,
             sec,
             grown,
+            section.axial1,
+            section.axial2,
             section.plain,
             section.region,
             section.stepped,
@@ -1725,8 +1782,8 @@ object Blend3 {
             back1,
             section.loop,
             section.runs,
-            section.plainLoop,
-            section.plainRuns,
+            section.axialLoop1,
+            section.axialLoop2,
         ) to null
     }
 
@@ -1987,7 +2044,7 @@ object Blend3 {
         piece: Piece,
         legs: List<Leg>,
         normal: Vec3?,
-        plain: Boolean,
+        loop: List<ProfileElement>,
         ends: List<Int>,
         faces: ToolFaces,
     ): (Int, Int) -> Int {
@@ -1995,18 +2052,11 @@ object Blend3 {
         return { legIndex, run ->
             val key = legIndex * 64 + run
             open.getOrPut(key) {
-                val el = if (plain) piece.plainLoop[run] else piece.loop[run]
+                val el = loop[run]
                 faces.slot(withToolSlack(walkLegPatch(piece, legs[legIndex], el, FaceName.BlendCorner(ends, key), normal)))
             }
         }
     }
-
-    /** Which element of the section the chord from vertex `m` of a walk's ring leaves on. */
-    private fun runAt(
-        piece: Piece,
-        plain: Boolean,
-        m: Int,
-    ): Int = if (plain) piece.plainRuns[m] else piece.runs[m]
 
     /** [legs]' placements in order, the join between two legs counted once; the first is the walk's start. */
     private fun walkRings(legs: List<Leg>): List<Placement> =
@@ -2183,16 +2233,17 @@ object Blend3 {
             // and the turn would sweep that micron into a disc ([toolMesh]). About a **band** the axis
             // stands `r_U` away from the section and there is no such point, so the step-off is kept and
             // the leg does not lie in the face it is tangent to.
-            val plain = extra.isEmpty()
-            val section = if (plain) pieces[a].plain else pieces[a].grown
+            val onAxis = extra.isEmpty()
+            val section = if (onAxis) pieces[a].axial(shared) else pieces[a].grown
             val legAt = walkLegAt(legs)
-            val slot = walkTubeSlots(pieces[a], legs, walkNormal, plain, ends.map { it.first }, faces)
+            val loop = if (onAxis) pieces[a].axialLoop(shared) else pieces[a].loop
+            val slot = walkTubeSlots(pieces[a], legs, walkNormal, loop, ends.map { it.first }, faces)
             for (l in 0 until rings.size - 1) {
                 val lo = section.map { rings[l].at(it) }
                 val hi = section.map { rings[l + 1].at(it) }
                 for (m in section.indices) {
                     val n = (m + 1) % section.size
-                    out.face = slot(legAt[l], runAt(pieces[a], plain, m))
+                    out.face = slot(legAt[l], pieces[a].runs[m])
                     // the turn continues [a]'s own tube, so the two rings take the same roles its two did
                     if (aAtStart) {
                         out.triangle(hi[m], hi[n], lo[n])
@@ -2329,8 +2380,8 @@ object Blend3 {
          */
         fun ledgeRings(pieces: List<Piece>): Pair<List<Vec2>, List<Vec2>>? {
             val p = plane()
-            val outer = ringFromCorner(pieces[a].plain.map { q -> p.toLocal(rings.last().at(q)) })
-            val inner = ringFromCorner(pieces[b].plain.map { q -> p.toLocal(placeB.at(q)) })
+            val outer = ringFromCorner(pieces[a].axial(shared).map { q -> p.toLocal(rings.last().at(q)) })
+            val inner = ringFromCorner(pieces[b].axial(shared).map { q -> p.toLocal(placeB.at(q)) })
             return if (outer.size < 3 || inner.size < 3) null else outer to inner
         }
 
@@ -2341,15 +2392,15 @@ object Blend3 {
         ) {
             // the plain section throughout: the pivot is about the sharp upright and the section's leg in
             // the other face lies *along* it, so a step-off there would be swept into a disc ([toolMesh])
-            val section = pieces[a].plain
+            val section = pieces[a].axial(shared)
             val legAt = walkLegAt(legs)
-            val slot = walkTubeSlots(pieces[a], legs, walkNormal, true, ends.map { it.first }, faces)
+            val slot = walkTubeSlots(pieces[a], legs, walkNormal, pieces[a].axialLoop(shared), ends.map { it.first }, faces)
             for (l in 0 until rings.size - 1) {
                 val lo = section.map { rings[l].at(it) }
                 val hi = section.map { rings[l + 1].at(it) }
                 for (m in section.indices) {
                     val n = (m + 1) % section.size
-                    out.face = slot(legAt[l], runAt(pieces[a], true, m))
+                    out.face = slot(legAt[l], pieces[a].runs[m])
                     // the walk continues [a]'s own tube, so the two rings take the same roles its two did
                     if (aAtStart) {
                         out.triangle(hi[m], hi[n], lo[n])
@@ -2898,6 +2949,9 @@ object Blend3 {
         for (q in poly) if (distinct.isEmpty() || (q - distinct.last()).length() > Geom3.WELD_TOL) distinct.add(q)
         while (distinct.size > 1 && (distinct.first() - distinct.last()).length() <= Geom3.WELD_TOL) distinct.removeAt(distinct.size - 1)
         if (distinct.size < 3) return emptyList()
+        // the corner is the point nearest the vertex the landing plane is framed on — the crease point
+        // itself where the section is plain there, and a skin off it where the leg in the shared face is
+        // stepped (OP-31, slice 5v), which is still an order of magnitude nearer than any other vertex
         val corner = distinct.indices.minByOrNull { distinct[it].length() } ?: 0
         val rotated = distinct.drop(corner) + distinct.take(corner)
         var twice = 0.0
@@ -2913,7 +2967,9 @@ object Blend3 {
      * The **annulus between two nested rings**, stitched by the angle each vertex stands at about their
      * common corner — one closed strip, every edge of both rings used exactly once.
      *
-     * Both rings start at that corner and run counter-clockwise, and the angle is monotone along each
+     * Both rings start at that corner and run counter-clockwise, the angle is measured **about that corner**
+     * (which is a skin off the landing plane's own origin wherever the ring steps its leg in the shared
+     * face), and it is monotone along each
      * (a wedge is star-shaped from its own corner, and its two legs are the plateaus at either end), so
      * merging the two by angle gives a strip whose quads are radial and cannot cross. The winding is
      * stated: the rings are counter-clockwise about the plane's own normal, the tool stands on the *other*
@@ -2926,14 +2982,21 @@ object Blend3 {
         outerAt: (Vec2) -> Vec3,
         innerAt: (Vec2) -> Vec3,
     ) {
-        val ref = atan2(outer[1].y, outer[1].x)
+        // **the angle is taken about the corner itself, which is not the plane's own origin** (OP-31, slice
+        // 5v). Both rings start at the pole the two sections share, and while a pivot ring was the wholly
+        // plain section that pole *was* the vertex the landing plane is framed on; a ring that steps its leg
+        // in the shared face stands its corner a skin off it, and an angle measured about a point a skin
+        // away from the corner is not monotone along either ring near it — the strip then folds and the
+        // tool's own axis edge comes back used twice with two opposite uses, which is how this was found.
+        val c = outer[0]
+        val ref = atan2(outer[1].y - c.y, outer[1].x - c.x)
 
         fun keys(ring: List<Vec2>): List<Double> =
             ring.indices.map { k ->
                 if (k == 0) {
                     -1.0
                 } else {
-                    val a = atan2(ring[k].y, ring[k].x) - ref
+                    val a = atan2(ring[k].y - c.y, ring[k].x - c.x) - ref
                     if (a < -1e-9) a + 2.0 * PI else a
                 }
             } + listOf(3.0 * PI)
@@ -4991,8 +5054,9 @@ object Blend3 {
         // gets from it ([Corner.faces]) read on the tool's side
         for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b, faces)
         // the ends that stand **on** a pivot axis: a turn about a sharp upright, and only that one
-        val pivots = HashSet<Pair<Int, Boolean>>()
-        for (c in corners) if (c.onAxis) pivots.addAll(c.ends)
+        // …and **which face each pivot shares**, because that is the leg its ring may not step (slice 5v)
+        val pivots = HashMap<Pair<Int, Boolean>, FacePatch?>()
+        for (c in corners) if (c.onAxis) for (e in c.ends) pivots[e] = (c as? Walk)?.walkFace
         // …and the band ends a **one-ended pivot** covers with its own fill (OP-31, item (b)). [endSteps]
         // pulls such an end back a micron because the shared face runs on past it while the other stops —
         // which is what an inside corner is, and there the micron of unrounded ridge stands beside a corner
@@ -5081,8 +5145,8 @@ object Blend3 {
             }
             // stepped off everywhere but on a pivot axis: a tool never shares a face with the body, and
             // never folds over itself at a turn either ([sectionOf], GitHub #33 and its probe)
-            val s0 = if ((at to true) in pivots) piece.plain else piece.grown
-            val s1 = if ((at to false) in pivots) piece.plain else piece.grown
+            val s0 = if (pivots.containsKey(at to true)) piece.axial(pivots[at to true]) else piece.grown
+            val s1 = if (pivots.containsKey(at to false)) piece.axial(pivots[at to false]) else piece.grown
             // **the stations between the two rings, and a straight run has none** — so its two rings are
             // its whole tube and its triangles are the very triangles it always had. A **circular** run's
             // tube is its section carried round its own arc, stepped by the sag rule every band here is
@@ -5113,7 +5177,7 @@ object Blend3 {
                 val loSec = secs[k]
                 for (m in piece.grown.indices) {
                     val n = (m + 1) % piece.grown.size
-                    val run = if (sec === piece.plain) piece.plainRuns[m] else piece.runs[m]
+                    val run = piece.runs[m]
                     // **a chord whose two section points are the same in both rings is swept, not slanted**:
                     // the two sections differ only along their legs (the stepped twin of a plain one), so
                     // the blend's own curve is carried by the very statement it was drawn as even where one
@@ -5121,8 +5185,23 @@ object Blend3 {
                     val same = loSec === sec || (loSec[m] == sec[m] && loSec[n] == sec[n])
                     b.face =
                         if (same) {
-                            runFace.getOrPut(if (sec === piece.plain) -1 - run else run) {
-                                val el = if (sec === piece.plain) piece.plainLoop[run] else piece.loop[run]
+                            runFace.getOrPut(
+                                if (sec === piece.grown) {
+                                    run
+                                } else if (sec === piece.axial1) {
+                                    -1 - run
+                                } else {
+                                    -1000 - run
+                                },
+                            ) {
+                                val el =
+                                    if (sec === piece.grown) {
+                                        piece.loop[run]
+                                    } else if (sec === piece.axial1) {
+                                        piece.axialLoop1[run]
+                                    } else {
+                                        piece.axialLoop2[run]
+                                    }
                                 faces.slot(tubeFace(piece, el, places[k], places[k + 1], FaceName.BlendBand(piece.index, run)))
                             }
                         } else {
@@ -5404,7 +5483,8 @@ object Blend3 {
                 if (tool == null) {
                     return null to Msgs.refusalQualified(name = turn.shared.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
                 }
-                val (next, whyBool) = Geom3.combine(if (turn.convex) BoolOp.SUBTRACT else BoolOp.UNION, result, tool)
+                val op = if (turn.convex) BoolOp.SUBTRACT else BoolOp.UNION
+                val (next, whyBool) = Geom3.combine(op, result, tool)
                 // **and where the boolean cannot apply the pivot's tool, the drawing says so in its own
                 // words** (OP-31, slice 5o). The tool is asked about itself first and comes back a closed
                 // shell; what fails at a tight ring is the *meeting*, and until session 86 what came back

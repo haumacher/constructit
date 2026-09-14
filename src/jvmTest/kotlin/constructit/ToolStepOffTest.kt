@@ -28,9 +28,18 @@ import kotlin.test.assertTrue
  * asked: do the two meshes have a face **in one plane**, overlapping there? Asking the *mesh* rather than
  * the face lists is deliberate — a tool's triangles are what the engine sees, several tools have no face
  * list at all (a sweep, a skin), and a plane a mesh states is stated exactly, so what decides it is an
- * equality and not a tolerance. A **union**'s two coplanar caps pointing the *same* way are not the
- * degeneracy and are not counted: each face is used once each way, the union keeps one of them, and that is
- * what a fill's own cap standing in the wall it fills against has relied on since session 79's butt ends.
+ * equality and not a tolerance.
+ *
+ * *And which of the two senses is the degeneracy is decided by the **operation*** (OP-31, slice 5v). A
+ * **union**'s two coplanar caps pointing the *same* way are not the degeneracy and are not counted: each
+ * face is used once each way, the union keeps one of them, and that is what a fill's own cap standing in the
+ * wall it fills against has relied on since session 79's butt ends. A **difference** is that same sentence
+ * the other way round, and session 87 is where it was said: `A − B` is `A ∩ Bᶜ`, so every face of the tool
+ * is used the other way about, and a tool face standing **against** a face of the body is the pair that
+ * comes out pointing the same way — one face kept, each edge used once each way — while a tool face lying
+ * in a face of the body and pointing **with** it is the pair that backs onto itself. So a tool that *lands
+ * in* a face of the body is counted and a tool that **re-cuts** a face the body already carries is not; the
+ * number over the matrix is **sixteen** either way, because every cell that had one had the other too.
  *
  * *And the answer is not zero, so it is stated as the residue it is* (OP-31, slice 5q's one cut; the idiom
  * is `BlendMatrixTest.Residue`'s — a number here is a **claim that a defect is still there**, and it fails
@@ -45,20 +54,25 @@ import kotlin.test.assertTrue
  * actually going to be handed, and the step is carried past whatever the body really has there. Not one of
  * the matrix's 288 volumes moves by so much as a bit.
  *
- * *The sixteen that remain are two cases, and both of them are about where a corner **lands*** rather than
- * about how far a band stands off a face — which is why they are still a slice of their own and not this
- * one:
+ * *The sixteen were two cases, and both of them are about where a corner **lands*** rather than about how
+ * far a band stands off a face. **The first is gone** (OP-31, slice 5v, session 87): a ring standing on a
+ * **pivot axis** used to take the wholly *plain* section, because the leg in the face the ball does not roll
+ * on lies along the axis and a micron off the axis is swept into a zero-thickness disc — and its **other**
+ * leg then lay flat in the shared face, swept into a sector of that very face. It now takes a section
+ * stepped in the shared face and left flat on the axis (`Blend3`'s `Grown.axial1`/`axial2`), which is
+ * GitHub #33's diagonal-jog argument said for a turn rather than for a run: the same points in the same
+ * order as the grown twin, so every ring of the corner — the pivot's, the `Ledge`'s, the bands' own end
+ * rings — is stepped identically and the C¹ meeting between them is exactly what it was. Not one volume in
+ * the suite moves by a bit.
  *
- * - **A ring that stands on a pivot axis takes the plain section** ([toolMesh]'s own rule, the probe of
- *   GitHub #33): the leg in the face the ball does *not* roll on lies along the axis, and a micron off the
- *   axis is swept into a zero-thickness disc. Its *other* leg then lies flat in the shared face and the
- *   pivot sweeps it into a sector of that very face. Stepping only that leg was built and discarded on its
- *   own evidence: the two rings a `Ledge` joins are then stepped at different indices of the same ring, the
- *   annulus no longer closes on the tube, and nine tests of the incongruent corner came back *"used 2 times
- *   with 2 opposite uses"* along the upright itself.
- * - **A ledge lands in the wall the corner stands against**, because that is where it lands: a `Ledge`'s
- *   landing plane is square to the shallower band's run, and at an inside corner of two bottom-rim edges
- *   that plane **is** the upright's own face.
+ * *What is left is the second, and it is **eight***: **a ledge lands in the wall the corner stands
+ * against**, because that is where it lands — a `Ledge`'s landing plane is square to the shallower band's
+ * run, and at an inside corner of two bottom-rim edges that plane **is** the upright's own face, so the
+ * ledge's cap lies flat in it. Two cures were built and discarded on their own evidence, and both are
+ * recorded under OP-31: carrying every tool vertex in that plane by the skin shears the walk's last strip
+ * (twenty triangles off their own carriers, the four gesture routes no longer one body), and lifting the cap
+ * alone as a slab with a skirt back onto each ring puts four triangles on the pivot's own pole, where the
+ * two rings coincide.
  *
  * Every one of these cells builds today under both engines; what the number says is that they build because
  * the contact happened to be resolvable, not because it was never handed over.
@@ -88,7 +102,7 @@ class ToolStepOffTest {
     /** Which of [pairs] hand the kernel a tool with a face in a face of the body, by operation. */
     private fun flush(pairs: List<Handed>): List<BoolOp> =
         pairs.mapNotNull { h ->
-            val shared = ToolStep.sharedPlanes(h.a, h.b, opposedOnly = h.kind == BoolOp.UNION)
+            val shared = ToolStep.sharedPlanes(h.a, h.b, opposed = h.kind == BoolOp.UNION)
             if (shared.isEmpty()) null else h.kind
         }
 
@@ -120,7 +134,7 @@ class ToolStepOffTest {
         assertTrue(pairs.size == 36, "the matrix's thirty-six pairs: ${pairs.size}")
         val (differences, unions) = sweep(pairs)
         println("== tool step-off: 288 cells — $differences difference and $unions union tools hand over a flush contact")
-        assertEquals(16, differences, "the difference tools that still lay a face in a face of the body")
+        assertEquals(8, differences, "the difference tools that still lay a face in a face of the body")
         assertEquals(0, unions, "…and the union tools that back a face onto one")
     }
 
@@ -133,7 +147,7 @@ class ToolStepOffTest {
     fun theSameNumbersHoldUnderTheFromSourceEngine() {
         assumeTrue(MeshBool.isNative, "not the from-source engine (-Dconstructit.manifold.native=<dir>): ${MeshBool.status}")
         val (differences, unions) = sweep(L.block.pairs.map { (a, b, _) -> a to b })
-        assertEquals(16, differences, "the same difference tools under ${MeshBool.status}")
+        assertEquals(8, differences, "the same difference tools under ${MeshBool.status}")
         assertEquals(0, unions, "…and the same union tools")
     }
 }

@@ -385,13 +385,24 @@ object ToolStep {
      * One plane both operands have a face in, stated with **[a]'s own outward normal** — and whether the
      * second operand's face there points **against** it ([opposed]) or the same way.
      *
-     * The difference is the whole of what a union has to know. Two coplanar caps that point the **same** way
-     * are no degeneracy at all: each face is used once each way, the union keeps one of them, and this is
-     * what a fill's own cap standing in the wall it fills against has always relied on ([Blend3]'s butt
-     * ends). Two that point **against** each other back onto one another and enclose nothing between them,
-     * which is the self-touching contact no watertight mesh carries.
+     * *The difference is the whole of what the caller has to know, and which of the two is the degeneracy is
+     * decided by the operation* (OP-31, slice 5v). For a **union**, two coplanar faces that point the same
+     * way are no degeneracy at all: each face is used once each way, the union keeps one of them, and this
+     * is what a fill's own cap standing in the wall it fills against has always relied on ([Blend3]'s butt
+     * ends); two that point **against** each other back onto one another and enclose nothing between them,
+     * which is the self-touching contact no watertight mesh carries. For a **difference** it is exactly the
+     * other way round, and by the same argument said once more: `A − B` is `A ∩ Bᶜ`, so every face of the
+     * second operand is used the other way round, and a face of [b] standing **against** a face of [a] is
+     * the pair that comes out pointing the same way — one face kept, each edge used once each way — while a
+     * face of [b] lying in a face of [a] and pointing **with** it is the pair that backs onto itself. Which
+     * is why a tool that lands *in* a face of the body is the one this drawing has to restate, and a tool
+     * that re-cuts a face the body already carries is not.
      */
-    internal class Shared(val normal: Vec3, val offset: Double, val opposed: Boolean)
+    internal class Shared(
+        val normal: Vec3,
+        val offset: Double,
+        val opposed: Boolean,
+    )
 
     /**
      * The planes both meshes have triangles in, found by hashing each mesh's triangle planes onto a coarse
@@ -405,7 +416,12 @@ object ToolStep {
     internal fun sharedPlanes(
         a: Mesh3,
         b: Mesh3,
-        opposedOnly: Boolean = false,
+        /**
+         * Which sense of contact is wanted — `true` for the two faces that point **against** each other,
+         * `false` for the two that point the same way, and null for both. See [Shared.opposed]: which of the
+         * two is the degeneracy is decided by the operation, and the caller is the one that knows it.
+         */
+        opposed: Boolean? = null,
     ): List<Shared> {
         val pa = planesOf(a)
         if (pa.isEmpty()) return emptyList()
@@ -431,7 +447,7 @@ object ToolStep {
                 }
             }
         }
-        return if (opposedOnly) out.filter { it.opposed } else out
+        return if (opposed == null) out else out.filter { it.opposed == opposed }
     }
 
     /** Whether [g] (of the first mesh) and [f] (of the second) are the **same** plane, either way round. */
