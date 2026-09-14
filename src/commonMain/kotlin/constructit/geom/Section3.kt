@@ -2843,7 +2843,7 @@ object Section3 {
             // finely marched cut is shorter than [GeomMath.TESS_TOL_MM] — so the very first chord of a canal
             // band's own cut read as a closed loop of its own, and the section refused with the whole rest
             // of its boundary still on the table. A run of one closes only where it closes **exactly**.
-            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > (if (run.size < 2) CHAIN_TOL else tolBetween(head, tail))) {
+            while (true) {
                 val end = GeomMath.endOf(run.last())
 
                 fun reach(d: DrawnPiece): Double = min((GeomMath.startOf(d.piece) - end).length(), (GeomMath.endOf(d.piece) - end).length())
@@ -2857,14 +2857,48 @@ object Section3 {
                 // taken and not the first one in the list that happens to be within it (OP-31, slice 5l):
                 // a sampled run arrives as a hundred chords each shorter than that tolerance, so "the
                 // first within reach" steps over its own neighbours and strands them.
+                // **…and a chain joins a neighbour at a *free* end** (OP-31, slice 5l, probed): a point two
+                // pieces of the table already share is no place for a third. A sampled run reaches this
+                // list as one chord per chord, so an **interior** vertex of such a run is a candidate like
+                // any other — and where it stands a tenth of a tolerance nearer than the run's own end (two
+                // trims each stated to a hundredth of a millimetre need not agree better than that), the
+                // walk enters that run in the middle, turns back along it, and strands its last chord. So
+                // the candidates are the **endpoints** rather than the pieces, and an endpoint no other
+                // remaining piece shares wins over one that is shared. The plain nearest stays for a table
+                // where no candidate is free at all, and an *exact* neighbour still comes before both,
+                // which is how a run walks along itself.
+                val options = left.indices.flatMap { i -> listOf(i to true, i to false) }
+
+                fun pointOf(o: Pair<Int, Boolean>): Vec2 = if (o.second) GeomMath.startOf(left[o.first].piece) else GeomMath.endOf(left[o.first].piece)
+
+                fun gap(o: Pair<Int, Boolean>): Double = (pointOf(o) - end).length()
+
+                fun sharedAt(o: Pair<Int, Boolean>): Boolean {
+                    val q = pointOf(o)
+                    return left.indices.any { j -> j != o.first && ((GeomMath.startOf(left[j].piece) - q).length() <= CHAIN_TOL || (GeomMath.endOf(left[j].piece) - q).length() <= CHAIN_TOL) }
+                }
+
+                val within = options.filter { gap(it) <= tolBetween(tail, left[it.first]) }
+                val exact = left.indexOfFirst { reach(it) <= CHAIN_TOL }.takeIf { it >= 0 }
                 val at =
-                    left.indexOfFirst { reach(it) <= CHAIN_TOL }
-                        .takeIf { it >= 0 }
-                        ?: left.indices.filter { reach(left[it]) <= tolBetween(tail, left[it]) }.minByOrNull { reach(left[it]) }
-                if (at == null || at < 0) return null to (tail.from ?: head.from)
-                val piece = left.removeAt(at)
+                    if (exact != null) {
+                        exact to ((GeomMath.startOf(left[exact].piece) - end).length() <= (GeomMath.endOf(left[exact].piece) - end).length())
+                    } else {
+                        within.filter { !sharedAt(it) }.minByOrNull { gap(it) } ?: within.minByOrNull { gap(it) }
+                    }
+                // **and a run closes on its own head only where nothing still on the table meets it
+                // nearer** (OP-31, slice 5l, probed). The head is one more candidate and it wins on the same
+                // rule as the rest: nearest takes it. A boolean's trim states its own tolerance in tenths of
+                // a millimetre, and a run that closed the moment it came *within* that of its own beginning
+                // shut a bored canal's cut onto the wall behind its own flat end, leaving that cap alone on
+                // the table and the section refused at the one face that was in the right place all along.
+                val closing = (GeomMath.startOf(run.first()) - end).length()
+                if (closing <= (if (run.size < 2) CHAIN_TOL else tolBetween(head, tail)) && (at == null || gap(at) >= closing)) break
+                if (at == null) return null to (tail.from ?: head.from)
+                val forwards = at.second
+                val piece = left.removeAt(at.first)
                 tail = piece
-                run.add(if ((GeomMath.startOf(piece.piece) - end).length() <= (GeomMath.endOf(piece.piece) - end).length()) piece.piece else GeomMath.reverse(piece.piece))
+                run.add(if (forwards) piece.piece else GeomMath.reverse(piece.piece))
             }
             if (run.size < 2) return null to head.from
             out.add(Loop(run))

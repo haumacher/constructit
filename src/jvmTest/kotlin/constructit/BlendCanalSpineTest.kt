@@ -167,26 +167,103 @@ class BlendCanalSpineTest {
             val rs = assertNotNull(regions, "the $what section closes: ${why?.render()}")
             assertTrue(rs.isNotEmpty(), "…with an area")
         }
-        // **and where one does not close it says where** (OP-3), which is this slice's own cut and is
-        // narrowed to one sentence by session 86 (OP-31, slice 5l): a plane standing within two millimetres
-        // of the tight bend's corner breaks at the canal's own **flat end**, and by exactly the step-off
-        // that end takes. The band, its rails and its cap now all end at one ring — the ring the tool really
-        // lays, [Canal.grow] past the last station — so the only gap left in the loop is between that cap
-        // and the **wall** its own leg has run out onto past the end of the band it rolls on. The body has a
-        // step there and the drawing does not state it; nothing is drawn that does not close, and the face
-        // it breaks at is named.
-        for ((what, plane) in listOf(
-            "x = 38" to Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
-            "x = 39" to Plane3(Vec3(39.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
-            "y = 28" to Plane3(Vec3(0.0, 28.0, 0.0), Vec3.X, Vec3.Z),
-            "y = 29" to Plane3(Vec3(0.0, 29.0, 0.0), Vec3.X, Vec3.Z),
+        // **and the four planes within two millimetres of the corner close too** (OP-31, slice 5l's last
+        // step). Each of them used to break in exactly one place and name the canal's own **flat end**: the
+        // cap's leg runs out past the end of the band it rolls on, onto the flat wall that band is tangent
+        // to, and the body keeps the step the tool took there (`canalGrow`, 0.0401 mm here) which the
+        // drawing did not state. It states it now — the wall's outline carries the cap's own trace, as a
+        // straight crease's cap gives a plane neighbour its triangle (slice 5p) — so the loop closes, and
+        // the area is the two-round body's own section there **less the canal's bite**.
+        for ((what, plane, bite) in listOf(
+            Triple("x = 38", Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z), 0.62309),
+            Triple("x = 39", Plane3(Vec3(39.0, 0.0, 0.0), Vec3.Y, Vec3.Z), 2.07353),
+            Triple("y = 28", Plane3(Vec3(0.0, 28.0, 0.0), Vec3.X, Vec3.Z), 0.62680),
+            Triple("y = 29", Plane3(Vec3(0.0, 29.0, 0.0), Vec3.X, Vec3.Z), 2.08615),
         )) {
-            val (regions, why) = Section3.regionsOf(body.feature, plane)
-            if (regions != null) continue
-            val reason = assertNotNull(why, "a section that does not close says why").render()
-            assertTrue(reason.contains("flat end"), "…naming the canal's own flat end, which is where it breaks: $reason")
-            println("canal spine | vertical at $what | does not close, and says where | ${reason.take(90)}")
+            val plain = areaOf(base, plane, "the two-round body at $what")
+            val got = areaOf(body, plane, "the tight bend at $what")
+            assertClose(got, plain - bite, 1e-3, "the section at $what is the two-round body's less the canal's bite")
+            println("canal spine | vertical at $what | closes | $plain - $bite -> $got")
         }
+        // …and the drawing's own cap agrees with the **mesh** the tool really cut, to the step the tool
+        // states about itself ([FacePatch.fitted] on the faces the step was spliced into)
+        val cap =
+            assertNotNull(
+                Section3.faces(body.feature).first?.firstOrNull { it.name is FaceName.BlendCap && it.plane != null },
+                "the canal closes on a flat end of its own",
+            )
+        val pl = assertNotNull(cap.plane)
+        val grow = 2.0 * GeomMath.effectiveTol(bigR, GeomMath.TESS_TOL_MM)
+        var worst = 0.0
+        for (e in cap.outline) {
+            for (q in GeomMath.tessellatePiece(e, 1e-4)) worst = max(worst, offMesh(body.mesh, pl.toWorld(q)))
+        }
+        assertTrue(worst <= grow, "the cap's own outline stands within the tool's step ($grow mm) of the body's facets: $worst")
+        println("canal spine | cap against the mesh | worst $worst mm against the tool's own step $grow")
+    }
+
+    /** How far [q] stands from the nearest facet of [mesh] — the mesh-agreement figure, in mm. */
+    private fun offMesh(
+        mesh: constructit.geom.Mesh3,
+        q: Vec3,
+    ): Double {
+        var best = Double.MAX_VALUE
+        for (t in mesh.triangles) {
+            val a = mesh.vertices[t.a]
+            val b = mesh.vertices[t.b]
+            val c = mesh.vertices[t.c]
+            best = min(best, offTriangle(a, b, c, q))
+        }
+        return best
+    }
+
+    /** The distance from [q] to the triangle `abc` — the foot where it falls inside, an edge's where not. */
+    private fun offTriangle(
+        a: Vec3,
+        b: Vec3,
+        c: Vec3,
+        q: Vec3,
+    ): Double {
+        val n = (b - a).cross(c - a)
+        val len = n.length()
+        if (len > 1e-18) {
+            val u = n * (1.0 / len)
+            val f = q - u * (q - a).dot(u)
+
+            fun side(
+                p: Vec3,
+                r: Vec3,
+            ): Double = (r - p).cross(f - p).dot(u)
+            if (side(a, b) >= 0.0 && side(b, c) >= 0.0 && side(c, a) >= 0.0) return (q - f).length()
+            if (side(a, b) <= 0.0 && side(b, c) <= 0.0 && side(c, a) <= 0.0) return (q - f).length()
+        }
+        return minOf(offSegment(a, b, q), offSegment(b, c, q), offSegment(c, a, q))
+    }
+
+    private fun offSegment(
+        a: Vec3,
+        b: Vec3,
+        q: Vec3,
+    ): Double {
+        val d = b - a
+        val len2 = d.dot(d)
+        val t = if (len2 <= 1e-18) 0.0 else ((q - a).dot(d) / len2).coerceIn(0.0, 1.0)
+        return (q - (a + d * t)).length()
+    }
+
+    private fun areaOf(
+        s: Solid3,
+        plane: Plane3,
+        what: String,
+    ): Double {
+        val (regions, why) = Section3.regionsOf(s.feature, plane)
+        val rs = assertNotNull(regions, "$what closes: ${why?.render()}")
+        var area = 0.0
+        for (r in rs) {
+            area += abs(GeomMath.signedArea(r.outer))
+            for (h in r.holes) area -= abs(GeomMath.signedArea(h))
+        }
+        return area
     }
 
     /**

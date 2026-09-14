@@ -119,6 +119,18 @@ class BoolCanalCarrierTest {
         return round(cx, two, listOf(mitre), 1.0)
     }
 
+    /** …and the same two rounds with the mitre taken by a **2.5 mm** ball — the tight bend itself. */
+    private fun tightBendBody(cx: Construction): SolidRef {
+        val two = twoRounds(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y))
+        val es = edgesOf(Evaluator().solid(two))
+        val mitre =
+            assertNotNull(
+                es.indices.firstOrNull { es[it].name is EdgeName.BlendMitre && es[it].reason == null && es[it].geom is EdgeGeom.OnPlane },
+                "the two bands cross in a mitre",
+            )
+        return round(cx, two, listOf(mitre), 2.5)
+    }
+
     private fun round(
         cx: Construction,
         on: SolidRef,
@@ -342,6 +354,58 @@ class BoolCanalCarrierTest {
     }
 
     /**
+     * **The tight bend, bored — and the four planes slice 5l's last step taught the *unbored* body to close
+     * on close on the bored one too** (OP-31, slice 5l, probed).
+     *
+     * *Why this is here.* The cap step is a statement about the **dressed** body, and a boolean reads that
+     * body's faces as its own operand's (slice 5c's chaining rule): so the moment a canal band is bored, the
+     * four vertical planes within two millimetres of the tight bend's corner have to close through the
+     * *boolean's* readers — the pipe piece's marched cut and the section chain — and not merely through the
+     * dressing's. They did not, and the two things that stopped them are general: a marched cut ended at the
+     * last grid cell **inside** the trim rather than on the trim itself (a tenth of a millimetre short,
+     * against a trim tolerance a tenth of that), and a run closed on its own head the moment it came within
+     * that tolerance of it, shutting the cut onto the wall behind the cap and leaving the cap alone on the
+     * table.
+     *
+     * *What is asserted.* Each of the four is the **unbored** tight bend's own section there less the bore's
+     * own trace in the same plane, the trace asked of the drawing itself (the section of the intersection of
+     * the two operands), to the tolerance the three readings are carried at.
+     */
+    @Test
+    fun theTightBendBoredClosesOnEveryPlaneTheUnboredBodyClosesOn() {
+        requireEngine()
+        val cx = Construction()
+        val tight = tightBendBody(cx)
+        val at = Vec2(38.0, 27.0)
+        val bored = Evaluator().solid(cx.subtract(tight, drill(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y), at, 1.5)))
+        assertManifold(bored.mesh, "the tight bend bored through its band")
+        val fs = assertNotNull(Section3.faces(bored.feature).first, "the bored tight bend names its faces")
+        assertTrue(fs.any { it.pipe != null && it.outline.isNotEmpty() }, "the canal band is still a named face of its own")
+        val plain = Evaluator().solid(tight)
+        val trace = Evaluator().solid(cx.intersect(tight, drill(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y), at, 1.5)))
+        assertManifold(trace.mesh, "the bore's own trace body")
+        for ((what, plane) in listOf(
+            "x = 38" to Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
+            "x = 39" to Plane3(Vec3(39.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
+            "y = 28" to Plane3(Vec3(0.0, 28.0, 0.0), Vec3.X, Vec3.Z),
+            "y = 29" to Plane3(Vec3(0.0, 29.0, 0.0), Vec3.X, Vec3.Z),
+        )) {
+            val was = areaAt(plain, plane, "the unbored tight bend at $what")
+            val now = areaAt(bored, plane, "the bored tight bend at $what")
+            // …and where the plane misses the bore altogether — `y = 29` stands half a millimetre clear of
+            // the 1.5 mm drill at `y = 27` — the trace is nothing and the section is the unbored body's own
+            val took = if (Section3.regionsOf(trace.feature, plane).first == null) 0.0 else areaAt(trace, plane, "the bore's own trace at $what")
+            // …to the tolerance the three readings are carried at: each area is read off curved traces
+            // stated as chains, the boolean re-meshes both bands as it cuts them, and the trace body is
+            // itself a boolean of two tessellated curved solids. The widest of the four disagreements is a
+            // quarter of a square millimetre out of seven hundred — at `x = 39`, which cuts the bore's own
+            // cylinder near its silhouette, where a chord stands furthest from the circle it is taken for
+            assertClose(now, was - took, tol = 0.3, msg = "the section at $what is the unbored body's less the bore's trace there")
+            println("canal carrier | tight bend bored | $what: $was - $took -> $now")
+        }
+    }
+
+    /**
      * **A plane that grazes the bore** — tangent to the bore's own cylinder along a ruling, so it touches
      * the rim the bore leaves on the band at one point and takes nothing away from the unbored body's own
      * section (OP-31, slice 5l).
@@ -378,10 +442,10 @@ class BoolCanalCarrierTest {
             // **the tangency is stated once and takes nothing**: a plane touching the bore's cylinder along
             // one ruling removes no area at all, so the grazed section is the unbored body's own, to the
             // chord tolerance of the curved traces it is read off. Where the *unbored* body's own section
-            // in that plane does not close the comparison is not this slice's to make — a plane within two
-            // millimetres of the mitre's corner breaks at the **dressed** body's rounded band, which is the
-            // one case the (5l) line still carries and no boolean is involved in it at all — and the
-            // grazed section is held to closing, which is what this fixture is about.
+            // in that plane does not close the comparison is not this slice's to make, and the grazed
+            // section is held to closing, which is what this fixture is about. Both of them take the
+            // comparison now: the dressed body's own vertical planes near the mitre's corner close since
+            // slice 5l's last step stated the step a canal's cap leaves in the wall its leg runs onto.
             val (ref, refWhy) = Section3.regionsOf(plain.feature, plane)
             if (ref == null) {
                 val reason = assertNotNull(refWhy, "the unbored body says why it does not close").render()
@@ -572,10 +636,12 @@ class BoolCanalCarrierTest {
             println("canal carrier | pivot pose $what | ${fs.size} faces, ${slot.count { it.pipe != null }} pieces of the corner on the pipe")
             named++
         }
-        // **named, or refused by name** (OP-3), and the count is the slice's own open measure: one pose of
-        // the five refuses at a **planar** face's corner that the planes meeting there do not determine,
-        // which is no part of this slice's ground and is queued as its own line.
-        assertTrue(named >= poses.size - 1, "every pose of the bored pivot but at most one is named: $named of ${poses.size}")
+        // **a trim corner is the body's, not the pose's** (OP-31, slice 5t). One pose of the five used to
+        // refuse its whole face list at a **planar** face's corner the two planes meeting there do not
+        // determine — a band's flat end standing square to the very edge the loft's own cap carries, so the
+        // two cross that wall in one and the same line — and which pose got it was a fact about the
+        // re-meshing and not about the body. All five are named now.
+        assertEquals(poses.size, named, "every pose of the bored pivot is named: $named of ${poses.size}")
         assertTrue(onThePipe > 0, "and the pivot's own face survives the bore as a piece of its pipe in at least one pose")
         // …and the **boss** route: the same corner, the same carrier, a union rather than a difference
         val cx = Construction()
@@ -585,6 +651,52 @@ class BoolCanalCarrierTest {
         val fs = assertNotNull(Section3.faces(fused.feature).first, "the fused pivot names its faces")
         assertTrue(fs.any { it.pipe != null }, "the pivot's canal survives the union as a face of its own")
         println("canal carrier | pivot | $named poses named, $onThePipe of them keeping the pipe, and the boss route with ${fs.size} faces")
+    }
+
+    /**
+     * **A trim corner is a fact about the body and not about the pose** (OP-31, slice 5t) — the corner two
+     * planes cross one face in *one and the same line* at, read off the body itself.
+     *
+     * *The case, measured rather than supposed.* On the bored pivot turned 30° about `y`, the wall between
+     * the loft's sections at edge #2 has a boundary corner whose two neighbours are the **flat end** of the
+     * band along edge #15 and the loft's own top face. The plan turns a right angle there, so that cap —
+     * square to its own crease by construction — contains the top face's own edge line exactly: the two
+     * planes cut this wall along the same line and fix no point on it at all. In four of the five poses the
+     * engine's re-meshing left a sliver of the band itself between the two runs and the corner was an
+     * ordinary triple point; in the fifth it did not, and the whole face list was refused. Which is a fact
+     * about the mesh, and OP-21 does not let a fact about the body turn on one.
+     *
+     * *What this asserts.* The pose that provoked it names every face, and the wall's own trim is the
+     * **same trim** as in the pose that never had the trouble: the outline's area in the face's own plane
+     * agrees between the two poses, which is the whole of what *"the corner is the body's"* means.
+     */
+    @Test
+    fun aTrimCornerTwoPlanesCrossInOneLineIsStillTheBodys() {
+        requireEngine()
+        val poses =
+            listOf(
+                "XY" to Plane3(Vec3.ZERO, Vec3.X, Vec3.Y),
+                "turned 30° about y" to Plane3(Vec3.ZERO, Vec3(cos(PI / 6), 0.0, -sin(PI / 6)), Vec3.Y),
+            )
+        val areas = ArrayList<Double>()
+        for ((what, plane) in poses) {
+            val cx = Construction()
+            val (ref, v) = pivotBody(cx, plane) ?: return
+            val bored = Evaluator().solid(cx.subtract(ref, drill(cx, plane, plane.toLocal(v), 2.0)))
+            assertManifold(bored.mesh, "the bored pivot on $what")
+            val (fs, why) = Section3.faces(bored.feature)
+            val faces = assertNotNull(fs, "the bored pivot on $what names its faces: ${why?.render()}")
+            val wall =
+                assertNotNull(
+                    faces.firstOrNull { it.name.label.render().contains("at edge #2") && it.plane != null },
+                    "the wall at edge #2 is a face of the result on $what",
+                )
+            assertTrue(wall.outline.isNotEmpty(), "…stating its own trim on $what")
+            val area = abs(GeomMath.signedArea(constructit.geom.Loop(wall.outline)))
+            areas.add(area)
+            println("canal carrier | one-line corner | $what | ${faces.size} faces | wall area $area | fitted ${wall.fitted}")
+        }
+        assertClose(areas[1], areas[0], tol = 1e-2, msg = "the wall's own trim is the same trim in both poses")
     }
 
     // ---- (d) every pose ----

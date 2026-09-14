@@ -236,6 +236,34 @@ class BoolBevelStripCarrierProbeTest {
         assertNotNull(through, "the level section through the bored corner closes: ${wt?.render()}")
     }
 
+    /**
+     * **The tight bend, bored through its band** — the canal whose cap step slice 5l learned to state, and a
+     * bore across it: every face named, and the vertical plane at x = 38 that used to break at the canal's flat
+     * end closes on the bored body too, as does the level plane through the bands.
+     */
+    @Test
+    fun theTightBendBoredThroughItsBandIsNamedAndItsVerticalSectionCloses() {
+        requireEngine()
+        val cx = Construction()
+        val tight = dressedMitre(cx, BlendKind.FILLET, 2.5)
+        val plain = Evaluator().solid(tight)
+        assertManifold(plain.mesh, "the tight bend")
+        val (before, wb) = Section3.regionsOf(plain.feature, Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z))
+        val areaBefore = regionArea(assertNotNull(before, "the tight bend's vertical section at x = 38 closes: ${wb?.render()}"))
+        val bored = Evaluator().solid(cx.subtract(tight, drill(cx, Vec2(38.0, 27.0), 1.5)))
+        assertManifold(bored.mesh, "the tight bend bored through its band")
+        val fs = facesNamed(bored, "the tight bend bored through its band")
+        assertTrue(fs.any { it.pipe != null && it.outline.isNotEmpty() }, "the canal band is still a named face")
+        val labels = fs.filter { it.outline.isNotEmpty() || it.plane != null }.map { it.name.label.render() }
+        assertEquals(labels.size, labels.toSet().size, "every face has a name of its own")
+        val (after, wa) = Section3.regionsOf(bored.feature, Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z))
+        val areaAfter = regionArea(assertNotNull(after, "the bored tight bend's vertical section at x = 38 closes: ${wa?.render()}"))
+        // the bore's axis stands in this very plane, so its trace is the 3 mm wide strip down the body's height
+        assertTrue(areaAfter < areaBefore - 3.0 * 15.0 && areaAfter > areaBefore - 3.0 * height - 1.0, "the bore takes its own strip out of the vertical section: $areaBefore -> $areaAfter")
+        val (level, wl) = Section3.regionsOf(bored.feature, Plane3(Vec3(0.0, 0.0, 17.5), Vec3.X, Vec3.Y))
+        assertNotNull(level, "the level section through the bands and the bore closes: ${wl?.render()}")
+    }
+
     @Test
     fun aBevelledBodyBoredTwiceStillNamesItsStrip() = boredTwice(BlendKind.CHAMFER, 1.0, "the bevelled mitre")
 

@@ -1423,6 +1423,8 @@ internal object BoolFace3 {
         }
 
         // ---- 4. every face's outline, and with it every crease ----
+        // **why a corner could not be read, in the words of the faces that meet at it** (OP-31, slice 5t).
+        val cornerNotes = ArrayList<Msg>()
         val patches = ArrayList<FacePatch>(order.size)
         val runsOf = ArrayList<List<Run>>(order.size)
         for ((slot, pi) in order.withIndex()) {
@@ -1445,9 +1447,9 @@ internal object BoolFace3 {
             }
             val self = slotCarrier[slot] ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
             val built =
-                outlineOf(mesh, pieces[pi], pieceOf, slotOfPiece, slotCarrier, self, owner, tol, operandEdges)
+                outlineOf(mesh, pieces[pi], pieceOf, slotOfPiece, slotCarrier, self, owner, tol, operandEdges, atVertex, cornerNotes)
                     ?: return null to (
-                        if (self.plane != null) {
+                        cornerNotes.firstOrNull() ?: if (self.plane != null) {
                             Msgs.refusalSectionBoolCornerNotDetermined()
                         } else {
                             Msgs.refusalSectionBoolTrimNotDetermined(name = names[slot].label)
@@ -1785,6 +1787,8 @@ internal object BoolFace3 {
         owner: Map<Long, Int>,
         tol: Double,
         edges: List<List<SolidEdge>>,
+        atVertex: Map<Int, List<Int>>,
+        notes: MutableList<Msg>,
     ): Triple<List<ProfileElement>, List<Run>, Double?>? {
         val mine = piece.tris.toHashSet()
         val out = HashMap<Int, MutableList<IntArray>>()
@@ -1817,7 +1821,7 @@ internal object BoolFace3 {
                     if (at == first) break
                 }
                 if (at != first || loop.size < 3) return null
-                val made = runsOfLoop(mesh, loop, slotCarrier, self, tol, edges) ?: return null
+                val made = runsOfLoop(mesh, loop, slotCarrier, self, tol, edges, atVertex, pieceOf, slotOfPiece, notes) ?: return null
                 outline.addAll(made.second)
                 runs.addAll(made.first)
                 made.third?.let { w -> fitted = max(fitted ?: 0.0, w) }
@@ -1835,6 +1839,10 @@ internal object BoolFace3 {
         self: Carrier,
         tol: Double,
         edges: List<List<SolidEdge>>,
+        atVertex: Map<Int, List<Int>>,
+        pieceOf: IntArray,
+        slotOfPiece: IntArray,
+        notes: MutableList<Msg>,
     ): Triple<List<Run>, List<ProfileElement>, Double?>? {
         val m = loop.size
         // start the walk at a run boundary, and at the one with the smallest canonical vertex, so which
@@ -1877,9 +1885,28 @@ internal object BoolFace3 {
                     return null
                 } else if (self.plane != null && prev.plane != null && next.plane != null) {
                     // the planar route, kept verbatim so that item 4's own numbers do not move a bit
-                    val la = creaseLine(self.plane, prev.plane) ?: return null
-                    val lb = creaseLine(self.plane, next.plane) ?: return null
-                    self.plane.toWorld(cross2(la, lb) ?: return null)
+                    val la = creaseLine(self.plane, prev.plane)
+                    val lb = creaseLine(self.plane, next.plane)
+                    val cut = if (la != null && lb != null) cross2(la, lb) else null
+                    if (cut != null) {
+                        self.plane.toWorld(cut)
+                    } else {
+                        // **a trim corner is a fact about the body and not about the pose** (OP-31, slice
+                        // 5t). Two neighbours may cross this face in **one and the same line** — a band's
+                        // flat end standing square to the very edge the next face carries, which is the
+                        // ordinary shape of a right-angled plan corner — and then the pair of planes fixes
+                        // no point at all: the corner lies *somewhere* on that line. Which pose the body
+                        // stands in decides only whether the engine's re-meshing kept a sliver of the third
+                        // face between the two runs, so a reading that gave up here made a fact about the
+                        // body depend on the pose, which OP-21 forbids of structure.
+                        val found = bodyCorner(self, prev, next, groups[(k + 1) % g][1], vertex, atVertex, pieceOf, slotOfPiece, slotCarrier)
+                        if (found == null) {
+                            notes.add(Msgs.refusalSectionBoolCornerOnNoVertex(name = prev.name.label, name2 = next.name.label))
+                            return null
+                        }
+                        found.second?.let { w -> tangentCorner = max(tangentCorner ?: 0.0, w) }
+                        found.first
+                    }
                 } else {
                     // **a corner where two of the three carriers run tangent** (OP-31, slice 5l). A canal
                     // band's two rails *are* its tangencies with the walls it rolls on — that is what a
@@ -1945,6 +1972,60 @@ internal object BoolFace3 {
         }
         tangentCorner?.let { w -> fitted = max(fitted ?: 0.0, w) }
         return Triple(runs, drawn, fitted)
+    }
+
+    /**
+     * **A trim corner the two faces beside it do not fix, read off the body itself** (OP-31, slice 5t).
+     *
+     * *What the case is.* Every corner of a face's trim is normally where **three** carriers meet, and for
+     * three planes that is one exact point. Two neighbours may instead cross this face in *one and the same
+     * line*: a band's flat end stands square to its own crease, and where the plan turns a right angle that
+     * cap contains the next face's own edge line exactly. The pair then fixes no point — the corner lies
+     * somewhere along that line — and which pose the body stands in decides only whether the re-meshing
+     * left a sliver of the third face between the two runs. A corner is a fact about the body, so it is
+     * read from the body.
+     *
+     * *Two readings, in this order.* Where a **third** face really meets at that vertex — every carrier
+     * with a triangle of its own at it — the corner is the point the three surfaces share, solved exactly
+     * and scored against the vertex like every other branch choice in this drawing (OP-1); the nearest such
+     * point wins and nothing is fitted. Where none does, the corner is where the trim's two runs meet and
+     * the only thing that states it is the piece's own triangle: the vertex pulled onto whichever of the
+     * two creases is determined, or onto this carrier's own surface, with how far it stood carried as the
+     * face's own fitted tolerance — the same reading [roundOrientedTrim] makes of a sliver's sense.
+     *
+     * Null where the body has no vertex there either, which the caller refuses by naming the two faces.
+     */
+    private fun bodyCorner(
+        self: Carrier,
+        prev: Carrier,
+        next: Carrier,
+        vi: Int,
+        vertex: Vec3,
+        atVertex: Map<Int, List<Int>>,
+        pieceOf: IntArray,
+        slotOfPiece: IntArray,
+        slotCarrier: List<Carrier?>,
+    ): Pair<Vec3, Double?>? {
+        val third = ArrayList<Carrier>()
+        for (t in atVertex[vi] ?: emptyList()) {
+            val slot = slotOfPiece.getOrNull(pieceOf.getOrNull(t) ?: -1) ?: continue
+            val c = slotCarrier.getOrNull(slot) ?: continue
+            if (c === self || c === prev || c === next) continue
+            if (!carried(c)) continue
+            if (third.none { it === c }) third.add(c)
+        }
+        var best: Vec3? = null
+        for (c in third) {
+            for (other in listOf(prev, next)) {
+                val p = triplePoint(self, other, c, vertex) ?: continue
+                if (best == null || (p - vertex).length() < (best!! - vertex).length()) best = p
+            }
+        }
+        best?.let { return it to null }
+        val fitted =
+            listOfNotNull(ontoCrease(self, prev, vertex), ontoCrease(self, next, vertex), ontoSurface(self, vertex))
+                .minByOrNull { (it - vertex).length() } ?: return null
+        return fitted to (fitted - vertex).length()
     }
 
     /** A boundary loop that faces **one** neighbour all the way round — a closed crease, and no corners. */
@@ -2892,7 +2973,7 @@ internal object BoolFace3 {
                 val th2 = th0 + thSpan * (i + 1) / thSteps
                 val t = t0 + tSpan * j / tSteps
                 val t2 = t0 + tSpan * (j + 1) / tSteps
-                val hits = ArrayList<Vec3>()
+                val hits = ArrayList<Pair<Vec2, Vec3>>()
                 for ((p, q) in listOf(Vec2(th, t) to Vec2(th2, t), Vec2(th2, t) to Vec2(th2, t2), Vec2(th2, t2) to Vec2(th, t2), Vec2(th, t2) to Vec2(th, t))) {
                     val a = chart.at(p.x, p.y) ?: continue
                     val b = chart.at(q.x, q.y) ?: continue
@@ -2900,15 +2981,53 @@ internal object BoolFace3 {
                     val db = cut.distanceTo(b)
                     if (da == 0.0 || (da < 0.0) != (db < 0.0)) {
                         val f = if (da == db) 0.0 else da / (da - db)
-                        val w = a + (b - a) * f
-                        val mid = p + (q - p) * f
-                        if (chart.contains(mid)) hits.add(w)
+                        hits.add((p + (q - p) * f) to (a + (b - a) * f))
                     }
                 }
-                if (hits.size >= 2) segs.add(cut.toLocal(hits[0]) to cut.toLocal(hits[1]))
+                if (hits.size < 2) continue
+                // **a marched cut ends on the face's own trim and not at the last cell inside it** (OP-31,
+                // slice 5l, probed). The grid is the *reader's* and the trim is the *body's*: a cell whose
+                // crossing stands outside the trim used to be dropped whole, so the run stopped as much as
+                // one cell short of the boundary it has to meet — a tenth of a millimetre on a bored canal
+                // band, against a trim tolerance a tenth that size, and the section could not chain onto
+                // the very cap it ends at. Where one of a cell's two crossings is on the face and the other
+                // is not, the chord is **clipped** to the boundary between them: the parameter is bisected
+                // on the face's own `contains`, and the point is taken along the chord, which lies in the
+                // cutting plane by construction because both its ends do.
+                val a = hits[0]
+                val b = hits[1]
+                val inA = chart.contains(a.first)
+                val inB = chart.contains(b.first)
+                if (!inA && !inB) continue
+                val from = if (inA) a else onTrim(chart, a, b)
+                val to = if (inB) b else onTrim(chart, b, a)
+                if ((from.second - to.second).length() <= Vec3.EPS) continue
+                segs.add(cut.toLocal(from.second) to cut.toLocal(to.second))
             }
         }
         return chainSegs(segs)
+    }
+
+    /**
+     * The point where the chord from [outside] to [inside] crosses the face's own trim — see [marched].
+     *
+     * Bisected on the face's own `contains` rather than solved: a trim is a chain of pieces in the chart and
+     * the predicate is what states it, so this is the very reading [refine] makes of an exact curve, said of
+     * a chord. The world point is taken **along the chord**, which lies in the cutting plane because both of
+     * its ends do.
+     */
+    private fun onTrim(
+        chart: Patch,
+        outside: Pair<Vec2, Vec3>,
+        inside: Pair<Vec2, Vec3>,
+    ): Pair<Vec2, Vec3> {
+        var lo = 0.0
+        var hi = 1.0
+        repeat(40) {
+            val mid = (lo + hi) / 2.0
+            if (chart.contains(outside.first + (inside.first - outside.first) * mid)) hi = mid else lo = mid
+        }
+        return (outside.first + (inside.first - outside.first) * hi) to (outside.second + (inside.second - outside.second) * hi)
     }
 
     /** Loose chords chained into runs — the same walk [Revolve3] does for a band it can only sample. */

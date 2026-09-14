@@ -7879,7 +7879,12 @@ object Blend3 {
         faces: List<FacePatch>,
         trimmed: List<FacePatch>,
     ): List<Notch> {
-        val pieces = piecesOf(f) ?: return emptyList()
+        // **the same sentence said for a canal** (OP-31, slice 5l): a canal's free-end cap runs out past the
+        // end of the band it rolls on, onto the face that band is tangent to, and the step the tool took
+        // there is the body's — see [canalCapSteps]. Asked first, because a canal band owns no [Piece] at
+        // all and the rigid-section walk below has nothing to say about it.
+        val canalSteps = canalCapSteps(trimmed, canalsOf(f))
+        val pieces = piecesOf(f) ?: return canalSteps
         val claimed = HashSet<Pair<Int, Boolean>>()
         for (c in cornersOf(pieces).list) claimed.addAll(c.ends)
         val out = ArrayList<Notch>()
@@ -7907,11 +7912,11 @@ object Blend3 {
                             if (n is EdgeName.BlendCornerRail && n.edges == mine && n.piece == leg) 0 else null
                         }[0]
                     }
-                spliceInto(faces, trimmed, c.walkFace, at, pieces[c.travelling], byLeg.map { it.second }, widths = widths)?.let { out.add(it) }
+                spliceInto(faces, trimmed, c.walkFace, at, pieces[c.travelling].crease.edge, pieces[c.travelling].sec, byLeg.map { it.second }, widths = widths)?.let { out.add(it) }
             }
             if (c is Pivot) {
                 c.capChain(pieces, hand)?.let { (chain, tol) ->
-                    spliceInto(faces, trimmed, c.third, c.at, pieces[c.a], chain, tol)?.let { out.add(it) }
+                    spliceInto(faces, trimmed, c.third, c.at, pieces[c.a].crease.edge, pieces[c.a].sec, chain, tol)?.let { out.add(it) }
                 }
             }
         }
@@ -7940,6 +7945,117 @@ object Blend3 {
                 // material past the flat cap — see [capStep].
                 out.addAll(capSteps(faces, trimmed, piece, at, away.normalized(), frame))
                 out.add(notchAt(faces, piece, at, away.normalized(), atStart, pieces, frame) ?: continue)
+            }
+        }
+        out.addAll(canalSteps)
+        return out
+    }
+
+    /**
+     * **The step a canal's own flat cap leaves in the face its leg has run out onto** (OP-31, slice 5l) —
+     * [capSteps]' sentence said for a canal, in the same seam, so that one rule serves both.
+     *
+     * *What the body has, and what the drawing said.* A canal's tool ends a free run one step-off past the
+     * last station ([canalGrow]: a tool never shares a face with the body, and a canal's walls are curved,
+     * so the step is the walls' own skin and not a micron). Over that last stretch the ring is the section
+     * **translated**, so each of its two legs sweeps a flat strip across whatever face the wall it lies on
+     * runs tangent onto past its own end — the flat wall a round is tangent to, where the crease ends at
+     * the body's own corner. The body is cut there by exactly that step-off; the drawing stated the face
+     * whole, so a vertical plane through the tight bend met the cap's own cut a step-off away from the wall
+     * it should have joined and the loop was open by 0.0401 mm.
+     *
+     * *The rule, and it is [capStep]'s one carrier over.* Asked at **every** free end a canal keeps a cap
+     * at, and answered only by the faces that really carry material past it: the face the leg has run onto
+     * is the one whose own plane carries the station's tangency, the leg's carried end **and** the carried
+     * apex alike, which is the whole of what *"the band runs tangent onto it there"* means. Its trace is
+     * the cap plane against that face — one straight segment on a plane wall, exact — and the chain spliced
+     * in is the rail the tool's own step laid beside it, from the tangency the station has to the tangency
+     * the cap has, then that segment to the corner. [spliceInto]'s own arithmetic does the rest, and the
+     * sign is left to the geometry exactly as it is for a pivot's cap.
+     *
+     * *And where the step is owed and cannot be written down, the face says so.* The one case is a face the
+     * leg runs onto whose own outline has **no corner** where the crease ends — a wall whose boundary there
+     * is a tangency rather than a corner, which is a body this drawing does not build today. It refuses by
+     * name (`refusal.blend.canalCapStepNotStated`) rather than keep a boundary the body has not got (OP-3).
+     */
+    private fun canalCapSteps(
+        trimmed: List<FacePatch>,
+        canals: List<Canal>,
+    ): List<Notch> {
+        val out = ArrayList<Notch>()
+        for (canal in canals) {
+            if (canal.closed || canal.stations.size < 2 || canal.grow <= Geom3.WELD_TOL) continue
+            for (atStart in listOf(true, false)) {
+                val st = if (atStart) canal.stations.first() else canal.stations.last()
+                if (st.tip) continue
+                val dir = st.t * (if (atStart) -canal.grow else canal.grow)
+                val apex = st.world(st.apex)
+                val tip = apex + dir
+                // how near a point must stand to a face to be **on** it here: the spine's own solve is
+                // stated to the canal's fitting tolerance and the tangency is read on it (OP-31, Tier B)
+                val near = max(canal.fitted, CANAL_FIT_TOL_MM)
+                for (side in 0..1) {
+                    val foot = if (side == 0) st.p1 else st.p2
+                    val toe = foot + dir
+                    val wall = (if (side == 0) canal.w1 else canal.w2).patch.name
+                    // **the face the leg has run onto**, and there is at most one: the face whose own plane
+                    // carries the station's tangency, the leg's carried end and the carried apex alike.
+                    // Where the leg runs out onto no face of this body at all — a free end standing clear
+                    // in the air — nothing is owed and nothing is said.
+                    val patch =
+                        trimmed.firstOrNull { p ->
+                            p.name != wall && p.name != canal.name && (p.name as? FaceName.BlendCap)?.edge != canal.index &&
+                                p.reason == null && p.outline.isNotEmpty() &&
+                                p.plane?.let { pl -> listOf(foot, toe, tip).all { q -> abs(pl.distanceTo(q)) <= near } } == true
+                        } ?: continue
+                    val plane = patch.plane ?: continue
+                    // the corner the chain stands at is the face's **own**, and the crease's end is where it
+                    // is: the station's apex stands on it to the spine's own tolerance and no nearer
+                    val v = plane.toLocal(apex)
+                    // …and it is the **nearest** corner of that face, accepted where it stands nearer to the
+                    // crease's end than the leg's own tangency does: a station is solved and stands off the
+                    // body's own corner by the spine's own tolerance, and no other corner of the face can
+                    // be inside the setback the section itself states
+                    val reach = (plane.toLocal(foot) - v).length()
+                    val corner = patch.outline.map { GeomMath.startOf(it) }.minByOrNull { (it - v).length() }?.takeIf { (it - v).length() < reach }
+                    // …and each end of the chain is handed over **past** the boundary it meets, which is what
+                    // a bulge's two ends lying on the neighbours' own carriers means ([spliceInto]): a
+                    // station is solved and its tangency stands off the face's own boundary by the spine's
+                    // tolerance, so a chain that stopped *at* it would miss the crossing by that much
+                    val f2 = plane.toLocal(foot)
+                    val t2 = plane.toLocal(toe)
+                    val a2 = plane.toLocal(tip)
+                    val chain =
+                        if ((t2 - f2).length() <= Vec2.EPS || (a2 - t2).length() <= Vec2.EPS) {
+                            emptyList()
+                        } else {
+                            listOf(
+                                ProfileElement.Seg(Segment(f2 + (f2 - t2), t2)),
+                                ProfileElement.Seg(Segment(t2, a2 + (a2 - t2).normalized() * canal.grow)),
+                            )
+                        }
+                    // …and the piece's own tolerance is the tool's **stated step**: that is how far the
+                    // body's own facets may stand from this trace, and the section that chains onto it is
+                    // entitled to know (OP-31, Tier B)
+                    val made =
+                        if (corner == null || chain.isEmpty()) {
+                            null
+                        } else {
+                            spliceInto(trimmed, trimmed, patch, plane.toWorld(corner), canal.edge, canal.sec, chain, fitted = canal.grow)
+                        }
+                    out.add(
+                        made ?: Notch(
+                            canal.edge,
+                            canal.sec,
+                            trimmed.indexOfFirst { it.name == patch.name },
+                            0,
+                            0,
+                            v,
+                            chain,
+                            reason = Msgs.refusalBlendCanalCapStepNotStated(name = canal.edge.name.label, name2 = patch.name.label),
+                        ),
+                    )
+                }
             }
         }
         return out
@@ -8014,7 +8130,7 @@ object Blend3 {
         // **square to the crease means nothing is owed**: the body has no material past the cap there, and
         // the strip the band took is already the boundary the body has
         if (abs(other.dot(d)) <= TANGENT_TOL) return null
-        return spliceInto(faces, trimmed, patch, at, piece, listOf(ProfileElement.Seg(Segment(head, v))))
+        return spliceInto(faces, trimmed, patch, at, piece.crease.edge, piece.sec, listOf(ProfileElement.Seg(Segment(head, v))))
     }
 
     /**
@@ -8065,7 +8181,8 @@ object Blend3 {
         trimmed: List<FacePatch>,
         face: FacePatch,
         at: Vec3,
-        piece: Piece,
+        edge: SolidEdge,
+        sec: BlendSection,
         plainChain: List<ProfileElement>,
         fitted: Double? = null,
         widths: List<Double>? = null,
@@ -8082,14 +8199,14 @@ object Blend3 {
             } else {
                 insetChain(plainChain, v, widths)
                     ?: return Notch(
-                        piece.crease.edge,
-                        piece.sec,
+                        edge,
+                        sec,
                         index,
                         0,
                         0,
                         v,
                         plainChain,
-                        reason = Msgs.refusalBlendSplicedStripNotStated(name = patch.name.label, name2 = piece.crease.edge.name.label),
+                        reason = Msgs.refusalBlendSplicedStripNotStated(name = patch.name.label, name2 = edge.name.label),
                     )
             }
         val before = patch.outline.indices.filter { (GeomMath.endOf(patch.outline[it]) - v).length() <= SAME_CURVE_TOL }
@@ -8102,8 +8219,8 @@ object Blend3 {
         val ring = trimmed.getOrNull(index)?.outline?.takeIf { it.size == patch.outline.size } ?: patch.outline
         val forwards = offCarrier(ring[before[0]], head) <= offCarrier(ring[after[0]], head)
         return Notch(
-            piece.crease.edge,
-            piece.sec,
+            edge,
+            sec,
             index,
             before[0],
             after[0],

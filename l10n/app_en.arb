@@ -19261,6 +19261,30 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean cannot name its own faces: one corner of one result face is not fixed by the planes that meet there, so an exact outline cannot be written down and the program refuses rather than rounding it off.",
     "x-translated": "8d4dabb8"
   },
+  "refusal.blend.canalCapStepNotStated": "the rounding along {name} ends in a flat cap whose own leg runs out onto {name2}, and the step it leaves in that face cannot be written down here — the face is left without a boundary rather than keeping one the body has not got",
+  "@refusal.blend.canalCapStepNotStated": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about rounding an edge of a solid (a fillet or a chamfer). A rounding that runs along a curved crease is cut by a ball-shaped tool, and at a free end the tool stops one small step past the last position it was solved at, so it cuts that much into the neighbouring face {name2}; that cut has to be added to the outline of {name2}, and here it could not be, because the outline has no corner where the crease ends. {name} is the edge being rounded. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolCornerOnNoVertex": "the flat face's corner where {name} meets {name2} is not fixed by them — the two cross this face in one and the same line — and the body has no vertex of its own there either, so the outline cannot be stated and its faces are left unnamed rather than approximated",
+  "@refusal.section.boolCornerOnNoVertex": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why the result of a general boolean cannot name its own faces: at one corner of one flat face the two neighbouring faces {name} and {name2} are parallel there, so they cut this face along a single shared line instead of crossing at a point, and no vertex of the solid's own triangle mesh stands there to say where along that line the corner is. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      },
+      "name2": {
+        "type": "message"
+      }
+    }
+  },
   "refusal.section.boolFaceAbsentInOperand": "the {which, select, a{first} b{second} other{first}} operand has no such face itself — {reason} — so there is nothing of it on this body either",
   "@refusal.section.boolFaceAbsentInOperand": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why one entry in the face list of a general boolean's result has no surface: the solid that went into the boolean had no such face itself (for example a rounding's flat end that a corner closed instead), and {reason} is that solid's own explanation, itself a whole sentence. The entry stays in the list so that positions in it never shift. {which} selects which of the two solids the boolean was given: \"a\" for the first, \"b\" for the second. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
