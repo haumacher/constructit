@@ -10,6 +10,7 @@ import constructit.dsl.solid
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
 import constructit.geom.BlendSection
+import constructit.geom.BoolFace3
 import constructit.geom.EdgeName
 import constructit.geom.FaceName
 import constructit.geom.Feature3
@@ -26,6 +27,7 @@ import constructit.units.Quantity
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.tan
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -266,6 +268,100 @@ class BlendCornerCanalTest {
         assertEquals(1, corner.size, "one corner face")
         assertTrue(assertNotNull(corner[0].reason, "it says what it is").render().contains("canal"), "the ball's own canal")
         assertBothRoutesAgree({ c -> turned(c) }, pair, 2.0, "the revolve's ring upright")
+    }
+
+    /**
+     * **A pivot's tool states the runs its section is assembled from, and names the one it cannot**
+     * (OP-31, slice 5u).
+     *
+     * The slice in one assertion, and it is three claims about the same list. (1) *The map is the section's
+     * own*: the tool's face list is the corner section's **runs** — the leg in the shared face, the two jogs
+     * either side of the fourth side, the fourth side, the near leg, the jog onto the ball's contact, the
+     * three chords of the arc's fade, the arc, the jog home and the two caps — so a turn carries a dozen
+     * faces where the polygon has `2·legSteps + arcSteps + 1` chords, which on this pivot is fifty-nine. The
+     * sixty-carrier reading is exactly what slice 5w built, measured at ten minutes for the suite, and
+     * refused. (2) *A whole leg is one surface, exactly*: the leg lying in the shared face is that face's own
+     * plane **translated**, same normal, a step off it, and every one of its points stands on it — asked
+     * here of the plane rather than of the points. (3) *And what is not stated says so*: the list is not the
+     * tool's whole boundary ([BoolProvenance.whole]), which is what lets the tool state the rest of itself
+     * instead of throwing all of it away at the first unnamed chord — and every triangle whose slot does
+     * name a surface really stands on it.
+     */
+    @Test
+    fun aPivotsToolStatesItsRunsAndNamesTheOneItCannot() {
+        val cx = Construction()
+        val base = turned(cx)
+        val (pair, _) = turnPair(Evaluator().solid(base), 20.0)
+        val shared = facesOf(Evaluator().solid(base)).mapNotNull { it.plane }
+        var tool: Feature3.MeshBoolean? = null
+        var tris = 0
+        var mesh: constructit.geom.Mesh3? = null
+        Geom3.combined = { _, _, b ->
+            val f = b.feature
+            if (f is Feature3.MeshBoolean && f.provenance?.faces?.any { it.name is FaceName.BlendCorner } == true) {
+                tool = f
+                tris = b.mesh.triangles.size
+                mesh = b.mesh
+            }
+        }
+        val (ref, why) =
+            try {
+                round(cx, base, pair, 2.0)
+            } finally {
+                Geom3.combined = null
+            }
+        assertNotNull(ref, "the ring pivot builds: $why")
+        val t = assertNotNull(tool, "the pivot hands its tool to the kernel and the tool names faces")
+        val prov = assertNotNull(t.provenance, "…and states a provenance of its own")
+        val faces = prov.faces
+        println("== pivot tool: $tris triangles, ${faces.size} faces, whole=${prov.whole}")
+        for (p in faces) println(
+            "   ${p.name} :: ${if (p.plane != null) {
+                "plane"
+            } else if (p.surface != null) {
+                "surface"
+            } else if (p.pipe != null) {
+                "pipe"
+            } else if (p.strip != null) {
+                "strip"
+            } else {
+                "no carrier"
+            }}",
+        )
+        assertTrue(faces.size in 8..16, "the run map's faces and not one per chord: ${faces.size}")
+        assertTrue(!prov.whole, "the list is not the tool's whole boundary, and says so")
+        assertTrue(faces.count { it.strip != null } >= 4, "the jogs are the ruled strips they are: ${faces.count { it.strip != null }}")
+        assertTrue(faces.any { it.plane == null && it.surface == null && it.pipe == null && it.strip == null }, "the run it cannot name says so")
+        // (2) the leg in the shared face **is** that face's plane, translated
+        val legs =
+            faces.filter { p -> p.plane != null && p.name is FaceName.BlendCorner }
+                .mapNotNull { p ->
+                    val pl = p.plane!!
+                    shared.firstOrNull { f ->
+                        abs(abs(f.normal.normalized().dot(pl.normal.normalized())) - 1.0) <= 1e-12 &&
+                            abs((pl.origin - f.origin).dot(f.normal.normalized())) in 1e-9..2.0
+                    }?.let { f -> (pl.origin - f.origin).dot(f.normal.normalized()) }
+                }
+        assertTrue(legs.isNotEmpty(), "the shared face's leg is that face translated: ${faces.mapNotNull { it.plane?.normal }}")
+        println("== the shared face's leg stands ${legs.joinToString()} mm off the body's own face")
+        // (3) every triangle whose slot names a surface really stands on it
+        val m = assertNotNull(mesh, "the tool's mesh")
+        var scale = 1.0
+        for (v in m.vertices) scale = max(scale, max(abs(v.x), max(abs(v.y), abs(v.z))))
+        val tol = max(1e-6, 64.0 * 1.1920929e-7 * scale)
+        var stray = 0
+        var carried = 0
+        for (tri in m.triangles) {
+            val vs = listOf(m.vertices[tri.a], m.vertices[tri.b], m.vertices[tri.c])
+            val on =
+                faces.filter { it.plane != null || it.surface != null || it.pipe != null || it.strip != null }
+                    .any { p -> vs.all { abs(BoolFace3.offSurface(p, it)) <= tol + p.slack } }
+            if (on) carried++ else stray++
+        }
+        println("== $carried of ${m.triangles.size} triangles stand on a surface the tool names, $stray on the runs it cannot name")
+        // measured: 8,420 of 10,186, which is the arc's fade, the two legs' jogs, the fourth side, the
+        // two caps and the whole of the leg in the shared face; what is left is the near leg and the arc
+        assertTrue(carried > 2 * m.triangles.size / 3, "most of the tool stands on a surface it names: $carried of ${m.triangles.size}")
     }
 
     // ---- (b) the section, and what the corner still owes the loft ----

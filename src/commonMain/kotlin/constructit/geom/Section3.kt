@@ -1149,7 +1149,23 @@ data class FacePatch(
  * [Section3.boolProvenance], from the two operand features and the mesh the engine handed back, and it is a
  * pure function of them (OP-4) — the same drawing gives the same faces in the same order on every run.
  */
-data class BoolProvenance(val faces: List<FacePatch>, val edges: List<SolidEdge>)
+data class BoolProvenance(
+    val faces: List<FacePatch>,
+    val edges: List<SolidEdge>,
+    /**
+     * Whether [faces] is this body's **whole** boundary (OP-31, slice 5u).
+     *
+     * True for every result [boolProvenance] assembles, which is what that assembly refuses to hand back a
+     * list without. False for the one producer that states *some* of what it is made of and says so: a
+     * blend's **tool**, whose lofted section has a run this drawing cannot name a surface for
+     * ([Blend3]'s own run map). Such a tool may still be *read* — a tangency between two named surfaces is
+     * decided by what they are ([ToolStep.untangled]), and it needs only the faces that are named — but it
+     * may not be **traced** against, because a triangle standing on the run that is unnamed would be traced
+     * to whichever other face came nearest, which is a measurement pretending to be a statement. So a
+     * boolean made with it stays mesh-only with exactly the sentence it has always had.
+     */
+    val whole: Boolean = true,
+)
 
 /**
  * **Which kind of thing one recorded shared slot holds** (OP-31, slice 5g) — the three a corner puts on a
@@ -1511,7 +1527,7 @@ object Section3 {
             // every triangle of the result was traced to one of them, which is what [Section3.boolProvenance]
             // refuses to hand back a list without — so its section may be assembled from them and comes out
             // exact rather than as chords (OP-31, item 4).
-            is Feature3.MeshBoolean -> feature.provenance != null
+            is Feature3.MeshBoolean -> feature.provenance?.whole == true
             is Feature3.Imported -> false
             is Feature3.Sweep -> false
             // **False for a skin, and that is the honesty line rather than a gap.** Its faces are named and

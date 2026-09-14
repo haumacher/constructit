@@ -4853,6 +4853,26 @@ object Blend3 {
      * a canal's five hundred stations it costs a pipe solve per vertex. What the *suite* asserts is the
      * statement itself, over the matrix's own tools (`ToolProvenanceTest`): every triangle of every tool
      * stands on one of the surfaces its tool names.
+     *
+     * **A tool may state most of its faces and name the rest unstated** (OP-31, slice 5u) — the rule slice
+     * 5w wrote the other way round, and it was the wrong way round.
+     *
+     * Slice 5w refused a tool's whole provenance on the **first** chord it could not name a surface for, on
+     * the argument that a face list which is not true of its mesh is worse than none. That argument holds
+     * for what a list is *traced* against and for nothing else: a triangle filed under a face it does not
+     * lie on would make a boolean's result wrong. It does not hold for what a list is *read* — and the one
+     * reader a tool's list has is [ToolStep.untangled], which asks *"are these two named surfaces tangent"*
+     * of the faces that are named and of no others. Under the old rule a pivot's tool threw away its pipe,
+     * its two caps, the leg lying in the shared face and the fourth side because **one** run of its section
+     * — the near leg, stepped out of the body through every face it comes up to — is no surface of this
+     * drawing; so the predicate that was built to decide its tangency was handed one side and could not be
+     * asked.
+     *
+     * So a tool now states what it can and says that the list is not its **whole** boundary
+     * ([BoolProvenance.whole]), which is a fact this drawing already carries for a prism. Every reader that
+     * traces asks that question first ([Section3.facesAreWholeBoundary]), so a boolean made with such a tool
+     * is mesh-only in exactly the words it was before this slice, and nothing that builds today moves; what
+     * changes is that the tangency predicate has two sides.
      */
     private fun toolProvenance(
         mesh: Mesh3,
@@ -4860,11 +4880,16 @@ object Blend3 {
         faces: List<FacePatch>,
     ): Pair<BoolProvenance?, Msg?> {
         if (owners.size != mesh.triangles.size) return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+        var whole = true
+        var why: Msg? = null
         for (i in mesh.triangles.indices) {
             val p = faces.getOrNull(owners[i]) ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
-            if (!carries(p)) return null to (p.reason ?: Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label))
+            if (!carries(p)) {
+                whole = false
+                if (why == null) why = p.reason ?: Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)
+            }
         }
-        return BoolProvenance(faces, emptyList()) to null
+        return BoolProvenance(faces, emptyList(), whole) to why
     }
 
     /**
@@ -4986,6 +5011,130 @@ object Blend3 {
      * a coarser statement of a whole leg as **one** surface is what the next slice owes.
      */
     private fun unnamedStrip(name: FaceName): FacePatch = FacePatch(name, null, emptyList(), Msgs.refusalSectionBoolBevelStrip(name = name.label))
+
+    /**
+     * **A leg of a lofted tool is the wall it walks, translated by the step it walks it at** (OP-31, slice
+     * 5u) — a plane where the wall is a plane, the coaxial cylinder where it is a cylinder, and exact in
+     * both cases, because the offset of a plane is a plane and the offset of a circle is a concentric
+     * circle ([stepOf]'s own sentence, said for a whole run instead of one section).
+     *
+     * This is the coarse statement slice 5w's cut said the drawing owed. A canal's and a pivot's tool is a
+     * loft of *changing* sections, so its strips were named one at a time — sixty carriers on an ordinary
+     * run, each of them a Newton solve per triangle per boolean, which cost the suite ten minutes. A whole
+     * leg named **once** costs one, and the cost of reading it is the cost of reading a plane or a cylinder,
+     * which is arithmetic.
+     *
+     * It is a *candidate*, never a conclusion: the caller checks it against the strip's own points
+     * ([runPatch]) exactly as [facetOn] checks the band, and a leg the step does not really carry onto it —
+     * a curved wall whose gradient leans out of the station's plane, a leg stepped by the weighted way out
+     * of the body a pivot's near leg is ([cornerSectionAt]) — falls back to the honest refusal.
+     *
+     * Null where the wall is a **circle** (the ring an upright is, which is no surface at all) or where the
+     * step would turn a cylinder inside out.
+     */
+    private fun wallOffsetPatch(
+        w: Wall,
+        step: Double,
+        name: FaceName,
+    ): FacePatch? {
+        if (w.circle != null) return null
+        val plane = w.plane
+        if (plane != null) {
+            val n = plane.normal.normalized()
+            return FacePatch(name, Plane3(plane.origin + n * step, plane.u, plane.v), emptyList(), null)
+        }
+        val r = w.radius + step
+        if (r <= Geom3.WELD_TOL) return null
+        // the **body's own** frame for the cylinder, not one made up here: the wall was read off a face of
+        // the body ([wallOf]), so the tool's leg and the face it stands a step off are the same axis said
+        // once, which is what makes the two statements comparable at all ([ToolStep.untangled])
+        val s0 = w.patch.surface ?: return null
+        return withToolSlack(
+            FacePatch(
+                name,
+                null,
+                emptyList(),
+                null,
+                Surface3(s0.origin, s0.axis, s0.ref, 0.0, 0.0, true, Revolve3.Band.Cylinder(r, -CARRIER_REACH_MM, CARRIER_REACH_MM)),
+            ),
+        )
+    }
+
+    /**
+     * How far along its axis a tool's own **stated** cylinder runs, in mm — the one number in this seam
+     * that is a bound rather than a statement.
+     *
+     * A leg's carrier is the wall's own surface, and a wall states no axial extent of its own (a [Wall] is
+     * a plane or an infinite cylinder); what a face list wants is an interval. The strip the tool really
+     * emits is trimmed by its [FacePatch.outline], which is empty here — *the whole natural extent* — so the
+     * number only has to be larger than any body this drawing builds, and a kilometre is.
+     */
+    private const val CARRIER_REACH_MM = 1.0e6
+
+    /**
+     * **The surface one *run* of a lofted tool's section is swept onto, checked against the strip it really
+     * emitted** (OP-31, slice 5u) — the run map's own reader.
+     *
+     * [candidate] is what the section says the run is (a wall translated by its step, the band's own cap
+     * plane carried, the ball's pipe); the check is the one [facetOn] makes, put to every ring of the loft
+     * rather than to one, because a run spans the whole walk and a claim about it is a claim about all of
+     * it. Where the claim does not hold — and a pivot's near leg is exactly such a run, stepped out of the
+     * body through every face it comes up to — the run says it has no carrier, in the words slice 5w gave
+     * it, and the tool states the rest of its faces regardless ([toolProvenance]).
+     *
+     * A run of **one** chord is a different fact and is stated as the [Ruled3] it is: a single column of the
+     * loft is literally a family of straight rulings, which is the fifth carrier (slice 5r). A pivot's turn
+     * has **eight** of them — the four jogs, the fourth side and the three chords the ball's own clearance
+     * fades over — where slice 5w's per-chord reading had sixty and measured ten minutes for it.
+     */
+    private fun runPatch(
+        rings: List<List<Vec3>>,
+        from: Int,
+        to: Int,
+        candidate: FacePatch?,
+        name: FaceName,
+        every: Boolean,
+    ): FacePatch {
+        val n = rings.first().size
+        if (candidate != null && carries(candidate)) {
+            val lim = 1e-6 + candidate.slack
+            var ok = true
+            val step = if (every) 1 else max(1, (rings.size - 1) / 2)
+            var l = 0
+            while (l < rings.size && ok) {
+                val ring = rings[l]
+                var m = from
+                while (m <= to + 1 && ok) {
+                    if (abs(BoolFace3.offSurface(candidate, ring[m % n])) > lim) ok = false
+                    m++
+                }
+                l += step
+            }
+            if (ok) return candidate.copy(name = name)
+        }
+        // one column of the loft **is** a family of straight rulings, so it is stated as one
+        if (to == from) {
+            val rs = ArrayList<Ruling3>(rings.size)
+            var s = 0.0
+            var prev: Vec3? = null
+            for (ring in rings) {
+                val a = ring[from % n]
+                val b = ring[(from + 1) % n]
+                val mid = (a + b) * 0.5
+                prev?.let { s += (mid - it).length() }
+                prev = mid
+                rs.add(Ruling3(a, b, s))
+            }
+            if (rs.size >= 2 && s > Geom3.WELD_TOL) {
+                val strip = ruledOf(rs, false)
+                return FacePatch(
+                    name, null, emptyList(), Msgs.refusalSectionBoolBevelStrip(name = name.label), null,
+                    strip.fitted, null, false, true, strip, TOOL_SLACK,
+                )
+            }
+        }
+        return unnamedStrip(name)
+    }
 
     /**
      * **The first of [candidates] every one of [pts] lies on, or the plane the facet itself spans** (OP-31,
@@ -11976,7 +12125,23 @@ object Blend3 {
             val tau = tN * i.toDouble() / legSteps
             val q = onWall(near, place, q2 + (raw.apex - q2) * tau) ?: return null
             // …and at the hand-over the **whole** leg lies along the upright, not only its far end, so the
-            // clearance holds all the way along it rather than dipping back to the micron in the middle
+            // clearance holds all the way along it rather than dipping back to the micron in the middle.
+            //
+            // **And this is the step slice 5u tried to make the near wall's own and could not** (OP-31).
+            // Within a run the step should be the run's own face's step, so that the leg *is* that wall
+            // translated and states exactly — which is what a **canal**'s leg does. A pivot's does not, and
+            // the reason is measured rather than argued: a canal's ball is *tangent* to both walls, so each
+            // wall's gradient lies in the station's own normal plane exactly and an in-plane step of length
+            // `d` carries the leg a true `d` off the wall. A pivot's second contact is the **upright**, not
+            // a tangency, so the near wall's gradient leans out of the station plane — measured on the ring
+            // pivot of `r = 1.5`, `|grad·(cx, cy)|` runs from 0.17 at the first station to 1 at the
+            // hand-over — and an in-plane step of `d` carries the leg only `d·|flat(grad)|` off the wall.
+            // Dividing by that factor to make it exact multiplies the step by six at the far station; taking
+            // it as it is leaves the leg a fifth of a step clear and the tool folds where it was. Both were
+            // built and measured: the plain reading turned the probe's own `r = 2` body, which builds today,
+            // into *"the edge between (10.08, 19.9, 0.005) mm and (10.072, 19.9, 0) mm is used 2 times with 2
+            // opposite uses"*. So the weighted way out of the body stands, and the near leg is the one run of
+            // this section that states no surface — by name, and the tool states all its others.
             nearLeg.add(q + awayAt(q, tau) * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0)))
         }
         out.addAll(nearLeg.reversed())
@@ -12173,6 +12338,42 @@ object Blend3 {
         ) to null
     }
 
+    // **the runs a pivot's section is assembled from** (OP-31, slice 5u) — the leg boundaries its polygon
+    // is walked in, so that a whole leg is one strip of the tool and a turn states **fourteen** faces where
+    // the per-chord reading had one per column of a fifty-nine-chord polygon and could name none of them
+    // ([cornerSectionAt] walks the runs in exactly this order).
+
+    /** The leg lying in the **shared** face, a step off it. */
+    private const val RUN_SHARED = 0
+
+    /** The jog from that leg onto the fourth side's corner. */
+    private const val RUN_JOG_F = 1
+
+    /** The **fourth side** — the band's own cap plane, carried ([CapCut]). */
+    private const val RUN_CUT = 2
+
+    /** The jog from the fourth side's other corner onto the near leg — the crease point's own vertex. */
+    private const val RUN_JOG_N = 3
+
+    /** The leg walking the **near** wall, which changes wall at the hand-over and is two runs for it. */
+    private const val RUN_NEAR = 4
+
+    /** The jog from that leg onto the ball's own contact on the upright. */
+    private const val RUN_JOG_A = 5
+
+    /**
+     * The three chords over which the ball's arc is carried **into the void the upright bounds** and back
+     * onto its own circle ([cornerSectionAt]'s own fade, which is exactly three chords long). Each is one
+     * column of the loft and so is the family of straight rulings it is.
+     */
+    private const val RUN_FADE = 6
+
+    /** The ball's own arc, where it really is the ball — the pivot's pipe. */
+    private const val RUN_ARC = 9
+
+    /** The jog from the arc back onto the shared face's leg. */
+    private const val RUN_JOG_B = 10
+
     /**
      * The pivot's **tool**: the loft of its stations, capped at each end a step **past** the band it ends.
      *
@@ -12205,15 +12406,113 @@ object Blend3 {
         // of the walk is a loft between two rulings.
         val band = turn.pipeFace(FaceName.BlendCorner(turn.ends.map { e -> e.first }, 0))
         val slots = HashMap<Int, Int>()
+        val legSteps = turn.legSteps
+        val arcSteps = turn.arcSteps
+        // **the section's own run map** (OP-31, slice 5u), and it holds only where the polygon is the one
+        // [cornerSectionAt] walks: the leg in the shared face, a jog, the fourth side, a jog, the near leg,
+        // a jog, the arc's own three-chord fade, the arc and the jog home. So it wants a leg with an
+        // interior (three chords at least, which [canalTurnOf] states) and an arc with chords left over
+        // after that fade; anything else keeps slice 5w's reading, which is a slot per column and, since no
+        // column of a pivot's loft is a surface of this drawing, no carrier at all.
+        val mapped = rings.first().size == 2 * legSteps + arcSteps + 1 && legSteps >= 3 && arcSteps >= 5
 
-        fun stripSlot(m: Int): Int =
-            slots.getOrPut(m) {
-                val ring = rings[rings.size / 2]
-                val pts = listOf(ring[m], ring[(m + 1) % ring.size])
-                val name = FaceName.BlendCorner(turn.ends.map { e -> e.first }, m + 1)
-                val chosen = facetOn(listOf(band), pts, name)
-                faces.slot(if (chosen === band) chosen.copy(name = name) else unnamedStrip(name))
+        /**
+         * The runs as vertex ranges, in the order [cornerSectionAt] walks them: the chord that leaves
+         * vertex `from` up to the chord that leaves vertex `to`. A pure function of the two counts, because
+         * every station's polygon is walked in the same order with the same number of points in each
+         * stretch — which is what makes the map the *section's* and not a measurement of its points.
+         */
+        fun rangeOf(run: Int): Pair<Int, Int> =
+            when (run) {
+                RUN_SHARED -> 0 to legSteps - 2
+                RUN_JOG_F -> legSteps - 1 to legSteps - 1
+                RUN_CUT -> legSteps to legSteps
+                RUN_JOG_N -> legSteps + 1 to legSteps + 1
+                RUN_NEAR -> legSteps + 2 to 2 * legSteps - 1
+                RUN_JOG_A -> 2 * legSteps to 2 * legSteps
+                RUN_ARC -> 2 * legSteps + 4 to 2 * legSteps + arcSteps - 1
+                RUN_JOG_B -> 2 * legSteps + arcSteps to 2 * legSteps + arcSteps
+                else -> (2 * legSteps + 1 + (run - RUN_FADE)).let { it to it }
             }
+
+        fun runOf(m: Int): Int =
+            when {
+                m <= legSteps - 2 -> RUN_SHARED
+                m == legSteps - 1 -> RUN_JOG_F
+                m == legSteps -> RUN_CUT
+                m == legSteps + 1 -> RUN_JOG_N
+                m <= 2 * legSteps - 1 -> RUN_NEAR
+                m == 2 * legSteps -> RUN_JOG_A
+                m <= 2 * legSteps + 3 -> RUN_FADE + (m - 2 * legSteps - 1)
+                m <= 2 * legSteps + arcSteps - 1 -> RUN_ARC
+                else -> RUN_JOG_B
+            }
+        // …and the **near** leg's run is the one that splits, because the wall it walks changes at the
+        // hand-over: before it the first band's face closes the section and after it the second's, so the
+        // leg is two runs and each of them is its own translated face (OP-31, slice 5h's own hand-over).
+        val cf = turn.frame
+
+        fun candidateFor(
+            run: Int,
+            nearA: Boolean,
+        ): FacePatch? =
+            when (run) {
+                RUN_SHARED -> if (cf == null) null else wallOffsetPatch(turn.wF, -cf.sF * turn.grow, FaceName.BlendCorner(turn.ends.map { e -> e.first }, 0))
+                RUN_ARC -> band
+                RUN_NEAR ->
+                    if (cf == null) {
+                        null
+                    } else {
+                        wallOffsetPatch(
+                            if (nearA) turn.wA else turn.wB,
+                            -(if (nearA) cf.sA else cf.sB) * turn.grow,
+                            FaceName.BlendCorner(turn.ends.map { e -> e.first }, 0),
+                        )
+                    }
+                else -> null
+            }
+
+        fun stripSlot(
+            m: Int,
+            nearA: Boolean,
+        ): Int {
+            if (!mapped) {
+                return slots.getOrPut(m) {
+                    val ring = rings[rings.size / 2]
+                    val pts = listOf(ring[m], ring[(m + 1) % ring.size])
+                    val name = FaceName.BlendCorner(turn.ends.map { e -> e.first }, m + 1)
+                    val chosen = facetOn(listOf(band), pts, name)
+                    faces.slot(if (chosen === band) chosen.copy(name = name) else unnamedStrip(name))
+                }
+            }
+            val run = runOf(m)
+            val split = run == RUN_NEAR && nearA
+            val key = -1 - (2 * run + if (split) 1 else 0)
+            return slots.getOrPut(key) {
+                val (from, to) = rangeOf(run)
+                val name = FaceName.BlendCorner(turn.ends.map { e -> e.first }, run + 1)
+                // …and a split run is checked over the **columns** it owns, which is both rings of each of
+                // them — the hand-over's own column belongs to the half its lower ring stands in
+                val over =
+                    if (run != RUN_NEAR) {
+                        rings
+                    } else {
+                        val keep = HashSet<Int>()
+                        for (l in 0 until rings.size - 1) {
+                            if (turn.stations[l].nearA == nearA) {
+                                keep.add(l)
+                                keep.add(l + 1)
+                            }
+                        }
+                        rings.filterIndexed { l, _ -> keep.contains(l) }
+                    }
+                if (over.size < 2) {
+                    faces.slot(unnamedStrip(name))
+                } else {
+                    faces.slot(runPatch(over, from, to, candidateFor(run, nearA), name, run != RUN_ARC))
+                }
+            }
+        }
         for (l in 0 until rings.size - 1) {
             val lo = rings[l]
             val hi = rings[l + 1]
@@ -12245,7 +12544,7 @@ object Blend3 {
                 // two splits, a pure function of the four points, and free of any tie at all. So the routes
                 // agree, and a pivot's tool is the mirror of its mirror's, station for station.
                 val mid = (a + b + c + d) * 0.25
-                val slot = stripSlot(m)
+                val slot = stripSlot(m, turn.stations[l].nearA)
                 tris.add(Triple(a, b, mid))
                 tris.add(Triple(b, c, mid))
                 tris.add(Triple(c, d, mid))
