@@ -1130,6 +1130,12 @@ object Blend3 {
         /** How far the tube is stepped along the run at each free end — see [endSteps]. */
         val backAtStart: Double,
         val backAtEnd: Double,
+        /** The surfaces [grown] is swept from, and which of them each of its chords lies on ([Grown.loop]). */
+        val loop: List<ProfileElement>,
+        val runs: List<Int>,
+        /** The same for [plain] — the ring a pivot axis runs through ([Grown.plainLoop]). */
+        val plainLoop: List<ProfileElement>,
+        val plainRuns: List<Int>,
     ) {
         /**
          * How long this piece's own run is — the segment's length where the crease is one straight run, and
@@ -1166,6 +1172,7 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) = Unit
 
         override fun label(pieces: List<Piece>): Msg =
@@ -1179,7 +1186,28 @@ object Blend3 {
      * whose offset is not a line and is not in this vocabulary (see [sectionOf]). Such a tool is swept
      * exactly as it always was, so nothing about it moves.
      */
-    private class Grown(val polygon: List<Vec2>, val plain: List<Vec2>, val region: Region, val stepped: Boolean)
+    private class Grown(
+        val polygon: List<Vec2>,
+        val plain: List<Vec2>,
+        val region: Region,
+        val stepped: Boolean,
+        /**
+         * **The surfaces this section is swept from, in the polygon's own order** (OP-31, slice 5w) — the
+         * stepped legs, the two jogs back onto the tangencies and the blend's own curve between them, as the
+         * exact profile elements they are, with [runs] saying which of them each chord of [polygon] is a
+         * chord of.
+         *
+         * It is the same loop [region] carries, kept beside the polygon rather than re-derived, because a
+         * tool's provenance is exactly *"which statement was this triangle emitted from"* and the
+         * triangulation is the one place that is known (OP-8: a face is stated, never discovered).
+         */
+        val loop: List<ProfileElement>,
+        /** Which element of [loop] the chord from `polygon[m]` to `polygon[m + 1]` lies on. */
+        val runs: List<Int>,
+        /** The same, for [plain]: the unstepped legs and the blend's curve, with no jog between them. */
+        val plainLoop: List<ProfileElement>,
+        val plainRuns: List<Int>,
+    )
 
     /**
      * The section the tool is swept with: the wedge's own boundary with each straight leg **pivoted off its
@@ -1250,6 +1278,33 @@ object Blend3 {
         val leg2 = GeomMath.tessellatePiece(sidePiece(crease.leg2, wedge.t2, o), GeomMath.TESS_TOL_MM).dropLast(1)
         val plain = listOf(o) + leg1 + arc + leg2
         val grown = listOf(corner) + leg1.map { s1.step(it) } + arc + leg2.map { s2.step(it) }
+        // **which statement each chord of the section is a chord of** (OP-31, slice 5w). The polygon is
+        // walked in exactly the order it was built in — the leg out to the first tangency, the jog onto it,
+        // the blend's own curve piece by piece, the jog back, the other leg home — so the map is stated
+        // here, where the walk is, rather than looked for afterwards from the points.
+        val arcRuns = ArrayList<Int>(arc.size)
+        for ((k, piece) in wedge.pieces.withIndex()) {
+            val n = GeomMath.tessellatePiece(piece, GeomMath.TESS_TOL_MM).size
+            for (j in 0 until n) arcRuns.add(k)
+        }
+        val grownRuns = ArrayList<Int>(grown.size)
+        // the leg out (element 0), then the jog onto the first tangency (element 1)
+        for (j in 0 until leg1.size) grownRuns.add(0)
+        grownRuns.add(1)
+        // the blend's own curve: each chord under the piece it came from, and the junction between two
+        // pieces is a chord of no length at all, which [Geom3.MeshBuilder] drops
+        for (j in 1 until arc.size) grownRuns.add(2 + arcRuns[j])
+        grownRuns.add(2 + wedge.pieces.size)
+        for (j in 0 until leg2.size) grownRuns.add(3 + wedge.pieces.size)
+        val plainRuns = ArrayList<Int>(plain.size)
+        for (j in 0 until leg1.size) plainRuns.add(0)
+        // …and in the unstepped twin the two jogs have no length, so they carry no surface of their own
+        plainRuns.add(0)
+        for (j in 1 until arc.size) plainRuns.add(1 + arcRuns[j])
+        plainRuns.add(wedge.pieces.size)
+        for (j in 0 until leg2.size) plainRuns.add(1 + wedge.pieces.size)
+        val plainLoop =
+            listOf(sidePiece(crease.leg1, o, wedge.t1)) + wedge.pieces + listOf(sidePiece(crease.leg2, wedge.t2, o))
         // the very same boundary as an exact loop: the two legs stepped off, a jog back onto each tangency,
         // and the blend's own curve between them untouched
         val loop =
@@ -1259,6 +1314,7 @@ object Blend3 {
                     listOf(ProfileElement.Seg(Segment(wedge.t2, g2)), s2.piece(g2, corner)),
             )
         val region = Region(if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop), emptyList())
+        val grownLoop = loop.elements
         // **every section is stepped off now**, which is what [stepOf] made true: a round leg has an offset
         // of its own, so there is no longer a section that is swept as it was drawn. The flag stays because
         // it is what says a straight run's tube must be built by [toolMesh] — the only builder that carries
@@ -1270,9 +1326,21 @@ object Blend3 {
         if (grown.size < 3) return null to Msgs.refusalBlendRoundingOwnSectionHasFewer()
         // one winding for both, so index k of either ring is the same point of the same section
         return if (Geom3.polygonArea(grown) >= 0.0) {
-            Grown(grown, plain, region, stepped) to null
+            Grown(grown, plain, region, stepped, grownLoop, grownRuns, plainLoop, plainRuns) to null
         } else {
-            Grown(reversedFromFirst(grown), reversedFromFirst(plain), region, stepped) to null
+            // **the run map turns with the polygon**: [reversedFromFirst] keeps vertex 0 and reverses the
+            // rest, so the chord that leaves vertex `m` of the turned ring is the chord that arrived at
+            // vertex `N − 1 − m` of the original one.
+            Grown(
+                reversedFromFirst(grown),
+                reversedFromFirst(plain),
+                region,
+                stepped,
+                grownLoop,
+                List(grownRuns.size) { m -> grownRuns[(grownRuns.size - 1 - m + grownRuns.size) % grownRuns.size] },
+                plainLoop,
+                List(plainRuns.size) { m -> plainRuns[(plainRuns.size - 1 - m + plainRuns.size) % plainRuns.size] },
+            ) to null
         }
     }
 
@@ -1655,6 +1723,10 @@ object Blend3 {
             soleElement(crease) as? Curve3Element.Seg3,
             back0,
             back1,
+            section.loop,
+            section.runs,
+            section.plainLoop,
+            section.plainRuns,
         ) to null
     }
 
@@ -1747,6 +1819,7 @@ object Blend3 {
         fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         )
 
         /** What a refusal calls this corner. */
@@ -1893,6 +1966,47 @@ object Blend3 {
                 walkLegPatch(pieces[travelling], leg, sr, nameAt(k), walkNormal)
             }
     }
+
+    /**
+     * **Which leg of a walk each interval between two of its rings belongs to** (OP-31, slice 5w) — the
+     * inverse of [walkRings], and what says which surface a strip of the corner's own tube is a patch of.
+     */
+    private fun walkLegAt(legs: List<Leg>): List<Int> {
+        val out = ArrayList<Int>()
+        for ((k, leg) in legs.withIndex()) for (j in 0 until leg.rings.size - 1) out.add(k)
+        return out
+    }
+
+    /**
+     * The face slots a walk's own tube is emitted under (OP-31, slice 5w): one per **(leg × element of the
+     * section it carries)**, opened on demand, which is exactly the layout [Walk.faces] states the *body*'s
+     * corner faces in ([walkFacePlan]). The tool's are the same surfaces read on the tool's side of the
+     * skin, so they are stated through the very same emitter.
+     */
+    private fun walkTubeSlots(
+        piece: Piece,
+        legs: List<Leg>,
+        normal: Vec3?,
+        plain: Boolean,
+        ends: List<Int>,
+        faces: ToolFaces,
+    ): (Int, Int) -> Int {
+        val open = HashMap<Int, Int>()
+        return { legIndex, run ->
+            val key = legIndex * 64 + run
+            open.getOrPut(key) {
+                val el = if (plain) piece.plainLoop[run] else piece.loop[run]
+                faces.slot(withToolSlack(walkLegPatch(piece, legs[legIndex], el, FaceName.BlendCorner(ends, key), normal)))
+            }
+        }
+    }
+
+    /** Which element of the section the chord from vertex `m` of a walk's ring leaves on. */
+    private fun runAt(
+        piece: Piece,
+        plain: Boolean,
+        m: Int,
+    ): Int = if (plain) piece.plainRuns[m] else piece.runs[m]
 
     /** [legs]' placements in order, the join between two legs counted once; the first is the walk's start. */
     private fun walkRings(legs: List<Leg>): List<Placement> =
@@ -2062,18 +2176,23 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) {
             // **the plain section where the pivot axis runs through it** — about a *sharp* upright the leg
             // in the other face lies along that upright, so a step-off would lift it a micron off the axis
             // and the turn would sweep that micron into a disc ([toolMesh]). About a **band** the axis
             // stands `r_U` away from the section and there is no such point, so the step-off is kept and
             // the leg does not lie in the face it is tangent to.
-            val section = if (extra.isEmpty()) pieces[a].plain else pieces[a].grown
+            val plain = extra.isEmpty()
+            val section = if (plain) pieces[a].plain else pieces[a].grown
+            val legAt = walkLegAt(legs)
+            val slot = walkTubeSlots(pieces[a], legs, walkNormal, plain, ends.map { it.first }, faces)
             for (l in 0 until rings.size - 1) {
                 val lo = section.map { rings[l].at(it) }
                 val hi = section.map { rings[l + 1].at(it) }
                 for (m in section.indices) {
                     val n = (m + 1) % section.size
+                    out.face = slot(legAt[l], runAt(pieces[a], plain, m))
                     // the turn continues [a]'s own tube, so the two rings take the same roles its two did
                     if (aAtStart) {
                         out.triangle(hi[m], hi[n], lo[n])
@@ -2218,15 +2337,19 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) {
             // the plain section throughout: the pivot is about the sharp upright and the section's leg in
             // the other face lies *along* it, so a step-off there would be swept into a disc ([toolMesh])
             val section = pieces[a].plain
+            val legAt = walkLegAt(legs)
+            val slot = walkTubeSlots(pieces[a], legs, walkNormal, true, ends.map { it.first }, faces)
             for (l in 0 until rings.size - 1) {
                 val lo = section.map { rings[l].at(it) }
                 val hi = section.map { rings[l + 1].at(it) }
                 for (m in section.indices) {
                     val n = (m + 1) % section.size
+                    out.face = slot(legAt[l], runAt(pieces[a], true, m))
                     // the walk continues [a]'s own tube, so the two rings take the same roles its two did
                     if (aAtStart) {
                         out.triangle(hi[m], hi[n], lo[n])
@@ -2252,6 +2375,8 @@ object Blend3 {
             // ring of a turn about a sharp upright shares one point, and the tool folds on itself there.
             val p = plane()
             val (outer, inner) = ledgeRings(pieces) ?: return
+            // …and the whole of it lies **in** the landing plane, which is the surface it states (slice 5w)
+            out.face = faces.slot(FacePatch(FaceName.BlendCorner(ends.map { it.first }, 4095), p, emptyList(), null))
             stitchRings(out, outer, inner, { q -> p.toWorld(q) }, { q -> p.toWorld(q) })
         }
 
@@ -2347,6 +2472,7 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) {
             val piece = pieces[a]
             val plane = third.plane ?: return
@@ -2355,23 +2481,58 @@ object Blend3 {
             val stations = stationsFor(piece, n3, d0)
             val clamped = stations.map { p -> clampedSection(piece.grown, p, n3, d0) }
             val strips = clamped.mapIndexed { l, qs -> qs.map { stations[l].at(it) } }
+            // **a clamped facet stands on one of two surfaces this corner already names** (OP-31, slice 5w):
+            // the walk's own leg surface where the section reaches short of the third face, and the **third
+            // face's own plane** where it was pulled back onto it — which is what clamping *is*. Which of
+            // the two a facet is on is asked of the facet, exactly as [BoolFace3.assemble] asks it of a
+            // result's triangles; the row that straddles the two states the plane it spans.
+            val ends = this.ends.map { it.first }
+            val cands = HashMap<Int, List<FacePatch>>()
+            val open = HashMap<Long, Int>()
+
+            fun slotFor(
+                run: Int,
+                pts: List<Vec3>,
+            ): Int {
+                val cs =
+                    cands.getOrPut(run) {
+                        legs.map { withToolSlack(walkLegPatch(piece, it, piece.loop[run], FaceName.BlendCorner(ends, run), walkNormal)) } +
+                            listOf(FacePatch(FaceName.BlendCorner(ends, run), plane, emptyList(), null))
+                    }
+                for ((ci, c) in cs.withIndex()) {
+                    if (!carries(c)) continue
+                    if (pts.all { abs(BoolFace3.offSurface(c, it)) <= 1e-6 + c.slack }) {
+                        return open.getOrPut(run * 64L + ci) { faces.slot(c) }
+                    }
+                }
+                return faces.slot(stripPlane(pts, FaceName.BlendCorner(ends, run)))
+            }
             for (l in 0 until strips.size - 1) {
                 val lo = strips[l]
                 val hi = strips[l + 1]
                 for (m in lo.indices) {
                     val n = (m + 1) % lo.size
+                    // **a clamped ring carries each chord of the section twice** — [clampedSection] puts the
+                    // plane's own crossing in beside every vertex, so the two halves of one chord are one
+                    // statement of the section still.
+                    val run = piece.runs[(m / 2) % piece.runs.size]
                     // the walk continues [a]'s own tube, so the two rings take the same roles its two did
                     if (aAtStart) {
+                        out.face = slotFor(run, listOf(hi[m], hi[n], lo[n]))
                         triangleUnlessFlat(out, hi[m], hi[n], lo[n])
+                        out.face = slotFor(run, listOf(hi[m], lo[n], lo[m]))
                         triangleUnlessFlat(out, hi[m], lo[n], lo[m])
                     } else {
+                        out.face = slotFor(run, listOf(lo[m], lo[n], hi[n]))
                         triangleUnlessFlat(out, lo[m], lo[n], hi[n])
+                        out.face = slotFor(run, listOf(lo[m], hi[n], hi[m]))
                         triangleUnlessFlat(out, lo[m], hi[n], hi[m])
                     }
                 }
             }
             // …and the far end, which no band closes: the clamped section standing on the third face itself
             val last = stations.last()
+            out.face = faces.slot(FacePatch(FaceName.BlendCorner(ends, 4095), plane, emptyList(), null))
             for (t in capsOf(clamped.last())) {
                 if (aAtStart) {
                     triangleUnlessFlat(out, last.at(t.c), last.at(t.b), last.at(t.a))
@@ -3007,8 +3168,25 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) {
-            for ((x, y, z) in patch) out.triangle(x, y, z)
+            // **the ball, and the three quads that are the bands' own faces** (OP-31, slice 5w). The patch
+            // is stated as triangles because that is what a spherical triangle between three band ends is;
+            // each of them stands either on the ball's own sphere — the one surface this corner names — or
+            // exactly in the plane it spans, which for a bevelled vertex is one of the three bevels.
+            val ball = ballFace(FaceName.BlendCorner(ends.map { it.first }, 0))
+            val slots = HashMap<Boolean, Int>()
+            for ((k, t) in patch.withIndex()) {
+                val (x, y, z) = t
+                val onBall = ball != null && carries(ball) && listOf(x, y, z).all { abs(BoolFace3.offSurface(ball, it)) <= 1e-6 + ball.slack }
+                out.face =
+                    if (onBall) {
+                        slots.getOrPut(true) { faces.slot(ball!!) }
+                    } else {
+                        faces.slot(stripPlane(listOf(x, y, z), FaceName.BlendCorner(ends.map { it.first }, k + 1)))
+                    }
+                out.triangle(x, y, z)
+            }
         }
 
         override fun label(pieces: List<Piece>): Msg =
@@ -4546,6 +4724,227 @@ object Blend3 {
         return (1 until steps).mapNotNull { l -> placeAt(piece, from + (to - from) * l / steps) }
     }
 
+    // ---- a tool states the surfaces it is swept from (OP-31, slice 5w) ----
+
+    /**
+     * **Every tool this dressing builds states the surfaces it is swept from, as its own faces** (OP-31,
+     * slice 5w) — the accumulator that collects them while the tool is triangulated.
+     *
+     * *Why here and not afterwards.* A tool is a body like any other, and a body's faces are **stated, never
+     * discovered** (OP-8). The one place a tool's surfaces are completely known is the triangulation itself:
+     * a station crossed with a chord of the section *is* the band's own cylinder, a leg *is* the wall it
+     * stands a skin off, an ear *is* the cap. So the slot is opened where the surface is named and every
+     * triangle emitted under it carries that slot ([Geom3.MeshBuilder.face]) — which costs one int per
+     * triangle and one `FacePatch` per surface, and needs no lookup at all.
+     *
+     * *And why it matters.* Until this slice every tool `Blend3` built was a `Feature3.MeshBoolean` with no
+     * faces, so [Section3.boolProvenance] saw an operand with nothing to trace against and every boolean a
+     * dressing runs was mesh-only; and the coincidence predicate a tangency is decided by
+     * ([ToolStep.touchesAlongACurve]) had only one side to read. Of 107 general booleans in the four tests
+     * that fail under the from-source engine, 106 handed the kernel a tool with no carriers at all.
+     *
+     * Derived when the tool is built and stored nowhere (OP-21): it appears in no file and changes no format.
+     */
+    private class ToolFaces {
+        val faces = ArrayList<FacePatch>()
+
+        /** The slot each triangle of the tool was emitted under, where the builder is not the caller's. */
+        var owners: List<Int> = emptyList()
+
+        /** Open a slot for [patch] — the index [Geom3.MeshBuilder.face] is set to while it is emitted. */
+        fun slot(patch: FacePatch): Int {
+            faces.add(patch)
+            return faces.size - 1
+        }
+    }
+
+    /**
+     * How far a tool's own facet may stand **inside** the surface the face it is emitted under states, in mm.
+     *
+     * A tool's section is a polygon and its stations are chords, both taken to [GeomMath.TESS_TOL_MM]; so a
+     * facet of a curved tool face stands up to one such sag inside its own carrier in each of the two
+     * directions, and the number is twice it. It is the very statement a dressed body's own band face makes
+     * about its triangles ([FacePatch.slack]), said on the tool's side, and a plane face states nothing at
+     * all because a plane is exact in a mesh.
+     */
+    private val TOOL_SLACK = 2.0 * GeomMath.TESS_TOL_MM
+
+    /** Whether [p] states a surface a boolean can trace a triangle onto — [Section3.boolProvenance]'s own test. */
+    private fun carries(p: FacePatch): Boolean =
+        p.plane != null ||
+            (p.surface != null && p.surface?.meridianCurve != null) ||
+            (p.pipe?.stations?.size ?: 0) >= 2 ||
+            (p.strip?.rulings?.size ?: 0) >= 2
+
+    /**
+     * A tool's mesh with the faces it was emitted under — or the reason it has none (OP-3: a refusal, never
+     * a silent null).
+     *
+     * *What is checked here, and what is deliberately not.* Two things are this builder's own business and
+     * are checked: that **every** triangle was emitted under a slot at all, and that every slot names a
+     * surface a boolean can trace a triangle onto ([carries]). Whether each triangle really *lies* on the
+     * surface its slot states is not asked again here — it is the very question [Section3.boolProvenance]
+     * puts to every operand of every boolean one call further on, and a face list that is not true of its
+     * mesh refuses there by name exactly as an extrusion's or a revolution's would. Asking it twice would
+     * make a tool the one body in this drawing that has to prove its faces before it may state them, and on
+     * a canal's five hundred stations it costs a pipe solve per vertex. What the *suite* asserts is the
+     * statement itself, over the matrix's own tools (`ToolProvenanceTest`): every triangle of every tool
+     * stands on one of the surfaces its tool names.
+     */
+    private fun toolProvenance(
+        mesh: Mesh3,
+        owners: List<Int>,
+        faces: List<FacePatch>,
+    ): Pair<BoolProvenance?, Msg?> {
+        if (owners.size != mesh.triangles.size) return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+        for (i in mesh.triangles.indices) {
+            val p = faces.getOrNull(owners[i]) ?: return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
+            if (!carries(p)) return null to (p.reason ?: Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label))
+        }
+        return BoolProvenance(faces, emptyList()) to null
+    }
+
+    /**
+     * The tool as a solid that **names its own faces** — the one place a `Feature3.MeshBoolean` this drawing
+     * builds is given a provenance of its own (OP-31, slice 5w).
+     *
+     * Where the statement does not hold of the mesh the tool is exactly the tool it always was and carries
+     * the reason instead, so nothing this drawing builds today can move: the provenance is read by
+     * [Section3.boolProvenance] and by [ToolStep], and by nothing that decides a triangle.
+     */
+    private fun toolSolid(
+        mesh: Mesh3,
+        owners: List<Int>,
+        faces: List<FacePatch>,
+    ): Solid3 {
+        val (prov, why) = toolProvenance(mesh, owners, faces)
+        return Solid3.of(Feature3.MeshBoolean(BoolOp.UNION, provenance = prov, provenanceRefusal = why), mesh)
+    }
+
+    /**
+     * **The surface one strip of a tool's tube is a patch of** (OP-31, slice 5w): the section element the
+     * strip's chords are chords of, carried the way the tube carries it — straight along the run, which is
+     * the very sweep a band along a straight edge is ([Section3.sweptFace]), or turned about the run's own
+     * axis, which is the revolution a band along a circular edge is ([Revolve3.bandPatch]).
+     *
+     * It is the same pair of emitters [bandCarrier] states the *body*'s band with, asked of the tool's own
+     * (stepped) section instead of the body's — which is the whole of the design: the tool is swept from the
+     * same statements the body's dressed faces are derived from, on the tool's side of the skin.
+     */
+    private fun tubeFace(
+        piece: Piece,
+        el: ProfileElement,
+        from: Placement,
+        to: Placement,
+        name: FaceName,
+    ): FacePatch {
+        val arc = soleElement(piece.crease) as? Curve3Element.Arc3
+        if (arc != null) {
+            val (frame, sr) =
+                revolvedBand(piece.crease, arc, el)
+                    ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendDoesNotStandSquareIts(name = piece.crease.edge.name.label))
+            return withToolSlack(Revolve3.bandPatch(frame, sr, name))
+        }
+        val seg = piece.seg ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendIsNeitherStraightNorCircular(name = name.label))
+        val v = seg.end - seg.start
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
+        // **the crease's own frame, never the ring's** (OP-31, slice 5w). A ring a corner puts down is the
+        // band's **oblique** section — a mitre's ring is the section standing on the bisector plane, whose
+        // frame is the run's own shear of the crease's — and the surface swept between an oblique section
+        // and a square one is still the band, because a shear along the run carries every point of the
+        // section along the very ruling it is swept on. Read off such a ring it is not: [Section3.sweptFace]
+        // takes its outward direction from the frame it is handed, and a sheared frame gives an outward
+        // that is not square to the run at all. So the carrier is stated from the crease's own square frame
+        // — the same one [bandCarrier] states the *body*'s band with — and the rings say only how far.
+        val square = placeAt(piece, 0.0) ?: return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
+        val depth = abs((to.origin - from.origin).dot(v * (1.0 / len)))
+        return withToolSlack(
+            Section3.sweptFace(Plane3(square.origin, square.cx, square.cy), v * (1.0 / len), max(depth, Geom3.WELD_TOL), el, name),
+        )
+    }
+
+    /**
+     * [patch] with the slack a tool's own tessellation puts under it — nothing where the face is a plane,
+     * which a mesh states exactly, and [TOOL_SLACK] where it is curved and the facets stand inside it.
+     */
+
+    private fun withToolSlack(patch: FacePatch): FacePatch = if (patch.plane != null) patch else patch.copy(slack = TOOL_SLACK)
+
+    /** The plane a ring of a tool stands in — a cap, an end, a landing: exact, so it states no slack. */
+    private fun ringFace(
+        place: Placement,
+        name: FaceName,
+    ): FacePatch = FacePatch(name, Plane3(place.origin, place.cx, place.cy), emptyList(), null)
+
+    /**
+     * The plane one strip of a tool stands in where its two rings carry **different** sections — the ring on
+     * a pivot axis takes the plain section and its neighbour the stepped one ([toolMesh]), so the strip
+     * between them is neither ring's own surface.
+     *
+     * Stated from three of the strip's own corners and never fitted: two parallel chords of one straight leg
+     * span a plane exactly, and where the four corners are *not* coplanar the check that follows says so and
+     * the tool keeps no provenance at all ([toolProvenance]) rather than a nearly-right one.
+     */
+    private fun stripPlane(
+        pts: List<Vec3>,
+        name: FaceName,
+    ): FacePatch {
+        // three of the strip's own corners, and never the first three that happen to be listed: a section
+        // point standing **on** a pivot axis collapses a whole side of the quad, and the triple that spans
+        // is then the one that is left
+        for (i in pts.indices) {
+            for (j in pts.indices) {
+                for (k in pts.indices) {
+                    if (i == j || j == k || i == k) continue
+                    val a = pts[i]
+                    val n = (pts[j] - a).cross(pts[k] - a)
+                    if (n.length() <= Vec3.EPS) continue
+                    val u = (pts[j] - a).normalized()
+                    return FacePatch(name, Plane3(a, u, n.normalized().cross(u)), emptyList(), null)
+                }
+            }
+        }
+        return FacePatch(name, null, emptyList(), Msgs.refusalBlendHasNoLength(name = name.label))
+    }
+
+    /**
+     * **A strip of a lofted tool this slice does not name** (OP-31, slice 5w's one cut), with the reason
+     * rather than a silence.
+     *
+     * A canal's or a pivot's tool is a loft of *changing* sections: the ball's own arc is the pipe the
+     * body's band face already states, and the rest of each section — the two legs walking the walls, the
+     * jogs onto the tangencies, the crease-point corner — is one ruled strip **per chord of the section**,
+     * sixty of them on an ordinary run. Each is statable ([Ruled3], the fifth carrier) and it was built that
+     * way first; what it costs is the reading: a face list of sixty strips turns every boolean on a canal
+     * body into a Newton solve per triangle per carrier, and the suite went from under three minutes to over
+     * ten. So this slice states what such a tool is made of — its pipe and its two caps — and says of the
+     * rest that it has no carrier yet; the tool then keeps the provenance it always had, which is none, and
+     * a coarser statement of a whole leg as **one** surface is what the next slice owes.
+     */
+    private fun unnamedStrip(name: FaceName): FacePatch = FacePatch(name, null, emptyList(), Msgs.refusalSectionBoolBevelStrip(name = name.label))
+
+    /**
+     * **The first of [candidates] every one of [pts] lies on, or the plane the facet itself spans** (OP-31,
+     * slice 5w) — how a builder whose emitted strip may stand on either of two *stated* surfaces says which.
+     *
+     * It is not a fit and not a discovery: both candidates are surfaces this drawing already named, and the
+     * question asked of the points is only which of the two named surfaces they are on — the very question
+     * [BoolFace3.assemble] puts to a *result*'s triangles, asked one operand earlier.
+     */
+    private fun facetOn(
+        candidates: List<FacePatch>,
+        pts: List<Vec3>,
+        name: FaceName,
+    ): FacePatch {
+        for (c in candidates) {
+            if (!carries(c)) continue
+            val lim = 1e-6 + c.slack
+            if (pts.all { abs(BoolFace3.offSurface(c, it)) <= lim }) return c
+        }
+        return stripPlane(pts, name)
+    }
+
     /**
      * One group's whole cutting tool as **one closed mesh** — each edge's wedge carried between its two
      * rings, the mitre rings shared with the neighbour, a cap at every free end.
@@ -4584,10 +4983,13 @@ object Blend3 {
         rings: Map<Pair<Int, Boolean>, Placement>,
         butts: Set<Pair<Int, Boolean>>,
         corners: List<Corner>,
-    ): Pair<Mesh3?, Msg?> {
+        faces: ToolFaces,
+    ): Pair<Solid3?, Msg?> {
         val b = Geom3.MeshBuilder()
-        // the corners' own surfaces first, so the tool is one shell before a single tube is drawn
-        for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b)
+        // the corners' own surfaces first, so the tool is one shell before a single tube is drawn — each
+        // under the faces the corner itself states (OP-31, slice 5w), which are the very faces the *body*
+        // gets from it ([Corner.faces]) read on the tool's side
+        for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b, faces)
         // the ends that stand **on** a pivot axis: a turn about a sharp upright, and only that one
         val pivots = HashSet<Pair<Int, Boolean>>()
         for (c in corners) if (c.onAxis) pivots.addAll(c.ends)
@@ -4667,8 +5069,14 @@ object Blend3 {
                 // …wound **against** this band's own free-end cap: the cap is not closing this tube, which
                 // is not there any more, but the fresh one that ends on the same ring, so it faces the way
                 // the missing tube ran rather than away from it.
-                if (atStart != null) for (t in piece.caps) b.triangle(p0.at(t.a), p0.at(t.b), p0.at(t.c))
-                if (atEnd != null) for (t in piece.caps) b.triangle(p1.at(t.c), p1.at(t.b), p1.at(t.a))
+                if (atStart != null) {
+                    b.face = faces.slot(ringFace(p0, FaceName.BlendCap(piece.index, true)))
+                    for (t in piece.caps) b.triangle(p0.at(t.a), p0.at(t.b), p0.at(t.c))
+                }
+                if (atEnd != null) {
+                    b.face = faces.slot(ringFace(p1, FaceName.BlendCap(piece.index, false)))
+                    for (t in piece.caps) b.triangle(p1.at(t.c), p1.at(t.b), p1.at(t.a))
+                }
                 continue
             }
             // stepped off everywhere but on a pivot axis: a tool never shares a face with the body, and
@@ -4680,19 +5088,59 @@ object Blend3 {
             // tube is its section carried round its own arc, stepped by the sag rule every band here is
             // stepped by (OP-31, slice 5e).
             val mid = tubeStations(piece, p0, p1)
+            // **one face per statement the section makes, not one per chord** (OP-31, slice 5w): the whole
+            // run of chords that came from one element of the section is one surface of the tool — the leg's
+            // own plane, the blend's own cylinder or torus — and it is opened once, for every station
+            // interval, wherever both rings carry the same section. Where they do not (a ring standing on a
+            // pivot axis takes the plain section) the strip between them is neither, and each such interval
+            // states the plane it is.
+            val places = listOf(p0) + mid + listOf(p1)
+            val secs =
+                (0 until places.size).map {
+                    if (it == 0) {
+                        s0
+                    } else if (it == places.size - 1) {
+                        s1
+                    } else {
+                        piece.grown
+                    }
+                }
+            val runFace = HashMap<Int, Int>()
             var lo = s0.map { p0.at(it) }
             for ((k, place) in (mid + listOf(p1)).withIndex()) {
                 val sec = if (k == mid.size) s1 else piece.grown
                 val hi = sec.map { place.at(it) }
+                val loSec = secs[k]
                 for (m in piece.grown.indices) {
                     val n = (m + 1) % piece.grown.size
+                    val run = if (sec === piece.plain) piece.plainRuns[m] else piece.runs[m]
+                    // **a chord whose two section points are the same in both rings is swept, not slanted**:
+                    // the two sections differ only along their legs (the stepped twin of a plain one), so
+                    // the blend's own curve is carried by the very statement it was drawn as even where one
+                    // end of the tube stands on a pivot axis and takes the plain section ([toolMesh]'s rule).
+                    val same = loSec === sec || (loSec[m] == sec[m] && loSec[n] == sec[n])
+                    b.face =
+                        if (same) {
+                            runFace.getOrPut(if (sec === piece.plain) -1 - run else run) {
+                                val el = if (sec === piece.plain) piece.plainLoop[run] else piece.loop[run]
+                                faces.slot(tubeFace(piece, el, places[k], places[k + 1], FaceName.BlendBand(piece.index, run)))
+                            }
+                        } else {
+                            faces.slot(stripPlane(listOf(lo[m], lo[n], hi[n], hi[m]), FaceName.BlendBand(piece.index, run + 32)))
+                        }
                     b.triangle(lo[m], lo[n], hi[n])
                     b.triangle(lo[m], hi[n], hi[m])
                 }
                 lo = hi
             }
-            if (atStart == null) for (t in piece.caps) b.triangle(p0.at(t.c), p0.at(t.b), p0.at(t.a))
-            if (atEnd == null) for (t in piece.caps) b.triangle(p1.at(t.a), p1.at(t.b), p1.at(t.c))
+            if (atStart == null) {
+                b.face = faces.slot(ringFace(p0, FaceName.BlendCap(piece.index, true)))
+                for (t in piece.caps) b.triangle(p0.at(t.c), p0.at(t.b), p0.at(t.a))
+            }
+            if (atEnd == null) {
+                b.face = faces.slot(ringFace(p1, FaceName.BlendCap(piece.index, false)))
+                for (t in piece.caps) b.triangle(p1.at(t.a), p1.at(t.b), p1.at(t.c))
+            }
         }
         val mesh = b.build()
         if (mesh.triangles.isEmpty()) return null to Msgs.refusalBlendRoundingOwnToolHasNo()
@@ -4703,7 +5151,10 @@ object Blend3 {
         // itself by exactly that micron there, which is a fold in the tool and no fold at all in the body it
         // cuts. A flap is a statement about a *result* (OP-9), and that is where it is asked ([MeshCanon.fault]).
         MeshCanon.notClosed(mesh)?.let { return null to Msgs.refusalBlendRoundingOwnToolIsNot(itWord = it) }
-        return mesh to null
+        // **and the tool states the surfaces it was swept from** (OP-31, slice 5w): the slots opened above,
+        // checked against the mesh they were emitted into, so a `Feature3.MeshBoolean` this drawing builds
+        // names its faces exactly as the body it works on does.
+        return toolSolid(mesh, b.faceOf, faces.faces) to null
     }
 
     // ---- the whole construction ----
@@ -5001,14 +5452,7 @@ object Blend3 {
                     revolvedBand(lead)
                         ?: Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.grownRegion), plan = null)
                 } else {
-                    val (mesh, whyMesh) = toolMesh(stood, group, rings, buttEnds(stood, group, rings), corners)
-                    if (mesh == null) {
-                        null to whyMesh
-                    } else {
-                        // the tool is a union of bands and states nothing else about itself: it is a mesh
-                        // with no analytic reading, which is exactly what [Feature3.MeshBoolean] means (OP-9)
-                        Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
-                    }
+                    toolMesh(stood, group, rings, buttEnds(stood, group, rings), corners, ToolFaces())
                 }
             if (tool == null) {
                 return null to Msgs.refusalQualified(name = lead.crease.edge.name.label, reason = whyTool ?: Msgs.refusalBlendCannotBeSweptAlongIt())
@@ -9821,7 +10265,10 @@ object Blend3 {
      * triangulated, and the cap is stepped a micron past the crease's own end so that it crosses the body
      * transversally instead of standing on the body's own vertex — [endSteps]' rule, said for a loft.
      */
-    private fun canalMesh(canal: Canal): Mesh3? {
+    private fun canalMesh(
+        canal: Canal,
+        faces: ToolFaces = ToolFaces(),
+    ): Mesh3? {
         val rings = ArrayList<List<Vec3>>()
         val first = canal.stations.first()
         val last = canal.stations.last()
@@ -9861,23 +10308,51 @@ object Blend3 {
         }
         if (rings.size < 2) return null
         val tris = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        val owners = ArrayList<Int>()
+        // **the canal's own surfaces, on the tool's side** (OP-31, slice 5w): the ball's arc is swept into
+        // the very pipe the *body*'s band face states — the section's arc is the one part of it the
+        // step-off leaves alone ([canalSectionAt] steps the legs and nothing else) — and every other strip
+        // of the loft is the ruled surface it is.
+        val band = if (canal.bevel) bevelBandPatch(canal) else canalBandPatch(canal)
+        val slots = HashMap<Int, Int>()
+
+        fun stripSlot(m: Int): Int =
+            slots.getOrPut(m) {
+                // **one ring decides the run**, not every one of five hundred: a strip that is the ball's
+                // own arc is its arc at every station, so the middle one states it
+                val ring = rings[rings.size / 2]
+                val pts = listOf(ring[m], ring[(m + 1) % ring.size])
+                val name = FaceName.BlendBand(canal.index, m)
+                faces.slot(facetOn(listOf(band), pts, name).let { if (it === band) it.copy(name = name) else unnamedStrip(name) })
+            }
         for (l in 0 until (if (canal.closed) rings.size else rings.size - 1)) {
             val lo = rings[l]
             val hi = rings[(l + 1) % rings.size]
             if (lo.size != hi.size) return null
             for (m in lo.indices) {
                 val nx = (m + 1) % lo.size
+                val slot = stripSlot(m)
                 tris.add(Triple(lo[m], lo[nx], hi[nx]))
+                owners.add(slot)
                 tris.add(Triple(lo[m], hi[nx], hi[m]))
+                owners.add(slot)
             }
         }
         if (!canal.closed && !first.tip) {
             val place = Placement(first.at - first.t * canal.grow, first.ax, first.ay)
-            for (t in sectionCaps(first.poly)) tris.add(Triple(place.at(t.c), place.at(t.b), place.at(t.a)))
+            val slot = faces.slot(ringFace(place, FaceName.BlendCap(canal.index, true)))
+            for (t in sectionCaps(first.poly)) {
+                tris.add(Triple(place.at(t.c), place.at(t.b), place.at(t.a)))
+                owners.add(slot)
+            }
         }
         if (!canal.closed && !last.tip) {
             val place = Placement(last.at + last.t * canal.grow, last.ax, last.ay)
-            for (t in sectionCaps(last.poly)) tris.add(Triple(place.at(t.a), place.at(t.b), place.at(t.c)))
+            val slot = faces.slot(ringFace(place, FaceName.BlendCap(canal.index, false)))
+            for (t in sectionCaps(last.poly)) {
+                tris.add(Triple(place.at(t.a), place.at(t.b), place.at(t.c)))
+                owners.add(slot)
+            }
         }
         // **the winding is measured rather than argued**: the section's own frame may be a reflection of the
         // world's either way round the run, so the shell is built once and turned inside out if its own
@@ -9885,9 +10360,11 @@ object Blend3 {
         var six = 0.0
         for (t in tris) six += t.first.dot(t.second.cross(t.third))
         val b = Geom3.MeshBuilder()
-        for (t in tris) {
+        for ((i, t) in tris.withIndex()) {
+            b.face = owners[i]
             if (six >= 0.0) b.triangle(t.first, t.second, t.third) else b.triangle(t.first, t.third, t.second)
         }
+        faces.owners = b.faceOf
         return b.build()
     }
 
@@ -9978,8 +10455,9 @@ object Blend3 {
 
     /** The canal's tool as a solid, or the reason there is none. */
     private fun canalTool(canal: Canal): Pair<Solid3?, Msg?> {
-        val mesh = canalMesh(canal) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = canal.edge.name.label)
-        return Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
+        val faces = ToolFaces()
+        val mesh = canalMesh(canal, faces) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = canal.edge.name.label)
+        return toolSolid(mesh, faces.owners, faces.faces) to null
     }
 
     /**
@@ -10815,10 +11293,13 @@ object Blend3 {
         override fun emit(
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
+            faces: ToolFaces,
         ) {
             for (end in ends) {
                 val piece = pieces[end.first]
                 val p = ringAt(end)
+                // …and a cap stands in the plane of the ring it closes on, which is what it states (5w)
+                out.face = faces.slot(ringFace(p, FaceName.BlendCap(piece.index, end.second)))
                 for (t in piece.caps) {
                     if (end.second) out.triangle(p.at(t.c), p.at(t.b), p.at(t.a)) else out.triangle(p.at(t.a), p.at(t.b), p.at(t.c))
                 }
@@ -10832,29 +11313,41 @@ object Blend3 {
                 name3 = shared.name.label,
             )
 
+        /**
+         * The pivot's own **pipe**, with no word about which two bands it turns between — what the *tool*
+         * asks for (OP-31, slice 5w), which has no piece list to name them from. [faces] is this with the
+         * corner's own sentence on it.
+         */
+        fun pipeFace(name: FaceName): FacePatch {
+            // **a pivot's corner face is a canal too** (OP-31, slice 5h), so it is the same carrier the
+            // band along a run is (slice 5l): the pipe of the ball along the spine the shared face and the
+            // upright set, charted in the very `(arc, station)` the corner's own reader already marches.
+            val pipe = pipeOf(stations.map { PipeStation(it.at, it.t, it.ax, it.s) }, r, false)
+            return FacePatch(
+                name,
+                null,
+                pipeTrim(pipe, stations.map { it.a1 to it.sweep }, false),
+                Msgs.refusalSectionBoolCanalBand(name = name.label),
+                null,
+                max(fitted, pipe.fitted),
+                pipe,
+            )
+        }
+
         override fun faces(
             pieces: List<Piece>,
             nameAt: (Int) -> FaceName,
         ): List<FacePatch> {
             val name = nameAt(0)
-            // **a pivot's corner face is a canal too** (OP-31, slice 5h), so it is the same carrier the
-            // band along a run is (slice 5l): the pipe of the ball along the spine the shared face and the
-            // upright set, charted in the very `(arc, station)` the corner's own reader already marches.
-            val pipe = pipeOf(stations.map { PipeStation(it.at, it.t, it.ax, it.s) }, r, false)
             return listOf(
-                FacePatch(
-                    name,
-                    null,
-                    pipeTrim(pipe, stations.map { it.a1 to it.sweep }, false),
-                    Msgs.refusalBlendCornerCanalIsNotPlane(
-                        name = name.label,
-                        sizePhrase = sec.sizePhrase(),
-                        name2 = pieces[ai].crease.edge.name.label,
-                        name3 = pieces[bi].crease.edge.name.label,
-                    ),
-                    null,
-                    max(fitted, pipe.fitted),
-                    pipe,
+                pipeFace(name).copy(
+                    reason =
+                        Msgs.refusalBlendCornerCanalIsNotPlane(
+                            name = name.label,
+                            sizePhrase = sec.sizePhrase(),
+                            name2 = pieces[ai].crease.edge.name.label,
+                            name3 = pieces[bi].crease.edge.name.label,
+                        ),
                 ),
             )
         }
@@ -11608,7 +12101,10 @@ object Blend3 {
      * slice of that band's tube — and the step-off is deliberately **twice** the band's, so the corner's own
      * legs stand outside the band's and the two solids meet transversally instead of sharing a face.
      */
-    private fun cornerMesh(turn: CanalTurn): Mesh3? {
+    private fun cornerMesh(
+        turn: CanalTurn,
+        faces: ToolFaces = ToolFaces(),
+    ): Mesh3? {
         if (turn.stations.size < 2) return null
         val rings = ArrayList<List<Vec3>>(turn.stations.size)
         for ((k, st) in turn.stations.withIndex()) {
@@ -11623,6 +12119,21 @@ object Blend3 {
             rings.add(st.poly.map { st.world(it) + st.t * step })
         }
         val tris = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        val owners = ArrayList<Int>()
+        // **the pivot states its own pipe, and the rest of it the ruled strips they are** (OP-31, slice 5w)
+        // — the ball's arc sweeps the very pipe [CanalTurn.faces] gives the *body*, and every other column
+        // of the walk is a loft between two rulings.
+        val band = turn.pipeFace(FaceName.BlendCorner(turn.ends.map { e -> e.first }, 0))
+        val slots = HashMap<Int, Int>()
+
+        fun stripSlot(m: Int): Int =
+            slots.getOrPut(m) {
+                val ring = rings[rings.size / 2]
+                val pts = listOf(ring[m], ring[(m + 1) % ring.size])
+                val name = FaceName.BlendCorner(turn.ends.map { e -> e.first }, m + 1)
+                val chosen = facetOn(listOf(band), pts, name)
+                faces.slot(if (chosen === band) chosen.copy(name = name) else unnamedStrip(name))
+            }
         for (l in 0 until rings.size - 1) {
             val lo = rings[l]
             val hi = rings[l + 1]
@@ -11653,25 +12164,37 @@ object Blend3 {
                 // both: four triangles to the quad's own centroid, whose volume is exactly the mean of the
                 // two splits, a pure function of the four points, and free of any tie at all. So the routes
                 // agree, and a pivot's tool is the mirror of its mirror's, station for station.
-                val m = (a + b + c + d) * 0.25
-                tris.add(Triple(a, b, m))
-                tris.add(Triple(b, c, m))
-                tris.add(Triple(c, d, m))
-                tris.add(Triple(d, a, m))
+                val mid = (a + b + c + d) * 0.25
+                val slot = stripSlot(m)
+                tris.add(Triple(a, b, mid))
+                tris.add(Triple(b, c, mid))
+                tris.add(Triple(c, d, mid))
+                tris.add(Triple(d, a, mid))
+                for (j in 0 until 4) owners.add(slot)
             }
         }
         val first = turn.stations.first()
         val last = turn.stations.last()
         val placeFirst = Placement(first.at - first.t * turn.endStep.first, first.ax, first.ay)
-        for (t in sectionCaps(first.poly)) tris.add(Triple(placeFirst.at(t.c), placeFirst.at(t.b), placeFirst.at(t.a)))
+        val capFirst = faces.slot(ringFace(placeFirst, FaceName.BlendCap(turn.ends.first().first, true)))
+        for (t in sectionCaps(first.poly)) {
+            tris.add(Triple(placeFirst.at(t.c), placeFirst.at(t.b), placeFirst.at(t.a)))
+            owners.add(capFirst)
+        }
         val placeLast = Placement(last.at + last.t * turn.endStep.second, last.ax, last.ay)
-        for (t in sectionCaps(last.poly)) tris.add(Triple(placeLast.at(t.a), placeLast.at(t.b), placeLast.at(t.c)))
+        val capLast = faces.slot(ringFace(placeLast, FaceName.BlendCap(turn.ends.last().first, false)))
+        for (t in sectionCaps(last.poly)) {
+            tris.add(Triple(placeLast.at(t.a), placeLast.at(t.b), placeLast.at(t.c)))
+            owners.add(capLast)
+        }
         var six = 0.0
         for (t in tris) six += t.first.dot(t.second.cross(t.third))
         val b = Geom3.MeshBuilder()
-        for (t in tris) {
+        for ((i, t) in tris.withIndex()) {
+            b.face = owners[i]
             if (six >= 0.0) b.triangle(t.first, t.second, t.third) else b.triangle(t.first, t.third, t.second)
         }
+        faces.owners = b.faceOf
         return b.build()
     }
 
@@ -11690,10 +12213,11 @@ object Blend3 {
      * (the rule session 84 wrote down for the canal band, said again here).
      */
     private fun cornerTool(turn: CanalTurn): Pair<Solid3?, Msg?> {
-        val mesh = cornerMesh(turn) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = turn.shared.name.label)
+        val faces = ToolFaces()
+        val mesh = cornerMesh(turn, faces) ?: return null to Msgs.refusalBlendCanalSpineNotFollowed(name = turn.shared.name.label)
         if (mesh.triangles.isEmpty() || Geom3.volume(mesh) <= 0.0) return null to Msgs.refusalBlendRoundingOwnToolEnclosesNo()
         MeshCanon.notClosed(mesh)?.let { return null to Msgs.refusalBlendRoundingOwnToolIsNot(itWord = it) }
-        return Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
+        return toolSolid(mesh, faces.owners, faces.faces) to null
     }
 
     /**

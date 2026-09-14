@@ -779,6 +779,21 @@ internal object BoolFace3 {
     /** Whether this carrier states an exact surface at all — the one thing the whole assembly needs of it. */
     private fun carried(c: Carrier): Boolean = c.plane != null || c.surface != null || c.pipe != null || c.ruled != null
 
+    /**
+     * **How far a point of a body stands off the surface one of its own faces states** (OP-31, slice 5w) —
+     * `Double.MAX_VALUE` where that face names no surface at all.
+     *
+     * The one thing a *producer* of a face list needs that a reader of one does not: a tool this drawing
+     * builds states the surfaces it was swept from as it emits them, and what says the statement is true is
+     * that every triangle emitted under it lies on it. So the same implicit form the assembly traces
+     * operand triangles with answers the builder's own check, rather than a second one being written
+     * beside it (OP-4: one definition, read twice).
+     */
+    internal fun offSurface(
+        p: FacePatch,
+        q: Vec3,
+    ): Double = offCarrier(Carrier(0, 0, p.name, p.plane, emptyList(), p.surface, p.pipe, p.strip, slack = p.slack), q)
+
     // ---- solving: a corner is a triple point, a trace is a projection ----
 
     /** The determinant of a 3×3, written once so [solve3] reads as Cramer's rule and nothing else. */

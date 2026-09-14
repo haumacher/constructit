@@ -1001,6 +1001,24 @@ object Geom3 {
         private val buckets = HashMap<Long, MutableList<Int>>()
         private val tris = ArrayList<Tri>()
 
+        /**
+         * **Which face of the body being built the next triangle belongs to** (OP-31, slice 5w) — an index
+         * into whatever face list the caller is keeping, or `-1` for a builder that keeps none.
+         *
+         * A tool this drawing builds is swept from surfaces it knows by name, and the triangulation is the
+         * one place that knowledge is complete: station × arc *is* the band, a leg *is* the wall it stands
+         * off, an ear *is* the cap. So the owner is recorded where the triangle is emitted rather than
+         * looked for afterwards, which is OP-8's rule (a face is stated, never discovered) said for a mesh
+         * that is about to become a boolean operand. Every existing caller leaves it alone and gets
+         * [faceOf] full of `-1`, which costs one int per triangle and says nothing.
+         */
+        var face: Int = -1
+
+        private val owners = ArrayList<Int>()
+
+        /** The face slot each triangle of [build]'s mesh was emitted under, in the mesh's own order. */
+        val faceOf: List<Int> get() = owners
+
         private fun cell(v: Double): Long = round(v / WELD_TOL).toLong()
 
         private fun hash(
@@ -1041,6 +1059,7 @@ object Geom3 {
         ) {
             if (a == b || b == c || a == c) return
             tris.add(Tri(a, b, c))
+            owners.add(face)
         }
 
         fun triangle(
@@ -3143,6 +3162,7 @@ object Geom3 {
         b: Solid3,
     ): Pair<Solid3?, Msg?> {
         combines++
+        combined?.invoke(kind, a, b)
         return if (sameAxis(a.feature, b.feature)) {
             boolean(kind, a, b)
         } else {
@@ -3171,7 +3191,31 @@ object Geom3 {
                     r0 to why0
                 } else {
                     val restated = ToolStep.parted(kind, a.mesh, b.mesh)
-                    if (restated == null) r0 to why0 else MeshBool.boolean(kind, a.mesh, restated)
+                    val (r1, why1) = if (restated == null) r0 to why0 else MeshBool.boolean(kind, a.mesh, restated)
+                    if (r1 != null) {
+                        r1 to why1
+                    } else {
+                        // **…and a tangency along a **curve** is decided by the two surfaces that are
+                        // tangent** (OP-31, slice 5w). A plane is stated exactly by a mesh, so [ToolStep.parted]
+                        // can ask the triangles; a curve is not, and until a tool named its own faces there
+                        // was nothing else to ask. There is now: both operands state the surfaces they are
+                        // made of, and *a sphere of radius `r` centred on the axis of a cylinder of radius
+                        // `r` touches it along one circle* is a fact about those two statements, exact before
+                        // any mesh is looked at.
+                        //
+                        // It is asked **here**, where the kernel has already refused, and deliberately not
+                        // before the first call. Asked up front it was measured and discarded on its own
+                        // evidence: the step is the body's own skin rather than a micron, so every ball that
+                        // stands still against the band it is centred on moved by it — fifteen bodies that
+                        // build today came out different (`BlendVertexTest`, `BlendConcaveVertexTest`,
+                        // `BlendChainCostTest`, `FlapGateProbeTest` among them) — and not one of the four
+                        // cases the from-source engine still fails was cured, because none of them is a
+                        // refusal at all. Asked here it costs nothing that builds.
+                        val fa = Section3.faces(a.feature).first
+                        val fb = Section3.faces(b.feature).first
+                        val apart = if (fa == null || fb == null) null else ToolStep.untangled(kind, fa, fb, b.mesh)
+                        if (apart == null) r1 to why1 else MeshBool.boolean(kind, a.mesh, apart)
+                    }
                 }
             if (r == null) {
                 null to why
@@ -3197,6 +3241,16 @@ object Geom3 {
      */
     var combines: Int = 0
         private set
+
+    /**
+     * **What the drawing is about to hand the kernel, as two *solids*** (OP-31, slice 5w) — the operands
+     * with their features, where `MeshBool`'s own observer sees only the two meshes.
+     *
+     * An observer of a derivation and never a second definition of one, exactly as [combines] is: what a
+     * tool states about itself is a fact about the tool, and the test that asks whether **every** tool this
+     * dressing builds names its own faces has to see the tool rather than its triangles.
+     */
+    internal var combined: ((BoolOp, Solid3, Solid3) -> Unit)? = null
 
     /** Set [combines] back to zero — the test's own bookend. */
     fun resetCombines() {

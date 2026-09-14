@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 /**
  * **A tangency the drawing knows about is decided by the drawing, never handed to the kernel** (OP-31,
@@ -178,6 +179,206 @@ object ToolStep {
                 if (d == Vec3.ZERO) v else v + d
             }
         return Mesh3(moved, b.triangles)
+    }
+
+    // ---- and the tangency two *named* surfaces decide (OP-31, slice 5w) ----
+
+    /**
+     * **A tangency between two named surfaces is decided by what they are, not by how near two
+     * tessellations come** (OP-31, slice 5w) — the second side [parted] never had.
+     *
+     * *The argument.* [parted] asks the two operands' **meshes** whether they share a plane, which is an
+     * exact question because a plane is stated exactly by a triangle. Along a **curve** there is no such
+     * question to ask of triangles: two tangent curved faces are not even chorded the same way, and session
+     * 86 measured what happens to a drawing that guesses — a skin stepped on a measurement took one corner
+     * cell from 0 to 103 bad vertices. But the two faces are not triangles: each is a **named surface**, and
+     * *a sphere of radius `r` centred on the axis of a cylinder of radius `r` touches that cylinder along
+     * one circle* is a fact about the two statements, exact and decidable before any mesh is looked at. That
+     * is what a tool's own provenance buys (slice 5w's first half): until it, every tool `Blend3` built
+     * named no surface at all and this predicate had one side.
+     *
+     * *What is done about it.* The second operand's facets **on that face** are carried off by the face's
+     * own skin ([offCurve], never the micron — the two surfaces are curved and their triangles stand a
+     * tessellation tolerance inside their own truth), along the face's own gradient, on the side the
+     * operation makes irrelevant: out of the first operand's material for a difference or an intersection,
+     * into it for a union. Connectivity is untouched, so the operand stays exactly as watertight as it was.
+     *
+     * *And it is asked only where the kernel has already refused* (`Geom3.combine`), exactly as [parted] is,
+     * which is what keeps it honest in both directions: no body this drawing builds today moves, because a
+     * boolean that answers is never asked twice.
+     *
+     * Null where the two face lists name no such pair — and then nothing is moved and the engine's own
+     * refusal stands, named.
+     */
+    fun untangled(
+        kind: BoolOp,
+        a: List<FacePatch>,
+        b: List<FacePatch>,
+        mesh: Mesh3,
+    ): Mesh3? {
+        for (fb in b) {
+            val skin = curveSkin(fb) ?: continue
+            for (fa in a) {
+                val at = tangentAlongACurve(fa, fb) ?: continue
+                // the gap opens where the second operand leaves the first's material, and a union wants the
+                // other side: the two bodies then genuinely overlap by a skin, which is what a union of two
+                // tangent bodies means
+                val ga = gradientOf(fa, at) ?: continue
+                val gb = gradientOf(fb, at) ?: continue
+                val dot = ga.dot(gb)
+                if (abs(dot) <= 0.5) continue
+                val sense = if (kind == BoolOp.UNION) -1.0 else 1.0
+                val step = sense * skin * (if (dot >= 0.0) 1.0 else -1.0)
+                val lim = TOUCH_TOL + fb.slack
+                var moved = 0
+                val out =
+                    mesh.vertices.map { v ->
+                        val d = offSurface(fb, v)
+                        if (d == null || abs(d) > lim) {
+                            v
+                        } else {
+                            val g = gradientOf(fb, v)
+                            if (g == null) {
+                                v
+                            } else {
+                                moved++
+                                v + g * step
+                            }
+                        }
+                    }
+                if (moved > 0) return Mesh3(out, mesh.triangles)
+            }
+        }
+        return null
+    }
+
+    /** How near a vertex must come to a face's own surface to count as standing on it, in mm. */
+    private const val TOUCH_TOL = 1e-6
+
+    /**
+     * How far a face standing tangent along a curve is carried off — the **body's own skin** at its own
+     * radius, and null for a face this rule has nothing to say about (a plane, whose contact [parted]
+     * decides exactly, and a surface with no radius to read).
+     */
+    private fun curveSkin(p: FacePatch): Double? {
+        val band = p.surface?.band ?: return null
+        val r =
+            when (band) {
+                is Revolve3.Band.Cylinder -> band.r
+                is Revolve3.Band.Sphere -> band.radius
+                is Revolve3.Band.Torus -> band.minor
+                else -> return null
+            }
+        return if (r <= Geom3.WELD_TOL) null else offCurve(r)
+    }
+
+    /**
+     * **Where two named surfaces touch along a curve**, as one point of that curve — or null where the two
+     * of them, being what they are, do not.
+     *
+     * Three statements and no measurement, each of them an identity between the two surfaces' own
+     * parameters: a **sphere in a cylinder** of the same radius, its centre on the axis (they touch along
+     * the great circle square to the axis); a **sphere in a torus** of the same minor radius, its centre on
+     * the torus' own centre circle; and two **parallel cylinders** standing exactly the sum or the
+     * difference of their radii apart (they touch along a ruling). Everything else this drawing can say two
+     * surfaces are is either a crossing, a coincidence or nothing at all, and says so by answering null.
+     */
+    private fun tangentAlongACurve(
+        fa: FacePatch,
+        fb: FacePatch,
+    ): Vec3? {
+        val sa = fa.surface ?: return null
+        val sb = fb.surface ?: return null
+        sphereInCylinder(sa, sb)?.let { return it }
+        sphereInCylinder(sb, sa)?.let { return it }
+        sphereInTorus(sa, sb)?.let { return it }
+        sphereInTorus(sb, sa)?.let { return it }
+        return parallelCylinders(sa, sb)
+    }
+
+    /** A sphere of radius `r` whose centre stands **on** the axis of a cylinder of the same radius. */
+    private fun sphereInCylinder(
+        s: Surface3,
+        c: Surface3,
+    ): Vec3? {
+        val ball = s.band as? Revolve3.Band.Sphere ?: return null
+        val cyl = c.band as? Revolve3.Band.Cylinder ?: return null
+        if (abs(ball.radius - cyl.r) > SURFACE_TOL) return null
+        val centre = s.origin + s.axis * ball.sc
+        val rel = centre - c.origin
+        val radial = rel - c.axis * rel.dot(c.axis)
+        if (radial.length() > SURFACE_TOL) return null
+        // one point of the circle they touch along: square to the cylinder's axis, a radius out
+        return centre + c.ref.normalized() * cyl.r
+    }
+
+    /** A sphere whose centre stands on the **centre circle** of a torus of the same minor radius. */
+    private fun sphereInTorus(
+        s: Surface3,
+        t: Surface3,
+    ): Vec3? {
+        val ball = s.band as? Revolve3.Band.Sphere ?: return null
+        val ring = t.band as? Revolve3.Band.Torus ?: return null
+        if (abs(ball.radius - ring.minor) > SURFACE_TOL) return null
+        val centre = s.origin + s.axis * ball.sc
+        val rel = centre - t.origin
+        val axial = rel.dot(t.axis)
+        val radial = rel - t.axis * axial
+        if (abs(axial - ring.sc) > SURFACE_TOL) return null
+        if (abs(radial.length() - ring.rc) > SURFACE_TOL) return null
+        if (radial.length() <= Geom3.WELD_TOL) return null
+        return centre + radial.normalized() * ball.radius
+    }
+
+    /** Two cylinders with parallel axes standing exactly the sum or the difference of their radii apart. */
+    private fun parallelCylinders(
+        a: Surface3,
+        b: Surface3,
+    ): Vec3? {
+        val ca = a.band as? Revolve3.Band.Cylinder ?: return null
+        val cb = b.band as? Revolve3.Band.Cylinder ?: return null
+        if (abs(abs(a.axis.dot(b.axis)) - 1.0) > PARALLEL_TOL) return null
+        val rel = b.origin - a.origin
+        val off = rel - a.axis * rel.dot(a.axis)
+        val d = off.length()
+        if (d <= Geom3.WELD_TOL) return null
+        if (abs(d - (ca.r + cb.r)) > SURFACE_TOL && abs(d - abs(ca.r - cb.r)) > SURFACE_TOL) return null
+        return a.origin + a.axis * rel.dot(a.axis) + off.normalized() * ca.r
+    }
+
+    /** How nearly two radii or two centres must agree for the identity to hold — an equality, not a fit. */
+    private const val SURFACE_TOL = 1e-7
+
+    /** How far [p] stands off the surface [f] states, or null where it states none. */
+    private fun offSurface(
+        f: FacePatch,
+        p: Vec3,
+    ): Double? = if (f.surface == null) null else BoolFace3.offSurface(f, p)
+
+    /** The outward unit normal of [f]'s own surface at [p], or null where it has none there. */
+    private fun gradientOf(
+        f: FacePatch,
+        p: Vec3,
+    ): Vec3? {
+        val s = f.surface ?: return null
+        val rel = p - s.origin
+        val axial = rel.dot(s.axis)
+        val radial = rel - s.axis * axial
+        val r = radial.length()
+        return when (val band = s.band) {
+            is Revolve3.Band.Cylinder -> if (r <= Geom3.WELD_TOL) null else radial * (1.0 / r)
+            is Revolve3.Band.Sphere -> {
+                val d = p - (s.origin + s.axis * band.sc)
+                if (d.length() <= Geom3.WELD_TOL) null else d.normalized()
+            }
+            is Revolve3.Band.Torus -> {
+                val ds = axial - band.sc
+                val dr = r - band.rc
+                val h = sqrt(ds * ds + dr * dr)
+                if (h <= Geom3.WELD_TOL || r <= Geom3.WELD_TOL) null else (s.axis * (ds / h) + radial * (1.0 / r) * (dr / h)).normalized()
+            }
+            else -> null
+        }
     }
 
     /**
