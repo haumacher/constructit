@@ -10361,18 +10361,56 @@ object Blend3 {
      * tolerance they reached, and its own cut is read through the rulings ([canalCut], marched on the
      * strip's own `(station, t)` chart).
      */
-    private fun bevelBandPatch(canal: Canal): FacePatch =
-        FacePatch(
+    private fun bevelBandPatch(canal: Canal): FacePatch {
+        // **the strip runs as far as the tool did**, which is [Canal.grow] past each free end — the same
+        // reading a canal band's pipe takes of its own surface ([canalBandPatch]): the loft's end ring is
+        // *moved* there rather than doubled, so over that last step the strip is the last ruling carried
+        // straight along the run's own direction. Two extra rulings state exactly that, and without them the
+        // body's own cap facet stands on a surface the carrier has already ended (OP-31, slice 5r).
+        val ends = if (canal.closed) 0.0 else canal.grow
+        val rs = ArrayList<Ruling3>(canal.stations.size + 2)
+        val first = canal.stations.first()
+        val last = canal.stations.last()
+        if (!canal.closed) rs.add(Ruling3(first.p1 - first.t * ends, first.p2 - first.t * ends, 0.0))
+        for (st in canal.stations) rs.add(Ruling3(st.p1, st.p2, st.s + ends))
+        if (!canal.closed) rs.add(Ruling3(last.p1 + last.t * ends, last.p2 + last.t * ends, last.s + 2.0 * ends))
+        val strip = if (rs.size >= 2) ruledOf(rs, canal.closed) else null
+        return FacePatch(
             canal.name,
             null,
             emptyList(),
             Msgs.refusalBlendBevelStripIsNotPlane(name = canal.name.label, sizePhrase = canal.sec.sizePhrase(), name2 = canal.edge.name.label),
             null,
-            canal.fitted,
+            if (strip == null) canal.fitted else max(canal.fitted, strip.fitted),
             null,
             false,
             true,
+            strip,
         )
+    }
+
+    /**
+     * **A ruled strip from the rulings its builder solved** (OP-31, slice 5r), with the tolerance an
+     * interpolated ruling may stand from the true one — measured rather than asserted, by exactly the
+     * reading [pipeOf] takes of a spine: the same Catmull–Rom built through **half** the rulings is asked
+     * for the ones it skipped, and the worst miss of either rail is carried.
+     */
+    private fun ruledOf(
+        rulings: List<Ruling3>,
+        closed: Boolean,
+    ): Ruled3 {
+        var worst = 0.0
+        if (rulings.size >= 9) {
+            val coarse = Ruled3(rulings.filterIndexed { i, _ -> i % 2 == 0 }, closed, 0.0)
+            for (i in 3 until rulings.size - 3) {
+                if (i % 2 == 1) {
+                    worst = max(worst, (coarse.railA(i / 2.0) - rulings[i].a).length())
+                    worst = max(worst, (coarse.railB(i / 2.0) - rulings[i].b).length())
+                }
+            }
+        }
+        return Ruled3(rulings, closed, max(worst, 1e-12))
+    }
 
     // ---- the canal corner: the ball pivoting about a slanted or a ring upright (OP-31, slice 5h) ----
 

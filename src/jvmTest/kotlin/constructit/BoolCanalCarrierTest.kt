@@ -264,11 +264,17 @@ class BoolCanalCarrierTest {
         val was = areaAt(plain, level, "the unbored canal's level section")
         val now = areaAt(bored, level, "the bored canal's level section")
         // **the bore stands clear of the band's own trace**, so what the level section keeps of the canal is
-        // exactly what it kept before: the two areas agree to a hundredth of a square millimetre, which is
-        // the chord tolerance of the two curved traces the plane leaves on the band and its neighbours. What
-        // the bore itself takes out of that plane is the bore's own face and is asserted where it is made
-        // (see the class note's cut on a bore's circle standing as a loop of the section).
-        assertClose(now, was, tol = 1e-1, msg = "the canal's own trace in the level section is untouched by a bore clear of it")
+        // exactly what it kept before and what it loses is exactly the bore's own circle — a loop of the
+        // section in its own right (OP-31, slice 5l's last case: before the bore's cylinder could state
+        // which side of itself the material stands on, that loop was dropped and the section came back with
+        // the block's own area and no hole in it). The tolerance is the chord tolerance of the two curved
+        // traces the plane leaves on the band and its neighbours.
+        assertClose(
+            now,
+            was - PI * r * r,
+            tol = 1e-1,
+            msg = "the canal's own trace in the level section is untouched by a bore clear of it, and the bore's own circle is a hole in it",
+        )
         assertTrue(Geom3.volume(bored.mesh) < Geom3.volume(plain.mesh), "and the bore took material")
         assertClose(
             Geom3.volume(plain.mesh) - Geom3.volume(bored.mesh),
@@ -306,16 +312,91 @@ class BoolCanalCarrierTest {
         closes(bored, Plane3(Vec3(0.0, 0.0, 5.0), Vec3.X, Vec3.Y), "the level section at z = 5, below the roundings")
         var closed = 0
         if (closesOrSaysWhy(bored, Plane3(Vec3(0.0, 0.0, 17.5), Vec3.X, Vec3.Y), "the level section at z = 17.5")) closed++
-        if (closesOrSaysWhy(bored, Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z), "a vertical section through the bore")) closed++
+        val vertical = Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z)
+        if (closesOrSaysWhy(bored, vertical, "a vertical section through the bore")) closed++
         if (closesOrSaysWhy(bored, Plane3(Vec3(30.0, 22.0, 14.0), Vec3.X, Vec3(0.0, cos(PI / 7), sin(PI / 7))), "a tilted section through the bore")) closed++
-        // **the measure of this slice's own open ground** (OP-31, slice 5l). Before the trim was bridged and
-        // the section's pieces carried their trim's own tolerance, *none* of the three closed and each broke
-        // at a neighbouring band; the level and the tilted close now. The one still open is the **vertical**
-        // plane, which breaks at the bore's own cylinder — a face whose trim goes **round** the chart and
-        // closes on no loop at all, so containment on it is still read by the nearest piece it can find.
-        assertTrue(closed >= 2, "the level and the tilted sections through a bored canal band close: $closed of 3")
+        // **all three close** (OP-31, slice 5l). Before the trim was bridged and the section's pieces
+        // carried their trim's own tolerance, *none* of the three closed and each broke at a neighbouring
+        // band; the level and the tilted closed once it was, and the **vertical** — which stands on the
+        // bore's own cylinder, whose trim goes **round** the chart and closes on no loop the boolean ever
+        // wrote down — closes since that boundary is shut on the carrier's own natural end, the sense of
+        // each run read off the face's own triangles rather than guessed at from the nearest piece.
+        assertEquals(3, closed, "every section through a bored canal band closes")
         println("canal carrier | bore through the band | $closed of 3 sections close")
+
+        // …and the vertical section's own **area** is stated: the unbored body's area in that plane less
+        // what the bore takes out of it there, and the bore's trace is asked of the drawing itself — the
+        // section of the very intersection of the two operands, in the same plane.
+        val plain = Evaluator().solid(canal)
+        val trace = Evaluator().solid(cx.intersect(canal, drill(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y), Vec2(38.0, 28.0), 1.5)))
+        val was = areaAt(plain, vertical, "the unbored canal body's vertical section at x = 38")
+        val now = areaAt(bored, vertical, "the bored canal body's vertical section at x = 38")
+        val took = areaAt(trace, vertical, "the bore's own trace in that plane")
+        // …to the tolerance the three are carried at: each of the three areas is read off curved traces
+        // stated as chains — the band's own trim says 0.017 mm — and the trace body is itself a boolean of
+        // two tessellated curved solids, so what the three may disagree by is a few hundredths of the
+        // millimetre over the three millimetres the bore is wide.
+        assertClose(now, was - took, tol = 0.2, msg = "the vertical section at x = 38 is the unbored body's less the bore's trace there")
+        println("canal carrier | bore through the band | vertical at x = 38: $was - $took -> $now")
         println("canal carrier | bore through the band | ${fs.size} faces, ${bands.size} band piece(s)")
+    }
+
+    /**
+     * **A plane that grazes the bore** — tangent to the bore's own cylinder along a ruling, so it touches
+     * the rim the bore leaves on the band at one point and takes nothing away from the unbored body's own
+     * section (OP-31, slice 5l).
+     *
+     * *Why it is asked here.* A trim that goes **round** its chart is closed on the carrier's own natural
+     * end, and a grazing plane is where that closure is thinnest: the section of the bore's cylinder in it
+     * is a single point, not a curve, so whichever side of the trim the reader stands on it has no width to
+     * stand in. The contract is this class's own — **closed, or said where** — and what is asserted is
+     * which: the plane closes, on both tangent sides, and states the unbored body's own area, the tangency
+     * contributing nothing at all.
+     */
+    @Test
+    fun aPlaneGrazingTheBoresRimClosesAndStatesTheTangencyOnce() {
+        requireEngine()
+        val cx = Construction()
+        val canal = canalBody(cx)
+        val at = Vec2(38.0, 28.0)
+        val r = 1.5
+        val bored = Evaluator().solid(cx.subtract(canal, drill(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y), at, r)))
+        assertManifold(bored.mesh, "the canal body bored through its own band")
+        val plain = Evaluator().solid(canal)
+        for (side in listOf(-1.0, 1.0)) {
+            val x = at.x + side * r
+            val plane = Plane3(Vec3(x, 0.0, 0.0), Vec3.Y, Vec3.Z)
+            val what = "a vertical plane grazing the bore at x = $x"
+            val (regions, why) = Section3.regionsOf(bored.feature, plane)
+            val rs = assertNotNull(regions, "$what closes: ${why?.render()}")
+            assertTrue(rs.isNotEmpty(), "…with an area")
+            var now = 0.0
+            for (g in rs) {
+                now += abs(GeomMath.signedArea(g.outer))
+                for (h in g.holes) now -= abs(GeomMath.signedArea(h))
+            }
+            // **the tangency is stated once and takes nothing**: a plane touching the bore's cylinder along
+            // one ruling removes no area at all, so the grazed section is the unbored body's own, to the
+            // chord tolerance of the curved traces it is read off. Where the *unbored* body's own section
+            // in that plane does not close the comparison is not this slice's to make — a plane within two
+            // millimetres of the mitre's corner breaks at the **dressed** body's rounded band, which is the
+            // one case the (5l) line still carries and no boolean is involved in it at all — and the
+            // grazed section is held to closing, which is what this fixture is about.
+            val (ref, refWhy) = Section3.regionsOf(plain.feature, plane)
+            if (ref == null) {
+                val reason = assertNotNull(refWhy, "the unbored body says why it does not close").render()
+                assertTrue(reason.contains("band"), "…naming the band: $reason")
+                println("canal carrier | grazing at x = $x | closes at $now; the unbored body itself does not, at its own band")
+                continue
+            }
+            var was = 0.0
+            for (g in ref) {
+                was += abs(GeomMath.signedArea(g.outer))
+                for (h in g.holes) was -= abs(GeomMath.signedArea(h))
+            }
+            assertClose(now, was, tol = 0.2, msg = "$what states the unbored body's own area")
+            println("canal carrier | grazing at x = $x | closes | $was -> $now")
+        }
     }
 
     /** **A boss fused on** — the other gesture route, and the union rather than the difference. */

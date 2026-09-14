@@ -687,6 +687,318 @@ data class Pipe3(
 }
 
 /**
+ * One **ruling** of a ruled strip (OP-31, slice 5r): the straight segment between the two setback points a
+ * constant-width bevel leaves on its two walls, each of them *exact* on the wall it was stepped along, and
+ * [s] the arc length the ruling stands at along the strip's own run.
+ */
+data class Ruling3(
+    val a: Vec3,
+    val b: Vec3,
+    val s: Double,
+)
+
+/**
+ * **The fifth carrier**: the ruled strip a bevel along a crease of changing dihedral leaves (OP-31, slice
+ * 5r), beside the plane, the revolution, the pipe and the boolean's own kept face.
+ *
+ * *Why it had to become one.* Slice 5n built the strip — the loft between the two setback traces, whose
+ * every ruling is a closed reading of the crease point under it — and gave it a face of its own
+ * ([FacePatch.ruled]). Like the canal band one slice earlier, that face was only ever **drawn**: through a
+ * general boolean a triangle has to be *looked up against* a carrier, and a strip was neither a plane, nor a
+ * [Surface3], nor a [Pipe3], so a body carrying one refused its whole face list by name. This is the same
+ * five obligations [Pipe3] met, one surface over.
+ *
+ * *What it is.* The surface `P(s, t) = a(s) + t·(b(s) − a(s))`, with the two rails `a` and `b` interpolated
+ * through the exact setback points by the very Catmull–Rom the pipe's spine uses. Its chart is `(station,
+ * t)` — the arc length along the run and the fraction along the ruling — and neither coordinate **wraps**,
+ * which is the one thing that tells it apart from every other carrier in this drawing: a revolution turns
+ * about its axis and a pipe turns about its spine, and a strip turns about nothing at all.
+ *
+ * *What is exact and what is fitted* (Tier B). Every [rulings] entry is exact — both of its ends are points
+ * this drawing solved on the walls themselves — and a ruling *between* two of them is the interpolant's,
+ * with [fitted] saying how far that may stand from the truth. A point interpolated **along** a ruling is
+ * exact whatever the ruling is, which is what makes the `t` half of the chart cost nothing.
+ */
+data class Ruled3(
+    val rulings: List<Ruling3>,
+    /** Whether the run closes on itself — then the chart's first coordinate wraps by [length]. */
+    val closed: Boolean,
+    /** How far an interpolated ruling may stand from the true one, in mm. */
+    val fitted: Double,
+) {
+    /** The whole run's length — the chart's own `station` range, and its period where the run closes. */
+    val length: Double by lazy {
+        if (rulings.isEmpty()) {
+            0.0
+        } else if (closed) {
+            rulings.last().s + (mid(rulings.first()) - mid(rulings.last())).length()
+        } else {
+            rulings.last().s
+        }
+    }
+
+    private fun mid(r: Ruling3): Vec3 = (r.a + r.b) * 0.5
+
+    /**
+     * **How far the mesh's own chord between two rulings stands from the strip**, in mm (OP-31, slice 5r).
+     *
+     * The loft lays a flat quad between two consecutive rulings, so a vertex a boolean makes on that quad
+     * stands off the true strip by this much and by nothing else — it is the recognition tolerance a lookup
+     * against this carrier owes, said by the strip about itself rather than borrowed from a radius.
+     */
+    val chord: Double by lazy {
+        var w = 0.0
+        for (i in 0 until rulings.size - 1) {
+            for (f in listOf(0.25, 0.5, 0.75)) {
+                val u = i + f
+                w = max(w, (railA(u) - (rulings[i].a * (1.0 - f) + rulings[i + 1].a * f)).length())
+                w = max(w, (railB(u) - (rulings[i].b * (1.0 - f) + rulings[i + 1].b * f)).length())
+            }
+        }
+        w
+    }
+
+    private val box: Pair<Vec3, Vec3> by lazy {
+        var lo = Vec3(Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE)
+        var hi = Vec3(-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE)
+        for (r in rulings) {
+            for (q in listOf(r.a, r.b)) {
+                lo = Vec3(min(lo.x, q.x), min(lo.y, q.y), min(lo.z, q.z))
+                hi = Vec3(max(hi.x, q.x), max(hi.y, q.y), max(hi.z, q.z))
+            }
+        }
+        lo to hi
+    }
+
+    /** A rail point at index [i], reflected past an open end and wrapped round a closed one. */
+    private fun knot(
+        i: Int,
+        far: Boolean,
+    ): Vec3 {
+        val n = rulings.size
+        if (n == 0) return Vec3(0.0, 0.0, 0.0)
+
+        fun at(k: Int) = if (far) rulings[k].b else rulings[k].a
+        if (closed) return at(((i % n) + n) % n)
+        if (i < 0) return at(0) * 2.0 - at(min(1, n - 1))
+        if (i >= n) return at(n - 1) * 2.0 - at(max(0, n - 2))
+        return at(i)
+    }
+
+    private fun cr(
+        u: Double,
+        far: Boolean,
+    ): Vec3 {
+        val i = floor(u).toInt()
+        val f = u - i
+        val p0 = knot(i - 1, far)
+        val p1 = knot(i, far)
+        val p2 = knot(i + 1, far)
+        val p3 = knot(i + 2, far)
+        val a = p1 * 2.0
+        val b = p2 - p0
+        val c = p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3
+        val d = p1 * 3.0 - p0 - p2 * 3.0 + p3
+        return (a + b * f + c * (f * f) + d * (f * f * f)) * 0.5
+    }
+
+    private fun crTan(
+        u: Double,
+        far: Boolean,
+    ): Vec3 {
+        val i = floor(u).toInt()
+        val f = u - i
+        val p0 = knot(i - 1, far)
+        val p1 = knot(i, far)
+        val p2 = knot(i + 1, far)
+        val p3 = knot(i + 2, far)
+        val b = p2 - p0
+        val c = p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3
+        val d = p1 * 3.0 - p0 - p2 * 3.0 + p3
+        return (b + c * (2.0 * f) + d * (3.0 * f * f)) * 0.5
+    }
+
+    /** The near rail at index parameter [u] — `C¹` through every exact setback point. */
+    fun railA(u: Double): Vec3 = cr(u, false)
+
+    /** The far rail at index parameter [u]. */
+    fun railB(u: Double): Vec3 = cr(u, true)
+
+    /** The arc length at index parameter [u] — the chart's own first coordinate. */
+    fun arcLengthAt(u: Double): Double {
+        if (rulings.isEmpty()) return 0.0
+        val n = rulings.size
+        val i = floor(u).toInt()
+        val f = u - i
+        val s0 =
+            if (i in 0 until n) {
+                rulings[i].s
+            } else if (i < 0) {
+                rulings[0].s
+            } else {
+                length
+            }
+        val s1 = if (i + 1 in 0 until n) rulings[i + 1].s else length
+        return s0 + (s1 - s0) * f
+    }
+
+    /** The index parameter the arc length [t] stands at — [arcLengthAt]'s own inverse. */
+    fun indexAt(t: Double): Double {
+        val n = rulings.size
+        if (n < 2) return 0.0
+        if (t <= rulings[0].s) return 0.0
+        for (i in 0 until n - 1) {
+            if (t <= rulings[i + 1].s) {
+                val span = rulings[i + 1].s - rulings[i].s
+                return i + (if (span <= Vec3.EPS) 0.0 else (t - rulings[i].s) / span)
+            }
+        }
+        if (!closed) return (n - 1).toDouble()
+        val span = length - rulings[n - 1].s
+        return (n - 1) + (if (span <= Vec3.EPS) 0.0 else ((t - rulings[n - 1].s) / span).coerceIn(0.0, 1.0))
+    }
+
+    /**
+     * How far [p] stands from the **ruling** at index parameter [u] — what the station solve minimises.
+     *
+     * It is the distance to the ruling as a *segment* and not to its whole line (OP-31, slice 5r's probe).
+     * Where a strip runs out to a **tip** — the two walls running tangent, so the two setback points close
+     * on each other — the rulings there are short and nearly coincident, and every one of them stands the
+     * same tiny distance from the line of its neighbours: the minimiser then wanders and the chart stops
+     * being single-valued, so two trims of one strip overlap and which of them a triangle falls in is not a
+     * fact about the body at all. Measured as a segment the answer is the ruling the point is really on.
+     */
+    private fun lineMiss(
+        p: Vec3,
+        u: Double,
+    ): Double {
+        val a = railA(u)
+        val d = railB(u) - a
+        val len2 = d.dot(d)
+        if (len2 <= Vec3.EPS * Vec3.EPS) return (p - a).length()
+        val t = ((p - a).dot(d) / len2).coerceIn(0.0, 1.0)
+        return (p - (a + d * t)).length()
+    }
+
+    /**
+     * The index parameter of the ruling [p] stands on — scanned over the exact rulings and then
+     * golden-sectioned between its two neighbours, which is [Pipe3.stationOf]'s own reading one surface over.
+     *
+     * It is the **nearest ruling** and not a root chosen at random, so the answer is single-valued wherever
+     * the rulings do not cross — and where they do, the strip has folded and its builder has already refused
+     * by name (slice 5n's `bevelStripFoldsBack`).
+     */
+    fun stationOf(p: Vec3): Double {
+        val n = rulings.size
+        if (n <= 1) return 0.0
+        var best = 0
+        var bestD = Double.MAX_VALUE
+        for (i in 0 until n) {
+            val d = lineMiss(p, i.toDouble())
+            if (d < bestD) {
+                bestD = d
+                best = i
+            }
+        }
+        var lo = (best - 1).toDouble()
+        var hi = (best + 1).toDouble()
+        if (!closed) {
+            lo = max(0.0, lo)
+            hi = min((n - 1).toDouble(), hi)
+        }
+        if (hi - lo <= 1e-12) return lo
+        val g = 0.6180339887498949
+        var x1 = hi - g * (hi - lo)
+        var x2 = lo + g * (hi - lo)
+        var f1 = lineMiss(p, x1)
+        var f2 = lineMiss(p, x2)
+        repeat(48) {
+            if (f1 < f2) {
+                hi = x2
+                x2 = x1
+                f2 = f1
+                x1 = hi - g * (hi - lo)
+                f1 = lineMiss(p, x1)
+            } else {
+                lo = x1
+                x1 = x2
+                f1 = f2
+                x2 = lo + g * (hi - lo)
+                f2 = lineMiss(p, x2)
+            }
+        }
+        return (lo + hi) / 2.0
+    }
+
+    /** The unit normal of the strip at `(u, t)`, or null where the ruling degenerates to a point. */
+    fun normalAt(
+        u: Double,
+        t: Double,
+    ): Vec3? {
+        val d = railB(u) - railA(u)
+        if (d.length() <= Vec3.EPS) return null
+        val along = crTan(u, false) + (crTan(u, true) - crTan(u, false)) * t
+        val n = along.cross(d)
+        return if (n.length() <= Vec3.EPS) null else n.normalized()
+    }
+
+    /** Whether [p] stands within [slack] of the box this strip lies in — the cheap reject a face list needs. */
+    fun near(
+        p: Vec3,
+        slack: Double,
+    ): Boolean {
+        if (rulings.isEmpty()) return false
+        val (lo, hi) = box
+        return p.x >= lo.x - slack && p.y >= lo.y - slack && p.z >= lo.z - slack &&
+            p.x <= hi.x + slack && p.y <= hi.y + slack && p.z <= hi.z + slack
+    }
+
+    /** How far [p] stands off this strip, signed — zero exactly on it, and `C¹` in [p] where the strip is. */
+    fun offset(p: Vec3): Double {
+        if (rulings.size < 2) return Double.MAX_VALUE
+        val u = stationOf(p)
+        val a = railA(u)
+        val d = railB(u) - a
+        if (d.length() <= Vec3.EPS) return (p - a).length()
+        val t = (p - a).dot(d) / d.dot(d)
+        val n = normalAt(u, t) ?: return (p - a).cross(d).length() / d.length()
+        return (p - a).dot(n)
+    }
+
+    /** The gradient of [offset] at [p] — the strip's own unit normal there. */
+    fun gradient(p: Vec3): Vec3 {
+        if (rulings.size < 2) return Vec3(0.0, 0.0, 0.0)
+        val u = stationOf(p)
+        val a = railA(u)
+        val d = railB(u) - a
+        if (d.length() <= Vec3.EPS) return Vec3(0.0, 0.0, 0.0)
+        val t = (p - a).dot(d) / d.dot(d)
+        return normalAt(u, t) ?: Vec3(0.0, 0.0, 0.0)
+    }
+
+    /** Where [p] stands in this strip's own `(station, t)` chart. */
+    fun chartOf(p: Vec3): Vec2? {
+        if (rulings.size < 2) return null
+        val u = stationOf(p)
+        val a = railA(u)
+        val d = railB(u) - a
+        val t = if (d.length() <= Vec3.EPS) 0.5 else (p - a).dot(d) / d.dot(d)
+        return Vec2(arcLengthAt(u), t)
+    }
+
+    /** The world point at station [th], fraction [t] along its ruling — the chart's own inverse, and exact in [t]. */
+    fun world(
+        th: Double,
+        t: Double,
+    ): Vec3? {
+        if (rulings.size < 2) return null
+        val u = indexAt(th)
+        val a = railA(u)
+        return a + (railB(u) - a) * t
+    }
+}
+
+/**
  * The **two named faces an edge bounds** (OP-8, session 71 slice 1) — stated by the feature that built the
  * edge, never discovered from triangles.
  *
@@ -794,11 +1106,19 @@ data class FacePatch(
      *
      * It is a fourth statement beside [plane], [surface] and [pipe] rather than a case inside any of them,
      * because a strip's chart is `(station, t)` and none of the three can say that. A section reads it on
-     * that chart — exact where the plane crosses a ruling, chords between two of them — and a **general boolean** has
-     * no carrier for it yet: the slot refuses by name there ([Msgs.refusalSectionBoolBevelStrip]) rather
-     * than letting the result's faces go emergent without saying so.
+     * that chart — exact where the plane crosses a ruling, chords between two of them — and since OP-31's
+     * slice 5r a **general boolean** reads it there too, on the [strip] this face carries.
      */
     val ruled: Boolean = false,
+    /**
+     * The **ruled strip** this face is a patch of, where it is one (OP-31, slice 5r) — the fifth carrier of
+     * this drawing's surface vocabulary, beside [plane], [surface] and [pipe].
+     *
+     * Non-null exactly where [ruled] is true **and** the strip's own rulings could be stated: a strip whose
+     * rulings this drawing could not put down — fewer than two of them — keeps [ruled] and says so where a
+     * carrier is asked for ([Msgs.refusalSectionBoolBevelStrip], narrowed to that case by slice 5r).
+     */
+    val strip: Ruled3? = null,
 )
 
 /**
@@ -2245,6 +2565,20 @@ object Section3 {
             }
             return off
         }
+        // **and so does a bevel's ruled strip** (OP-31, slice 5r): the strip's own signed distance, and its
+        // trim read in the `(station, t)` chart — with the station and the ruling both inside their own
+        // extents, because a strip's natural boundary is stated by the surface itself and not by a trim.
+        patch.strip?.let { strip ->
+            val off = abs(strip.offset(at))
+            if (off > tol) return null
+            val q = strip.chartOf(at) ?: return null
+            if (patch.outline.isNotEmpty()) {
+                if (!BoolFace3.onRuled(strip, patch.outline, q)) return null
+            } else if (q.x < -tol || q.x > strip.length + tol || q.y < -1e-6 || q.y > 1.0 + 1e-6) {
+                return null
+            }
+            return off
+        }
         val surface = patch.surface ?: return null
         val off = surfaceOff(surface, at, tol) ?: return null
         return if (off > tol) null else off
@@ -2734,7 +3068,7 @@ object Section3 {
         // the boolean left on it — which is stated in the surface's own `(θ, t)` and read there
         // ([BoolFace3.cutPatch]). Where the table has no name for the curve the chart is marched instead and
         // the answer is chords, flagged (OP-15).
-        if (feature is Feature3.MeshBoolean && (patch.surface != null || patch.pipe != null)) {
+        if (feature is Feature3.MeshBoolean && (patch.surface != null || patch.pipe != null || patch.strip != null)) {
             BoolFace3.cutPatch(patch, cut)?.let { (exact, runs) ->
                 return bandCutToEdge(label, Revolve3.BandCut(if (runs.isEmpty()) exact else null, if (runs.isEmpty()) null else runs))
             }
@@ -3479,6 +3813,18 @@ object Section3 {
                     carriers.add(BoolFace3.Carrier(k, j, p.name, null, emptyList(), null))
                     continue
                 }
+                // **a bevel's ruled strip is the fifth carrier** (OP-31, slice 5r): the strip between the
+                // two setback traces, with its trim stated in the strip's own `(station, t)`. It is the
+                // carrier slice 5n's note said the drawing owed, and until it was built a body carrying a
+                // bevel refused its whole face list. It is asked for **before** the emptied-slot rule below, as the
+                // pipe and the revolution are, because a strip piece a first boolean kept is named `BoolFace`
+                // and still carries its rulings — the slice 5r probe bored a bevelled body twice and the
+                // second boolean read the strip as an emptied slot, refusing the whole list.
+                val strip = p.strip
+                if (strip != null && strip.rulings.size >= 2) {
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, null, strip))
+                    continue
+                }
                 // **A slot an earlier boolean already emptied is not a curved face.** A face this operand
                 // lost to a boolean of its own keeps its slot and states that as its reason
                 // ([Msgs.refusalSectionBoolFaceConsumed]) — so it carries no surface here either and keeps
@@ -3490,10 +3836,8 @@ object Section3 {
                 // …and a canal band whose spine this drawing could not state at all — fewer than two
                 // stations — keeps the sentence slice 5f gave it, narrowed to that one case (slice 5l).
                 if (p.pipe != null) return null to Msgs.refusalSectionBoolCanalBand(name = p.name.label)
-                // **a bevel's ruled strip is the fifth carrier, and it is not built** (OP-31, slice 5n):
-                // the boolean would need a `sits` predicate on a bilinear patch and a trim in the strip's
-                // own `(station, t)`, and until it has them the slot says so in the words the canal band
-                // had before slice 5l gave it one
+                // …and a strip whose **rulings** this drawing could not state at all keeps the sentence
+                // slice 5n gave it, narrowed to that one case the same way (slice 5r).
                 if (p.ruled) return null to Msgs.refusalSectionBoolBevelStrip(name = p.name.label)
                 // …and a face whose surface this drawing has no name for at all is the sink that stands
                 return null to Msgs.refusalSectionBoolFaceNotPlane(name = p.name.label)

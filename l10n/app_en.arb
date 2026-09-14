@@ -19723,7 +19723,16 @@
       }
     }
   },
-  "refusal.section.boolBevelStrip": "this solid is a general boolean, and {name} of one of the two solids it was made from is the ruled strip a chamfer leaves along a crease whose angle changes — a surface this drawing states only as its own rulings, so there is nothing to trace a boolean's own triangles back to there and this body's faces stay emergent; make the boolean first and put the chamfer on its result",
+  "refusal.section.boolFaceIsRuled": "{name} is a ruled strip — the surface a chamfer leaves along a crease whose angle changes, stated by its own straight rulings — and so is neither a plane nor a surface of revolution; there is nothing to sketch on there, so put a datum plane where you want to sketch",
+  "@refusal.section.boolFaceIsRuled": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why one face of the result of a general boolean cannot be sketched on: it is a piece of the ruled strip a chamfer left along an edge whose angle changes from one end to the other, on one of the two solids that went into the boolean. {name} is that face's own name and is itself a translated message.",
+    "placeholders": {
+      "name": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.section.boolBevelStrip": "this solid is a general boolean, and {name} of one of the two solids it was made from is the ruled strip a chamfer leaves along a crease whose angle changes, whose own straight rulings this drawing could not state at all, so there is nothing to trace a boolean's own triangles back to there and this body's faces stay emergent; make the boolean first and put the chamfer on its result",
   "@refusal.section.boolBevelStrip": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why a section through a solid cannot be drawn and what to do instead. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {

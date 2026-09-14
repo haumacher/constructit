@@ -169,7 +169,7 @@ class BlendBevelCanalTest {
      * silence (queued as (5r)).
      */
     @Test
-    fun throughTheGeneralBooleanTheStripRefusesByNameAsTheUnbuiltFifthCarrier() {
+    fun throughTheGeneralBooleanTheStripIsNamedAsTheFifthCarrier() {
         assumeTrue(MeshBool.available, "no general boolean engine: ${MeshBool.status}")
         val cx = Construction()
         val two = twoRounds(cx, 4.0, 4.0)
@@ -177,12 +177,24 @@ class BlendBevelCanalTest {
         val bevelled = bevel(cx, two, mitre, 1.0)
         val bored = Evaluator().solid(cx.subtract(bevelled, drill(cx, Vec2(12.0, 12.0), 3.0)))
         assertManifold(bored.mesh, "the bevelled body bored")
-        val (faces, whyFaces) = Section3.faces(bored.feature)
-        assertEquals(null, faces, "a boolean over a body carrying a ruled strip states no face list yet")
-        val said = assertNotNull(whyFaces, "…and it says why").render()
-        assertTrue(said.contains("ruled strip"), "…naming the strip: $said")
-        assertTrue(said.contains("#") || said.contains("band"), "…and naming the face: $said")
-        println("bevel | through the boolean | $said")
+        val faces = assertNotNull(Section3.faces(bored.feature).first, "the boolean names its faces: ${Section3.faces(bored.feature).second?.render()}")
+        for (f in faces) {
+            assertTrue(
+                f.plane != null || f.surface != null || f.pipe != null || f.strip != null || f.reason != null,
+                "${f.name.label.render()} says what it is",
+            )
+        }
+        val strips = faces.filter { it.strip != null }
+        assertTrue(strips.isNotEmpty(), "the bevel's ruled strip is a face of the result, carried as the strip it is")
+        for (b in strips) {
+            val strip = assertNotNull(b.strip, "…with its own rulings")
+            assertTrue(strip.rulings.size >= 2, "…at least two of them")
+            assertTrue(b.plane == null && b.surface == null && b.pipe == null, "…and neither a plane, nor a revolution, nor a pipe")
+            assertNotNull(b.fitted, "…saying how far its own statement may be")
+            val said = assertNotNull(b.reason, "…and refusing a sketch space in its own words").render()
+            assertTrue(said.contains("ruled strip"), "…naming it a ruled strip: $said")
+        }
+        println("bevel | through the boolean | ${faces.size} faces, ${strips.size} strip piece(s)")
     }
 
     /**
