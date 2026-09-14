@@ -147,7 +147,8 @@ fun raspBallMomentByChords(
  * 2-manifold**, so it can be printed and its volume means something.
  *
  * Four checks, all of them structural rather than approximate:
- * - no degenerate triangle (repeated corner, or zero area);
+ * - no degenerate triangle: a repeated corner, or three corners the arithmetic that made them placed on
+ *   one line ([MeshCanon.straightTol] — a **shape** and not a size, OP-31 slice 5u);
  * - every directed edge occurs exactly once, and its reverse exactly once — which is closedness
  *   ("every edge has two faces") and consistent orientation ("they disagree on its direction") in one
  *   statement;
@@ -163,6 +164,9 @@ fun assertManifold(
     what: String = "solid",
 ) {
     assertTrue(mesh.triangles.isNotEmpty(), "$what has no triangles")
+    // both tolerances are the **mesh's**, so they are read once rather than once per triangle
+    val straight = MeshCanon.straightTol(mesh.vertices)
+    val lattice = MeshCanon.weldTol(mesh.vertices)
     for ((i, t) in mesh.triangles.withIndex()) {
         assertTrue(t.a != t.b && t.b != t.c && t.a != t.c, "$what triangle $i repeats a corner: $t")
         val a = mesh.vertices[t.a]
@@ -170,7 +174,21 @@ fun assertManifold(
         val c = mesh.vertices[t.c]
         val area = (b - a).cross(c - a).length() / 2.0
         val sides = listOf((b - a).length(), (c - b).length(), (a - c).length())
-        assertTrue(area > 1e-12, "$what triangle $i is degenerate (area $area mm^2) sides=$sides height=${2.0 * area / sides.max()} a=$a b=$b c=$c tol=${constructit.geom.MeshCanon.weldTol(mesh.vertices)}")
+        // **degenerate is a shape and not a size** (OP-31, slice 5u): what this must catch is a triangle
+        // whose three corners were **placed on one line** by the arithmetic that made them — a vertex a
+        // kernel put on an edge and closed with a degenerate ear, whose sides may be millimetres and whose
+        // height is a fraction of a nanometre. The absolute area bar this replaces was a *size* test
+        // standing in for a shape one: it let that needle through on one engine and failed an honestly
+        // small triangle on the other. The bar is [MeshCanon.straightTol], the same statement
+        // [MeshCanon.repairNeedles] repairs a boolean's output by, and it is **not** the weld lattice —
+        // measured over this suite, fifty-nine honest tessellation slivers stand between 1.5e-6 and 5.7e-6
+        // mm of height against a 4.8e-6 mm lattice, two decades above the arithmetic and nothing to do
+        // with a T-junction.
+        val height = if (sides.max() > 0.0) 2.0 * area / sides.max() else 0.0
+        assertTrue(
+            height > straight,
+            "$what triangle $i is degenerate (area $area mm^2) sides=$sides height=$height a=$a b=$b c=$c straight=$straight lattice=$lattice",
+        )
     }
     val counts = HashMap<Pair<Int, Int>, Int>()
     for (t in mesh.triangles) {

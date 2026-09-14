@@ -2712,7 +2712,19 @@ internal object BoolFace3 {
             if (!sits(c, va, vb, vc, centre, tol, inside = false)) continue
             if (any < 0) any = i
             if (!sits(c, va, vb, vc, centre, tol, inside = true)) continue
-            val off = max(abs(offCarrier(c, va)), max(abs(offCarrier(c, vb)), abs(offCarrier(c, vc))))
+            // **how far a triangle stands off a carrier is measured over the triangle, not over its three
+            // corners** (OP-31, slice 5u). A disc triangulated between the points of its own rim has all
+            // three corners exactly on the cylinder that rim is the edge of — a bore's flat bottom is such a
+            // disc — so corner distances alone tie at zero between the plane the triangle **is** and the
+            // cylinder it merely touches, and the tie is then broken by the face list's order. Its own
+            // centre tells them apart exactly: it is on the plane and a chord's sag off the cylinder. Under
+            // float32 the rim's own snap used to break the tie by accident, which is why this reading is
+            // owed to the from-source engine and is a defect of the default one too.
+            val off =
+                max(
+                    abs(offCarrier(c, centre)),
+                    max(abs(offCarrier(c, va)), max(abs(offCarrier(c, vb)), abs(offCarrier(c, vc)))),
+                )
             held.add(i to off)
             if (off < bestOff - 1e-12) {
                 bestOff = off

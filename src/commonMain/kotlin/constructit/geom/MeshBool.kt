@@ -152,6 +152,29 @@ object MeshCanon {
         return maxOf(Geom3.WELD_TOL, WELD_ULPS * F32_ULP * scale)
     }
 
+    /**
+     * **How straight three points must be to have been placed on one line by arithmetic** (OP-31, slice 5u),
+     * as a share of the mesh's own scale.
+     *
+     * It is not a modelling tolerance and it is not the weld lattice: it is the signature of a vertex a
+     * kernel **computed** to lie on an edge. Such a point is collinear with that edge to the resolution of
+     * the double arithmetic that solved for it — the case this was measured on is 5.15e-11 mm on a 40 mm
+     * body, one part in 10^12 — while a thin triangle the *tessellation* honestly has is collinear only to
+     * the accident of two nearly-parallel chords, which the same measurement puts at one part in 10^8 and
+     * worse over a thousand of them. One part in 10^10 stands two orders clear of each, which is why the two
+     * families can be told apart at all and why this repair touches the one and leaves the other alone.
+     */
+    const val STRAIGHT_SHARE = 1e-10
+
+    /** How far off its own long edge a vertex may stand and still have been **put** there — [STRAIGHT_SHARE]. */
+    fun straightTol(positions: List<Vec3>): Double {
+        var scale = Geom3.WELD_TOL
+        for (v in positions) {
+            scale = maxOf(scale, abs(v.x), abs(v.y), abs(v.z))
+        }
+        return STRAIGHT_SHARE * scale
+    }
+
     fun canonical(mesh: Mesh3): Mesh3 = canonicalWith(mesh, null).first
 
     /**
@@ -230,10 +253,133 @@ object MeshCanon {
         mesh: Mesh3,
         owner: IntArray? = null,
     ): Pair<BoolMesh?, Msg?> {
-        val (out, tags) = canonicalWith(mesh, owner)
+        val (welded, woven) = canonicalWith(mesh, owner)
+        val (out, tags) = repairNeedles(welded, woven)
         if (out.triangles.isEmpty()) return null to Msgs.refusalMeshboolGeneralBooleanProducedNoTriangles()
         val fault = fault(out)
         return if (fault == null) BoolMesh(out, tags) to null else null to fault
+    }
+
+    /**
+     * How many needles one mesh may carry before this stops repairing them and lets [fault] speak (OP-31,
+     * slice 5u). A needle is a **defect of one retriangulation**, not a feature of a body: the meshes that
+     * carry any carry one or two. A bound is here so that a pathological input cannot turn a repair into a
+     * loop, and a mesh that exceeds it comes through untouched rather than half-repaired.
+     */
+    private const val NEEDLE_ROUNDS = 64
+
+    /**
+     * **The T-junctions a boolean leaves, repaired** (OP-31, slice 5u).
+     *
+     * A kernel may put a vertex exactly **on an edge** of a triangle it did not split, and then close the
+     * surface with the degenerate ear between them: three vertices of the body, hundreds of lattice units
+     * apart, collinear to a fraction of a nanometre. [canonicalWith] cannot help — the three positions are
+     * genuinely distinct, and the lattice welds vertices onto vertices, never a vertex onto an edge — and
+     * neither can [fault]: every directed edge of such a mesh is used once each way, so the shell is closed
+     * and wound right and carries a sliver no exporter should ever be handed. It is the one degeneracy this
+     * drawing's own *watertight or refused* rule never named, and the measurement that found it says it is
+     * on **both** engines: float32 merely moves a given needle across an absolute area bar.
+     *
+     * The repair is the only one that keeps the shell closed. A needle is a triangle whose **height** — its
+     * own area over its longest side, which is the honest statement of *degenerate*, a shape and not a size
+     * — says its three corners were **placed on one line by the arithmetic that made them** ([straightTol],
+     * and emphatically not the weld lattice: measured over this suite, fifty-nine honest tessellation
+     * slivers stand between 1.5e-6 and 5.7e-6 mm of height against a 4.8e-6 mm lattice, two decades above
+     * the arithmetic, and none of them is a T-junction). Its middle vertex `m` stands on its long edge
+     * `a–c`, so the ear
+     * `(a, m, c)` is dropped and the triangle across that long edge is **split** at `m`: `(a, c, x)` becomes
+     * `(a, m, x)` and `(m, c, x)`. Every directed edge the ear used stops being used, every one its three
+     * neighbours used is still met once, and the surface moves by the needle's own height and by nothing
+     * else — a millionth of the weld tolerance in the case this was built for.
+     *
+     * Nothing is stored and nothing is chosen: the needles are taken in the canonical triangle order
+     * [canonicalWith] just fixed, so the repaired mesh is the same function of the two operands that the
+     * welded one is.
+     */
+    fun repairNeedles(
+        mesh: Mesh3,
+        tags: IntArray,
+    ): Pair<Mesh3, IntArray> {
+        if (mesh.triangles.isEmpty()) return mesh to tags
+        val tol = straightTol(mesh.vertices)
+        val tris = mesh.triangles.toMutableList()
+        val tg = tags.toMutableList()
+        var rounds = 0
+        while (rounds < NEEDLE_ROUNDS) {
+            val i = tris.indices.firstOrNull { needleOf(mesh.vertices, tris[it], tol) != null } ?: break
+            val (a, m, c) = needleOf(mesh.vertices, tris[i], tol)!!
+            // the triangle across the needle's long edge — the one the stray vertex sits on the edge of
+            var j = -1
+            for (k in tris.indices) {
+                if (k == i) continue
+                val t = tris[k]
+                if ((t.a == a && t.b == c) || (t.b == a && t.c == c) || (t.c == a && t.a == c)) {
+                    j = k
+                    break
+                }
+            }
+            // an open or oddly wound mesh has no such neighbour: leave it whole and let [fault] say so
+            if (j < 0) break
+            val t = tris[j]
+            val x =
+                if (t.a == a && t.b == c) {
+                    t.c
+                } else if (t.b == a && t.c == c) {
+                    t.a
+                } else {
+                    t.b
+                }
+            tris[j] = Tri(a, m, x)
+            tris.add(Tri(m, c, x))
+            tg.add(tg[j])
+            tris.removeAt(i)
+            tg.removeAt(i)
+            rounds++
+        }
+        if (rounds == 0) return mesh to tags
+        val order = tris.indices.sortedWith(compareBy({ tris[it].a }, { tris[it].b }, { tris[it].c }))
+        return Mesh3(mesh.vertices, order.map { rotated(tris[it]) }) to IntArray(order.size) { tg[order[it]] }
+    }
+
+    /** The same winding, started at the lowest corner — what [canonicalWith] states of every triangle. */
+    private fun rotated(t: Tri): Tri =
+        if (t.a <= t.b && t.a <= t.c) {
+            t
+        } else if (t.b <= t.c) {
+            Tri(t.b, t.c, t.a)
+        } else {
+            Tri(t.c, t.a, t.b)
+        }
+
+    /**
+     * `(a, m, c)` where [t] is a **needle** — `a–c` its longest edge and `m` the vertex standing on it —
+     * or null where it is an honest triangle. Degenerate is a statement about **shape**: the height over
+     * the longest side, measured against [tol] — how straight the arithmetic that placed the three could
+     * have made them, [straightTol].
+     */
+    private fun needleOf(
+        vs: List<Vec3>,
+        t: Tri,
+        tol: Double,
+    ): Triple<Int, Int, Int>? {
+        val a = vs[t.a]
+        val b = vs[t.b]
+        val c = vs[t.c]
+        val twice = (b - a).cross(c - a).length()
+        val ab = (b - a).length()
+        val bc = (c - b).length()
+        val ca = (a - c).length()
+        val longest = maxOf(ab, bc, ca)
+        if (longest <= 0.0) return null
+        if (twice / longest > tol) return null
+        // the vertex opposite the longest side is the one that stands on it, and the three come back in
+        // the triangle's **own** winding `a -> m -> c`, so that the neighbour across the long edge is the
+        // one using `a -> c`
+        return when (longest) {
+            ab -> Triple(t.b, t.c, t.a)
+            bc -> Triple(t.c, t.a, t.b)
+            else -> Triple(t.a, t.b, t.c)
+        }
     }
 
     /**

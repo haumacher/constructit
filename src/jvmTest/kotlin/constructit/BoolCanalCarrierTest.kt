@@ -463,6 +463,53 @@ class BoolCanalCarrierTest {
         }
     }
 
+    /**
+     * **A plane through a bore's own axis meets its cylinder in the two rulings it is** (OP-31, slice 5u).
+     *
+     * A level section taken at the height of a horizontal bore's axis is the one family a `(θ, t)` chart
+     * cannot read inside `[0, 2π)`: the plane contains the axis, so it meets the cylinder not in an ellipse
+     * but in **two straight rulings**, at two opposite `θ` — and whether either of them lands on the chart's
+     * own seam is an accident of the pose. Both poses are asserted here, and the second is the seam by
+     * construction: the drill's sketch frame is turned a quarter turn, which turns the cylinder's own `θ = 0`
+     * into the section plane, so one ruling stands exactly at `θ = π` where the chart wraps.
+     *
+     * What the section must be is stated rather than compared: the unbored body's own area at that height
+     * less the bore's **rectangle**, its diameter by its depth, because a plane through the axis cuts the
+     * blind hole square.
+     */
+    @Test
+    fun aBoreWhoseAxisLiesInTheSectionPlaneIsTheTwoRulingsItIs() {
+        requireEngine()
+        val r = 3.0
+        val face = width - 6.0
+        // (a) the drill's own `θ = 0` stands **across** the section plane — the rulings fall at ±π/2;
+        // (b) it stands **in** it — the rulings fall at 0 and π, and π is the chart's seam.
+        val poses =
+            listOf(
+                "across the seam" to Plane3(Vec3(face, 0.0, 0.0), Vec3.Z, Vec3.Y * -1.0),
+                "on the seam" to Plane3(Vec3(face, 0.0, 0.0), Vec3.Y, Vec3.Z),
+            )
+        for ((what, wall) in poses) {
+            val cx = Construction()
+            val canal = canalBody(cx)
+            val plain = Evaluator().solid(canal)
+            // the bore's centre is world (face, 15, 8) in either frame, and its axis runs along x at z = 8
+            val at = Vec2((Vec3(face, 15.0, 8.0) - wall.origin).dot(wall.u.normalized()), (Vec3(face, 15.0, 8.0) - wall.origin).dot(wall.v.normalized()))
+            val bored = Evaluator().solid(cx.subtract(canal, drill(cx, wall, at, r)))
+            assertManifold(bored.mesh, "the canal body bored horizontally, $what")
+            everyFaceNamed(bored, "the horizontally bored canal body, $what")
+
+            val level = Plane3(Vec3(0.0, 0.0, 8.0), Vec3.X, Vec3.Y)
+            val was = areaAt(plain, level, "the unbored canal's section at the bore's own axis height")
+            val now = areaAt(bored, level, "the bored canal's section at the bore's own axis height, $what")
+            // the drill runs from x = face − 5 to the far side, so the blind hole is that deep into the wall
+            val deep = width - (face - 5.0)
+            assertClose(now, was - 2.0 * r * deep, tol = 1e-6, msg = "the section through the axis loses the bore's own rectangle, $what: $was -> $now")
+
+            println("canal carrier | axis in the section plane, $what | $was -> $now, rectangle ${2.0 * r * deep}")
+        }
+    }
+
     /** **A boss fused on** — the other gesture route, and the union rather than the difference. */
     @Test
     fun aBossFusedOntoACanalBodyIsNamedTheSameWay() {
