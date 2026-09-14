@@ -1119,6 +1119,24 @@ data class FacePatch(
      * carrier is asked for ([Msgs.refusalSectionBoolBevelStrip], narrowed to that case by slice 5r).
      */
     val strip: Ruled3? = null,
+    /**
+     * **How far the facet the body really has may stand from the surface this face states**, in mm, beyond
+     * whatever the engine's own arithmetic adds (OP-31, slice 5l). Zero is the ordinary case and means the
+     * two are the same surface.
+     *
+     * A band's flat end is the one face in this drawing the **tool** laid rather than the body: the tube's
+     * end ring is placed [Blend3] `endSteps`' own micron past the crease's end, so that it does not come
+     * down on a vertex of the body, and the flat face the boolean then leaves stands that micron from the
+     * plane stated here. The plane is the drawing's and stays the drawing's — every neighbour's outline is
+     * stepped off *it*, and the step the body really has in each of them is what `capSteps` splices — so
+     * what the number changes is only how near a triangle has to come to be recognised as this face's.
+     * Asked for sixty-four float32 ULPs instead, a bored loft's own cap facet lay on no carrier at all and
+     * the whole face list refused by name.
+     *
+     * It is not [fitted]: that says how far the face's own **outline** may be from the truth, which a
+     * chained boolean may state in tenths of a millimetre, and neither number may be read for the other.
+     */
+    val slack: Double = 0.0,
 )
 
 /**
@@ -3774,7 +3792,7 @@ object Section3 {
             for ((j, p) in fs.withIndex()) {
                 val plane = p.plane
                 if (plane != null) {
-                    carriers.add(BoolFace3.Carrier(k, j, p.name, plane, p.outline, null))
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, plane, p.outline, null, slack = p.slack))
                     continue
                 }
                 // **a slot that names no surface of the body at all costs the result nothing** (OP-31,
@@ -3795,7 +3813,7 @@ object Section3 {
                 // had then, and false the moment a boolean had to trace a triangle back to one.
                 val pipe = p.pipe
                 if (pipe != null && pipe.stations.size >= 2) {
-                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, pipe))
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, pipe, slack = p.slack))
                     continue
                 }
                 // **A curved face is a carrier too** (slice 5c): the cylinder an extruded arc sweeps, the
@@ -3804,7 +3822,7 @@ object Section3 {
                 // natural extent is the face.
                 val surface = p.surface
                 if (surface != null && surface.meridianCurve != null) {
-                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, surface))
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, surface, slack = p.slack))
                     continue
                 }
                 // a profile piece **on the axis** sweeps nothing at all: its slot carries no surface and no
@@ -3822,7 +3840,7 @@ object Section3 {
                 // second boolean read the strip as an emptied slot, refusing the whole list.
                 val strip = p.strip
                 if (strip != null && strip.rulings.size >= 2) {
-                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, null, strip))
+                    carriers.add(BoolFace3.Carrier(k, j, p.name, null, p.outline, null, null, strip, slack = p.slack))
                     continue
                 }
                 // **A slot an earlier boolean already emptied is not a curved face.** A face this operand

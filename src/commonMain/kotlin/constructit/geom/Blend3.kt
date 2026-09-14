@@ -5717,7 +5717,15 @@ object Blend3 {
         // where the body already has a face in that plane the **notch** owns the end, and a face of its own
         // there would be a second statement of one surface
         if (faces.any { it.plane?.let { p -> abs(p.normal.normalized().dot(away)) >= 1.0 - TANGENT_TOL && abs(p.distanceTo(at)) <= ON_BOUNDARY_TOL } == true }) return null
-        return capPatch(piece, atStart, at, away, name)
+        // **and the cap says how far the body's own facet may stand from it** (OP-31, slice 5l). The tube's
+        // end ring is laid at station [Piece.backAtStart] / `length − backAtEnd` and not at the crease's own
+        // end — [endSteps]' own micron, taken out past a free end so that the ring does not stand on a
+        // vertex of the body — so the flat face the body is left with stands that micron off the plane this
+        // states. The plane is the drawing's (every neighbour's outline is stepped off *it*, and the body's
+        // own step is what [capSteps] splices); what the micron changes is only how near a triangle has to
+        // come to be recognised as **this** face's, and a reader that asked for float32 left a bored loft's
+        // own cap facet on no carrier of either operand.
+        return capPatch(piece, atStart, at, away, name, abs(if (atStart) piece.backAtStart else piece.backAtEnd))
     }
 
     /** Where a piece's crease ends and which way it leaves there — the cap's own point and outward normal. */
@@ -5740,6 +5748,8 @@ object Blend3 {
         at: Vec3,
         away: Vec3,
         name: FaceName,
+        /** How far the tool's own end ring stands from this plane — see [capPatchAt]. */
+        slack: Double = 0.0,
     ): FacePatch {
         val e1 = piece.crease.e1
         val e2 = away.cross(e1)
@@ -5755,7 +5765,7 @@ object Blend3 {
         // mirrored ring is wound the other way round
         val ring = piece.wedge.region.outer.elements
         val mapped = ring.map { GeomMath.transform(it, Affine(1.0, 0.0, 0.0, if (atStart) 1.0 else -1.0, 0.0, 0.0)) }
-        return FacePatch(name, plane, if (atStart) mapped else mapped.reversed().map { GeomMath.reverse(it) }, null)
+        return FacePatch(name, plane, if (atStart) mapped else mapped.reversed().map { GeomMath.reverse(it) }, null, slack = slack)
     }
 
     /**
@@ -8754,6 +8764,13 @@ object Blend3 {
         val p2: Vec3,
         /** The section's own polygon in `(ax, ay)`, the two tangencies first and the ball's arc last. */
         val poly: List<Vec2>,
+        /**
+         * The same section with **no step-off at all** (OP-31, slice 5l) — [poly] is the *tool's* ring, its
+         * two legs carried [Canal.grow] past the walls so that no face of the tool shares a face with the
+         * body ([canalSectionAt]); the face the body is actually left with ends **on** those walls, and a
+         * cap stated on the grown ring stands a step-off outside the body it closes.
+         */
+        val face: List<Vec2>,
         /** How far the ball's arc turns here — zero where the two faces run tangent and the rounding ends. */
         val sweep: Double,
         /** Where the ball's own arc begins, as an angle in `(ax, ay)`. */
@@ -8770,6 +8787,16 @@ object Blend3 {
         val tip: Boolean,
     ) {
         fun world(q: Vec2): Vec3 = at + ax * q.x + ay * q.y
+
+        /**
+         * This station **carried along its own tangent** by [by] — the ring the tool really lays there
+         * (OP-31, slice 5l). [canalMesh] *moves* a free end's ring by the canal's own step-off rather than
+         * doubling it, so over that last stretch the band is this very section translated, its two
+         * tangencies with it; and a reading that stops at the station stops [Canal.grow] short of the cap
+         * the body has.
+         */
+        fun carried(by: Double): CanalStation =
+            CanalStation(at + t * by, t, ax, ay, p1 + t * by, p2 + t * by, poly, face, sweep, a1, apex, s + abs(by), tip)
     }
 
     /** A canal band, ready to be swept, named and cut. */
@@ -8814,6 +8841,33 @@ object Blend3 {
          * ([canalBandPatch]).
          */
         val spine: Pipe3 by lazy { pipeOf(stations.map { PipeStation(it.at, it.t, it.ax, it.s) }, r, closed) }
+
+        /**
+         * **The run as the body really has it** (OP-31, slice 5l): the solved stations with each free end
+         * carried [grow] further, which is exactly as far as the tool goes ([canalMesh] moves the end ring
+         * there rather than doubling it) and exactly as far as the band's own carrier runs
+         * ([canalBandPatch]). Every reader of the band — its cut, its rails, its cap — is asked on this
+         * list, so the band, the neighbours it bites and the cap it closes on all end at one ring.
+         */
+        val run: List<CanalStation> by lazy {
+            if (closed || stations.size < 2) {
+                stations
+            } else {
+                val out = ArrayList<CanalStation>(stations.size + 2)
+                // …and an end that **tapers to nothing** is carried nowhere: there is no ring there to
+                // move and no cap to meet, the tool closing on the tip's own stepped point instead
+                if (!stations.first().tip) out.add(stations.first().carried(-grow))
+                for (st in stations) out.add(st.carried(0.0))
+                if (!stations.last().tip) out.add(stations.last().carried(grow))
+                // …and the arc length is restated from the run's own start, so the chart the cut is marched
+                // on and the chart the carrier states are one coordinate
+                var s = 0.0
+                List(out.size) { k ->
+                    if (k > 0) s += (out[k].at - out[k - 1].at).length()
+                    CanalStation(out[k].at, out[k].t, out[k].ax, out[k].ay, out[k].p1, out[k].p2, out[k].poly, out[k].face, out[k].sweep, out[k].a1, out[k].apex, s, out[k].tip)
+                }
+            }
+        }
 
         val name: FaceName get() = FaceName.BlendBand(index, 0)
 
@@ -9511,7 +9565,10 @@ object Blend3 {
                 } else {
                     canalSectionAt(w1, w2, raw, r, legSteps, arcSteps, s1, s2, grow) ?: return null to notFitting
                 }
-            stations.add(CanalStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2, poly, raw.sweep, raw.a1, raw.apex, s, tip))
+            // …and the same section with no step-off, which is the face the body keeps (OP-31, slice 5l)
+            val face =
+                if (tip) poly else canalSectionAt(w1, w2, raw, r, legSteps, arcSteps, s1, s2, 0.0) ?: return null to notFitting
+            stations.add(CanalStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2, poly, face, raw.sweep, raw.a1, raw.apex, s, tip))
         }
         if (stations.count { !it.tip } < 2) return null to notFitting
         // **and the run goes forward by construction** (OP-31, slice 5m): each step is taken along the
@@ -10335,6 +10392,8 @@ object Blend3 {
         for ((k, raw) in set.withIndex()) {
             if (k > 0) s += (raw.at - set[k - 1].at).length()
             val poly = bevelSectionAt(w1, w2, raw, legSteps, s1, s2, grow) ?: return null to notFitting
+            // …and the same ruling with no step-off, which is the face the body keeps (OP-31, slice 5l)
+            val face = bevelSectionAt(w1, w2, raw, legSteps, s1, s2, 0.0) ?: return null to notFitting
             // …and where the two walls run tangent the strip lies **in** their common plane and takes
             // nothing at all: the ring collapses on the one vertex that already stands clear of the body,
             // exactly as a canal's tip does, so the tool comes to a point instead of laying a flat face on a
@@ -10344,6 +10403,7 @@ object Blend3 {
                 CanalStation(
                     raw.at, raw.t, raw.place.cx, raw.place.cy, raw.p1, raw.p2,
                     if (tip) List(poly.size) { poly[legSteps] } else poly,
+                    if (tip) List(poly.size) { poly[legSteps] } else face,
                     0.0, 0.0, raw.apex, s, tip,
                 ),
             )
@@ -11705,26 +11765,12 @@ object Blend3 {
     private fun canalBandPatch(canal: Canal): FacePatch {
         // **the surface runs as far as the tool did**, which is [Canal.grow] past each free end: the loft's
         // end ring is *moved* there rather than doubled ([canalMesh]), so over that last step the band is
-        // the last section carried straight along its own normal. Two extra stations state exactly that, and
-        // without them the body's own cap facet stands on a surface the carrier has already ended (OP-31,
-        // slice 5l).
-        val ends = if (canal.closed) 0.0 else canal.grow
-        val sts = ArrayList<PipeStation>(canal.stations.size + 2)
-        val arcs = ArrayList<Pair<Double, Double>>(canal.stations.size + 2)
-        val first = canal.stations.first()
-        val last = canal.stations.last()
-        if (!canal.closed) {
-            sts.add(PipeStation(first.at - first.t * ends, first.t, first.ax, 0.0))
-            arcs.add(first.a1 to first.sweep)
-        }
-        for (st in canal.stations) {
-            sts.add(PipeStation(st.at, st.t, st.ax, st.s + ends))
-            arcs.add(st.a1 to st.sweep)
-        }
-        if (!canal.closed) {
-            sts.add(PipeStation(last.at + last.t * ends, last.t, last.ax, last.s + 2.0 * ends))
-            arcs.add(last.a1 to last.sweep)
-        }
+        // the last section carried straight along its own normal. [Canal.run] is that list — the very one
+        // the band's own cut and its rails are read on, so the surface, the trim, the neighbours it bites
+        // and the cap it closes on all end at one ring — and without it the body's own cap facet stands on
+        // a surface the carrier has already ended (OP-31, slice 5l).
+        val sts = canal.run.map { PipeStation(it.at, it.t, it.ax, it.s) }
+        val arcs = canal.run.map { it.a1 to it.sweep }
         val pipe = pipeOf(sts, canal.r, canal.closed)
         return FacePatch(
             canal.name,
@@ -11870,7 +11916,11 @@ object Blend3 {
                 // the normal runs **out of the material**, which at a free end is back along the run
                 val plane = if (atStart) Plane3(origin, st.ax, -st.ay) else Plane3(origin, st.ax, st.ay)
                 val flip = if (atStart) -1.0 else 1.0
-                val poly = st.poly.map { Vec2(it.x, it.y * flip) }
+                // **the cap is the section the body keeps and not the ring the tool laid** (OP-31, slice
+                // 5l): the tool's own ring stands [Canal.grow] past each wall so that it shares no face
+                // with the body, so a cap stated on it reaches a step-off outside the very faces it has to
+                // meet, and a section across it could not close over that.
+                val poly = st.face.map { Vec2(it.x, it.y * flip) }
                 val legs = (poly.size - canal.arcSteps) / 2
                 val out = ArrayList<ProfileElement>(2 * legs + 1)
                 for (k in 0 until 2 * legs) out.add(ProfileElement.Seg(Segment(poly[k], poly[k + 1])))
@@ -12039,7 +12089,10 @@ object Blend3 {
                 if (name.edge != piece.index) continue
                 val qs = ArrayList<Vec2>()
                 val ss = ArrayList<Double>()
-                for (st in canal.stations) {
+                // …and the rail runs as far as the tool does (OP-31, slice 5l): a free end's ring is
+                // carried the canal's own step-off past the last station, so the neighbour it bites is
+                // set back to **that** ring and not to a station the body no longer ends at
+                for (st in canal.run) {
                     val p = if (side == 0) st.p1 else st.p2
                     val s = stationOf(piece, p)
                     val place = placeAt(piece, s) ?: continue
@@ -12117,8 +12170,11 @@ object Blend3 {
         // two rulings — the same honesty class, and the same reader, because a level plane crosses a strip
         // that travels **across** the run exactly as it crosses a canal band that does.
         val arcs = max(8, canal.arcSteps)
-        val at = ArrayList<List<Vec3>>(canal.stations.size)
-        for (st in canal.stations) {
+        // …and the march covers the run the body has, each free end carried to the ring its own cap closes
+        // on ([Canal.run]) — a cut that stopped at the last station stopped a step-off short of the cap and
+        // the section could not close over the gap (OP-31, slice 5l)
+        val at = ArrayList<List<Vec3>>(canal.run.size)
+        for (st in canal.run) {
             at.add(
                 (0..arcs).map { j ->
                     if (canal.bevel) {

@@ -128,9 +128,70 @@ internal object BoolFace3 {
          * the result says so in the operand's own words rather than claiming a removal it did not make.
          */
         val reason: Msg? = null,
+        /**
+         * How far the body's own facets may stand from this carrier's stated surface **beyond** the
+         * engine's own float32 slack, in mm (OP-31, slice 5l) — the face's own [FacePatch.slack], and
+         * nothing where the face is stated exactly. A band's flat end is the one face in this drawing the
+         * *tool* laid rather than the body: its ring stands a micron past the plane the drawing states, and
+         * a recognition tolerance of sixty-four float32 ULPs leaves that facet on no carrier at all.
+         */
+        val slack: Double = 0.0,
     ) {
         /** The planar outline as rings, tessellated once — a **predicate**'s resolution and nothing more. */
         val rings: List<List<Vec2>> by lazy { if (plane == null) emptyList() else Project3.ringsOf(outline) }
+
+        /**
+         * **How much of its own chart this face's trim claims**, in the chart's own mixed units — the area
+         * of the box its boundary spans, and `Double.MAX_VALUE` where it states no boundary at all and the
+         * carrier's whole natural extent is the face (OP-31, slice 5l, probed).
+         *
+         * It is what tells two faces apart where **distance** cannot: along a rounding's own tangency rail
+         * the band and the corner that runs onto it share one normal, so a triangle standing on that rail is
+         * the same distance from both to the last bits of a double, and which of the two is nearer is a fact
+         * about the engine's re-meshing and not about the body. A face that states a tight extent is the one
+         * the rail is a **boundary** of; the one that states a loose one or none loses nothing it can be
+         * told it has.
+         */
+        val chartBox: Pair<Vec2, Vec2>? by lazy {
+            if (outline.isEmpty()) {
+                null
+            } else {
+                var lo = Vec2(Double.MAX_VALUE, Double.MAX_VALUE)
+                var hi = Vec2(-Double.MAX_VALUE, -Double.MAX_VALUE)
+                for (e in outline) {
+                    for (q in GeomMath.tessellatePiece(e, 1e-3)) {
+                        lo = Vec2(min(lo.x, q.x), min(lo.y, q.y))
+                        hi = Vec2(max(hi.x, q.x), max(hi.y, q.y))
+                    }
+                }
+                if (hi.x < lo.x || hi.y < lo.y) null else lo to hi
+            }
+        }
+
+        /** See [chartBox] — `Double.MAX_VALUE` where the face states no boundary at all. */
+        val chartExtent: Double
+            get() = chartBox?.let { (lo, hi) -> (hi.x - lo.x) * (hi.y - lo.y) } ?: Double.MAX_VALUE
+
+        /**
+         * **The box of a trim too fine for a winding to answer** (OP-31, slice 5l, probed), or null for
+         * every trim that is not — which is nearly all of them.
+         *
+         * A boolean may leave a face as a **sliver of its own chart**: two triangles at the two ends of a
+         * pivot's run, a millionth of the pipe's own `(arc, station)` between them. That is an honest
+         * statement of what the body has and it is one no winding can be asked — every point of such a face
+         * stands **on** its own boundary, so `contains` says no of the very triangles the face is made of,
+         * and one boolean later the face reads as wholly consumed. What such a trim states is its own
+         * **extent**, and that is what a triangle is put to. The share is of the carrier's own chart, so it
+         * says the same thing at every size and no ordinary face comes near it.
+         */
+        val fineTrim: Pair<Vec2, Vec2>? by lazy {
+            val box = chartBox ?: return@lazy null
+            val own = patch?.tRange ?: return@lazy null
+            val t = own.second - own.first
+            if (t <= 0.0) return@lazy null
+            val share = ((box.second.x - box.first.x) / (2.0 * PI)) * ((box.second.y - box.first.y) / t)
+            if (share > FINE_SHARE) null else box
+        }
 
         /** The curved carrier's own `(θ, t)` reader, built once. */
         val patch: Patch? by lazy {
@@ -898,6 +959,21 @@ internal object BoolFace3 {
     private const val TOUCH_TOL = 1e-7
 
     /**
+     * How nearly two carriers' normals have to agree at a triangle for the drawing to call them **tangent**
+     * there (OP-31, slice 5l, probed) — the cosine of the angle between them, and a millionth is six orders
+     * finer than any crossing this drawing states and coarser than the last bits of a double.
+     */
+    private const val TANGENT_CARRIERS = 1e-6
+
+    /**
+     * What share of its own carrier's chart a trim has to claim for a **winding** to be able to answer it
+     * (OP-31, slice 5l, probed) — a ratio of the face to the surface it is a patch of, so it says the same
+     * thing at every size. A hundred-thousandth is two orders below the smallest real face this drawing has
+     * stated and two above the pair of triangles that found it.
+     */
+    private const val FINE_SHARE = 1e-5
+
+    /**
      * Two bands **about the same axis** meet in the circles their meridians cross at — a counterbore's step,
      * a rounding's band handing over to the bore it stands in. Null when the axes are not one line, or when
      * neither meridian is straight (two arcs crossing in the half-plane is a curve pair this does not name).
@@ -1334,7 +1410,11 @@ internal object BoolFace3 {
                 val base = carriers[c]
                 slotCarrier.add(
                     if (base.plane != null) {
-                        Carrier(base.operand, base.face, base.name, orientedPlane(mesh, pieces[pi], base.plane), emptyList(), null)
+                        // …the plane turned to face the way this piece's own triangles do, and **everything
+                        // else the carrier was told kept** (OP-31, slice 5l, probed): a restatement that
+                        // drops what the operand said about its own face is the same defect one boolean
+                        // later, because this is the carrier the result's patch is stated from.
+                        Carrier(base.operand, base.face, base.name, orientedPlane(mesh, pieces[pi], base.plane), emptyList(), null, slack = base.slack)
                     } else {
                         base
                     },
@@ -1374,15 +1454,24 @@ internal object BoolFace3 {
                         }
                     )
             val (outline, runs, fitted) = built
+            // **everything a carrier is told about an operand face survives the boolean** (OP-31, slice 5l,
+            // probed). A face a result keeps of its operand is an ordinary operand face of the **next**
+            // boolean (slice 5c's chaining rule), so a result patch has to carry forward every number the
+            // operand's own patch stated about itself — its surface, its pipe, its strip, the tolerance its
+            // outline was fitted to, and how far the body's facets may stand off it. The one that was
+            // dropped is [FacePatch.slack]: a band's flat end, kept through one bore as a `BoolFace` plane,
+            // came back saying nothing about the micron its own tool stepped, and the very sliver the first
+            // boolean had just placed landed on no carrier of the second. A chain of any length reads the
+            // same as one, or it reads nothing at all.
             if (self.plane != null) {
-                patches.add(FacePatch(names[slot], self.plane, outline, null, null, fitted))
+                patches.add(FacePatch(names[slot], self.plane, outline, null, null, fitted, slack = self.slack))
             } else {
                 val surface = self.surface
                 val pipe = self.pipe
                 val strip = self.ruled
                 if (surface == null && pipe == null && strip == null) return null to Msgs.refusalSectionBoolSurfaceOffCarrier()
                 val oriented =
-                    orientedTrim(mesh, surface, pipe, strip, pieces[pi], outline)
+                    orientedTrim(mesh, surface, pipe, strip, pieces[pi], outline, self.outline)
                         ?: return null to Msgs.refusalSectionBoolTrimNotDetermined(name = names[slot].label)
                 // **a canal band keeps being a canal band through the boolean** (OP-31, slice 5l), and since
                 // slice 5r a bevel's **ruled strip** keeps being one: each is the operand's own surface,
@@ -1414,6 +1503,7 @@ internal object BoolFace3 {
                         false,
                         strip != null,
                         strip,
+                        self.slack,
                     ),
                 )
             }
@@ -1566,6 +1656,12 @@ internal object BoolFace3 {
      * that is why the search takes the **nearest** carrier rather than the first ([scanCarriers]).
      */
     private fun carrierTol(
+        c: Carrier,
+        base: Double,
+    ): Double = carrierReach(c, base) + c.slack
+
+    /** …the surface's own reach, before the face's own stated [Carrier.slack] is added to it. */
+    private fun carrierReach(
         c: Carrier,
         base: Double,
     ): Double {
@@ -2155,6 +2251,8 @@ internal object BoolFace3 {
         strip: Ruled3?,
         piece: Piece,
         outline: List<ProfileElement>,
+        /** The operand's own trim of this very face — the last word on which way round it runs (slice 5l). */
+        own: List<ProfileElement> = emptyList(),
     ): List<ProfileElement>? {
         if (outline.isEmpty()) return outline
         val flipped = outline.reversed().map { reversedPiece(it) ?: return null }
@@ -2246,6 +2344,16 @@ internal object BoolFace3 {
                 if (want != 0.0) return if (chartSense(outline) == want) outline else flipped
             }
         }
+        // **and where the piece itself says nothing at all, the operand's own face does** (OP-31, slice 5l).
+        // A piece may be one triangle whose three vertices land on **one station** of the chart — a sliver
+        // of a pivot's own corner face left by a bore drilled straight down the corner, whose three chart
+        // points differ in the arc coordinate and not at all in the station. It encloses no area in the
+        // chart, so it has no sense of its own to read and no interior for a probe to stand in. There is
+        // still an answer and it is structural rather than measured: a boolean only ever **trims** a face,
+        // so what is left is the operand's own face with less of it, and it runs the way the operand ran it.
+        // The two are stated in the very same chart, so the sense is the same number.
+        val theirs = chartSense(own)
+        if (theirs != 0.0) return if (chartSense(outline) == theirs) outline else flipped
         return null
     }
 
@@ -2453,9 +2561,12 @@ internal object BoolFace3 {
     ): Boolean {
         val plane = c.plane
         if (plane != null) {
-            if (abs(plane.distanceTo(va)) > tol) return false
-            if (abs(plane.distanceTo(vb)) > tol) return false
-            if (abs(plane.distanceTo(vc)) > tol) return false
+            // …and the two are independent: what the drawing says its own statement moved, and what the
+            // engine's arithmetic may add on top of it
+            val pt = tol + c.slack
+            if (abs(plane.distanceTo(va)) > pt) return false
+            if (abs(plane.distanceTo(vb)) > pt) return false
+            if (abs(plane.distanceTo(vc)) > pt) return false
             if (!inside || c.rings.isEmpty()) return true
             return RegionBool.contains(c.rings, plane.toLocal(centre))
         }
@@ -2475,7 +2586,10 @@ internal object BoolFace3 {
         val gg = g.dot(g)
         val on = if (gg <= 1e-18) centre else centre - g * (offCarrier(c, centre) / gg)
         val q = patch.of(on) ?: return false
-        return patch.contains(q)
+        if (patch.contains(q)) return true
+        // …and a trim too fine for a winding answers by its own extent instead (see [Carrier.fineTrim])
+        val fine = c.fineTrim ?: return false
+        return q.x >= fine.first.x && q.x <= fine.second.x && q.y >= fine.first.y && q.y <= fine.second.y
     }
 
     /**
@@ -2495,6 +2609,7 @@ internal object BoolFace3 {
         var any = -1
         var best = -1
         var bestOff = Double.MAX_VALUE
+        val held = ArrayList<Pair<Int, Double>>(4)
         for (i in carriers.indices) {
             val c = carriers[i]
             if (only >= 0 && c.operand != only) continue
@@ -2502,9 +2617,31 @@ internal object BoolFace3 {
             if (any < 0) any = i
             if (!sits(c, va, vb, vc, centre, tol, inside = true)) continue
             val off = max(abs(offCarrier(c, va)), max(abs(offCarrier(c, vb)), abs(offCarrier(c, vc))))
+            held.add(i to off)
             if (off < bestOff - 1e-12) {
                 bestOff = off
                 best = i
+            }
+        }
+        // **and where two of them run tangent here, the nearer of the two says nothing** (OP-31, slice 5l,
+        // probed). Along a rounding's own tangency rail the band and the corner that runs onto it share one
+        // normal, so a triangle on that rail stands the same distance from both to the last bits of a
+        // double — the winner is then decided by the engine's re-meshing, and a pivot's corner face that
+        // kept two pieces through one boolean kept none through the next, its five triangles having drifted
+        // by less than a micron each. Where the drawing genuinely cannot tell them apart by distance it
+        // takes the one that states the **tighter extent**: the rail is that face's own boundary, and the
+        // looser one loses nothing it can be told it has.
+        if (best >= 0 && held.size > 1) {
+            val g = gradCarrier(carriers[best], centre)
+            val gl = g.length()
+            for ((i, off) in held) {
+                if (i == best) continue
+                if (off > max(carrierTol(carriers[i], tol), carrierTol(carriers[best], tol))) continue
+                val h = gradCarrier(carriers[i], centre)
+                val hl = h.length()
+                if (gl <= Vec3.EPS || hl <= Vec3.EPS) continue
+                if (abs(abs(g.dot(h) / (gl * hl)) - 1.0) > TANGENT_CARRIERS) continue
+                if (carriers[i].chartExtent < carriers[best].chartExtent) best = i
             }
         }
         return if (best >= 0) best else any

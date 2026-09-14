@@ -2,6 +2,8 @@ package constructit
 
 import constructit.core.Evaluator
 import constructit.dsl.Construction
+import constructit.dsl.LoftPart
+import constructit.dsl.RegionRef
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
 import constructit.geom.Blend3
@@ -21,7 +23,10 @@ import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.sqrt
+import kotlin.math.tan
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -142,6 +147,93 @@ class BoolBevelStripCarrierProbeTest {
         assertTrue(abs(area - expected) < 0.2, "$what: the block less two circles, to the bores' chords: $area vs $expected")
         val (through, wt) = Section3.regionsOf(twice.feature, Plane3(Vec3(0.0, 0.0, 17.5), Vec3.X, Vec3.Y))
         assertNotNull(through, "$what bored twice: the level section through the dressing closes: ${wt?.render()}")
+    }
+
+    /** The 35° loft whose leaning inside corner is the pivot's home (`BlendCornerCanalTest.lofted`). */
+    private fun lofted(cx: Construction): Pair<SolidRef, Vec3> {
+        val lo = listOf(Vec2(0.0, 0.0), Vec2(60.0, 0.0), Vec2(60.0, 30.0), Vec2(30.0, 30.0), Vec2(30.0, 60.0), Vec2(0.0, 60.0))
+        val shift = height * tan(35.0 * PI / 180.0) / sqrt(2.0)
+        val scale = 1.0 - shift / 30.0
+
+        fun area(pts: List<Vec2>): RegionRef {
+            val ps = pts.map { q -> cx.freePoint("F${ids++}", q.x.mm, q.y.mm) }
+            return cx.region(cx.loop(*pts.indices.map { cx.segment(ps[it], ps[(it + 1) % pts.size]) }.toTypedArray()))
+        }
+        val loft =
+            cx.loft(
+                listOf(
+                    LoftPart.Area(cx.sketchOn(cx.planeXY(), area(lo))),
+                    LoftPart.Area(cx.sketchOn(cx.planeOffset(cx.planeXY(), cx.const(height.mm)), area(lo.map { it * scale }))),
+                ),
+            )
+        return loft to Vec3(30.0 * scale, 30.0 * scale, height)
+    }
+
+    /** …its two cap edges at the reflex corner rounded in one gesture: the pivot, a canal corner face. */
+    private fun pivot(cx: Construction): Pair<SolidRef, Vec3> {
+        val (base, v) = lofted(cx)
+        val es = edgesOf(Evaluator().solid(base))
+        val pair =
+            es.indices.filter { i ->
+                val e = es[i]
+                if (!e.between.a.label.render().contains("section 2's own face") && !e.between.b.label.render().contains("section 2's own face")) return@filter false
+                val path = Blend3.edgePath(e).first ?: return@filter false
+                val a = path.start ?: return@filter false
+                val b = path.end ?: return@filter false
+                (a - v).length() < 1e-6 || (b - v).length() < 1e-6
+            }
+        assertEquals(2, pair.size, "the cap turns a reflex corner between two of its own edges")
+        val (choices, why) = Blend3.choicesFor(Evaluator().solid(base), pair, BlendSection(BlendKind.FILLET, 3.0))
+        return cx.blendAll(base, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(3.0.mm), null, pair, assertNotNull(choices, "the pair rounds: ${why?.render()}")))) to v
+    }
+
+    /**
+     * **The pivot bored twice** — through its own corner, then clear of everything — is the same chain as the
+     * canal's and the strip's: every face named with the corner's pieces among them, no two faces one name,
+     * the second bore leaving the corner's pieces exactly as they were, and the level section closing.
+     */
+    @Test
+    fun aPivotBoredThroughItsCornerAndAgainClearOfItStillNamesItsCorner() {
+        requireEngine()
+        val cx = Construction()
+        val (body, v) = pivot(cx)
+        val plain = Evaluator().solid(body)
+        assertManifold(plain.mesh, "the loft's inside corner rounded")
+
+        fun drillAt(
+            at: Vec2,
+            r: Double,
+        ): SolidRef {
+            val c = cx.freePoint("d${ids++}", at.x.mm, at.y.mm)
+            return cx.extrude(cx.sketchOn(cx.plane(Vec3(0.0, 0.0, -5.0), Vec3.X, Vec3.Y), cx.region(cx.loop(cx.circleCR(c, cx.const(r.mm))))), cx.const((height + 10.0).mm))
+        }
+        val once = cx.subtract(body, drillAt(Vec2(v.x, v.y), 2.0))
+        val first = Evaluator().solid(once)
+        assertManifold(first.mesh, "the pivot bored through its corner")
+        val fs1 = facesNamed(first, "the pivot bored through its corner")
+        val corner1 = fs1.filter { it.pipe != null && it.outline.isNotEmpty() }
+        assertTrue(corner1.size >= 2, "the bore down the corner leaves the pivot's face in pieces: ${corner1.size}")
+        val twice = Evaluator().solid(cx.subtract(once, drillAt(Vec2(10.0, 45.0), 3.0)))
+        assertManifold(twice.mesh, "the pivot bored twice")
+        val fs2 = facesNamed(twice, "the pivot bored twice")
+        val corner2 = fs2.filter { it.pipe != null && it.outline.isNotEmpty() }
+        assertEquals(corner1.size, corner2.size, "the second bore, clear of the corner, leaves its pieces as they were:\n  once: ${corner1.map { it.name.label.render() }}\n  twice: ${corner2.map { it.name.label.render() }}")
+        val labels = fs2.filter { it.outline.isNotEmpty() || it.plane != null }.map { it.name.label.render() }
+        assertEquals(labels.size, labels.toSet().size, "every face has a name of its own: ${labels.groupBy { it }.filter { it.value.size > 1 }.keys}")
+        val hole = Math.PI * 9.0 * height
+        val taken = Geom3.volume(first.mesh) - Geom3.volume(twice.mesh)
+        // …and it takes **less** than its own cylinder, because the loft leans: the second bore stands at
+        // `(10, 45)`, which is inside the L at the bottom and outside it at the top — the outer wall passes
+        // the bore's own centre at `z ≈ 15.2` — so the drill leaves the body through that leaning face and
+        // what it removes is the part of its cylinder that is still inside. The figure below it is the full
+        // disc up to where the wall first reaches the bore (`z ≈ 13.3`), and the whole of it is gone by
+        // `z ≈ 17`; what is asserted is that the bore is a real removal of that size and no more than its
+        // own cylinder.
+        assertTrue(taken > 0.70 * hole && taken < hole + 1e-6, "the second bore takes its cylinder less what the leaning wall cuts off it: $taken vs $hole")
+        val (below, wb) = Section3.regionsOf(twice.feature, Plane3(Vec3(0.0, 0.0, 5.0), Vec3.X, Vec3.Y))
+        assertNotNull(below, "the level section at z = 5 closes: ${wb?.render()}")
+        val (through, wt) = Section3.regionsOf(twice.feature, Plane3(Vec3(0.0, 0.0, height - 1.0), Vec3.X, Vec3.Y))
+        assertNotNull(through, "the level section through the bored corner closes: ${wt?.render()}")
     }
 
     @Test

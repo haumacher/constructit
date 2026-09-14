@@ -420,36 +420,39 @@ class BoolCanalCarrierTest {
     // ---- (c) the pivot's corner face ----
 
     /** The 35° loft of two L-sections whose side faces lean — `BlendCornerCanalTest`'s own slanted upright. */
-    private fun lofted(cx: Construction): SolidRef {
+    private fun lofted(cx: Construction): SolidRef = loftedOn(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y))
+
+    /** …and the same loft sketched on any plane, which is what a pose asks of it. */
+    private fun loftedOn(
+        cx: Construction,
+        plane: Plane3,
+    ): SolidRef {
         val lo = listOf(Vec2(0.0, 0.0), Vec2(60.0, 0.0), Vec2(60.0, 30.0), Vec2(30.0, 30.0), Vec2(30.0, 60.0), Vec2(0.0, 60.0))
         val shift = height * tan(35.0 * PI / 180.0) / sqrt(2.0)
         val scale = 1.0 - shift / 30.0
 
         fun area(pts: List<Vec2>): RegionRef {
-            val ps = pts.mapIndexed { i, p -> cx.freePoint("F${ids++}", p.x.mm, p.y.mm) }
+            val ps = pts.map { p -> cx.freePoint("F${ids++}", p.x.mm, p.y.mm) }
             return cx.region(cx.loop(*pts.indices.map { cx.segment(ps[it], ps[(it + 1) % pts.size]) }.toTypedArray()))
         }
+        val base = cx.plane(plane.origin, plane.u, plane.v)
         return cx.loft(
             listOf(
-                LoftPart.Area(cx.sketchOn(cx.planeXY(), area(lo))),
-                LoftPart.Area(cx.sketchOn(cx.planeOffset(cx.planeXY(), cx.const(height.mm)), area(lo.map { it * scale }))),
+                LoftPart.Area(cx.sketchOn(base, area(lo))),
+                LoftPart.Area(cx.sketchOn(cx.planeOffset(base, cx.const(height.mm)), area(lo.map { it * scale }))),
             ),
         )
     }
 
-    /**
-     * **A pivot's corner face bored through.** The surface between the two band ends at a loft's leaning
-     * inside corner is a canal too (slice 5h), so it is the same carrier — and a bore straight through the
-     * corner has to find it.
-     */
-    @Test
-    fun aPivotsCornerFaceGoesThroughTheBooleanToo() {
-        requireEngine()
-        val cx = Construction()
-        val base = lofted(cx)
+    /** The 35° loft's leaning inside corner rounded at 3 mm — the pivot itself, on the plane [plane]. */
+    private fun pivotBody(
+        cx: Construction,
+        plane: Plane3,
+    ): Pair<SolidRef, Vec3>? {
+        val base = loftedOn(cx, plane)
         val shift = height * tan(35.0 * PI / 180.0) / sqrt(2.0)
         val scale = 1.0 - shift / 30.0
-        val v = Vec3(30.0 * scale, 30.0 * scale, height)
+        val v = plane.toWorld(Vec2(30.0 * scale, 30.0 * scale)) + plane.normal.normalized() * height
         val es = edgesOf(Evaluator().solid(base))
         val pair =
             es.indices.filter { i ->
@@ -462,8 +465,29 @@ class BoolCanalCarrierTest {
             }
         assertEquals(2, pair.size, "the loft's cap turns a reflex corner between two of its own edges")
         val ref = round(cx, base, pair, 3.0)
-        val r = Evaluator().eval(ref.node)
-        assumeTrue(r !is EvalResult.Invalid, "the slanted upright carries the pivot")
+        if (Evaluator().eval(ref.node) is EvalResult.Invalid) return null
+        return ref to v
+    }
+
+    /**
+     * **A pivot's corner face bored through, and it is named** (OP-31, slice 5l). The surface between the
+     * two band ends at a loft's leaning inside corner is a canal too (slice 5h), so it is the same carrier
+     * — and a bore straight down the corner has to find it.
+     *
+     * *What this fixture used to do, and what it does now.* It refused its **whole** face list by name
+     * (`refusal.section.boolSurfaceOffCarrier`), and the triangle it refused over was not the pivot's at
+     * all: a sliver of the **flat end** of one of the two bands, standing [Blend3] `endSteps`' own micron
+     * from the plane the cap patch stated, against a recognition tolerance of sixty-four float32 ULPs. The
+     * cap says that micron now, and the pivot's own corner face comes back as the **two pieces** a bore
+     * down its middle leaves it in, the second of them a single triangle whose three chart points stand on
+     * one station of the pipe — no area, no interior, nothing of its own to say which way round its trim
+     * runs, and so walked the way its **operand's** own face is.
+     */
+    @Test
+    fun aPivotsCornerFaceGoesThroughTheBooleanToo() {
+        requireEngine()
+        val cx = Construction()
+        val (ref, v) = pivotBody(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)) ?: return
         val body = Evaluator().solid(ref)
         assertManifold(body.mesh, "the loft's inside corner rounded")
         val corner = assertNotNull(facesOf(body).firstOrNull { it.pipe != null }, "the corner face is a canal, and it is a pipe")
@@ -471,10 +495,96 @@ class BoolCanalCarrierTest {
 
         val bored = Evaluator().solid(cx.subtract(ref, drill(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y), Vec2(v.x, v.y), 2.0)))
         assertManifold(bored.mesh, "the pivot bored through its own corner")
-        val fs = namedOrRefused(bored, "the pivot bored through its own corner") ?: return
-        assertTrue(fs.any { it.pipe != null }, "the pivot's canal is still named after the boolean")
-        closesOrSaysWhy(bored, Plane3(Vec3(0.0, 0.0, height - 1.0), Vec3.X, Vec3.Y), "a level section through the bored pivot")
-        println("canal carrier | pivot bored through its corner | ${fs.size} faces")
+        val (fs, why) = Section3.faces(bored.feature)
+        val faces = assertNotNull(fs, "the bored pivot names every face: ${why?.render()}")
+        val onThePipe = faces.filter { it.pipe != null }
+        assertTrue(onThePipe.size >= 2, "the bore down the corner leaves the pivot's own face in pieces, each named: ${onThePipe.size}")
+        for (p in onThePipe) assertTrue(p.outline.isNotEmpty(), "…each stating its own trim in the pipe's own chart")
+        val s = 1.0 / sqrt(2.0)
+        val level = areaAt(bored, Plane3(Vec3(0.0, 0.0, height - 1.0), Vec3.X, Vec3.Y), "a level section through the bored pivot")
+        closes(bored, Plane3(Vec3(v.x, 0.0, 0.0), Vec3.Y, Vec3.Z), "a vertical section through the bored pivot")
+        closes(
+            bored,
+            Plane3(Vec3(v.x, v.y, height - 2.0), Vec3(1.0, -1.0, 0.0).normalized(), Vec3(s, s, 1.0).normalized().cross(Vec3(1.0, -1.0, 0.0).normalized())),
+            "a tilted section through the bored pivot",
+        )
+        // **and the level area is the loft's own there, less the bore and less what the pivot took**: the
+        // L at `z = 19` is the plan scaled by the loft's own taper, the bore its circle, and the rounding
+        // itself a few square millimetres at the corner
+        val at = 1.0 - height * tan(35.0 * PI / 180.0) / sqrt(2.0) / 30.0 * ((height - 1.0) / height)
+        val plain = (60.0 * 60.0 - 30.0 * 30.0) * at * at - PI * 2.0 * 2.0
+        assertTrue(level < plain && level > plain - 8.0, "the level section is the loft's own less the bore and the pivot: $level against $plain")
+        // **and every crease the bore left on the pivot's own pipe stands within the tolerance it states**
+        // — the same reading `everyFittedCreaseOfTheBoredBodyStandsWithinTheToleranceItStates` makes of a
+        // canal band, asked of the corner's pipe instead (OP-31, Tier B)
+        val pipe = assertNotNull(onThePipe.first().pipe, "the corner's pieces carry the pipe they are patches of")
+        var worst = 0.0
+        var onIt = 0
+        for (e in edgesOf(bored).filter { it.reason == null && it.geom is EdgeGeom.InSpace && it.fitted != null }) {
+            val tol = assertNotNull(e.fitted, "a fitted crease says how far it may stand from the truth")
+            val pts = (e.geom as EdgeGeom.InSpace).chain.flatMap { span -> (0..8).map { Frames3.pointAt(span, it / 8.0) } }
+            if (pts.any { abs(pipe.offset(it)) > max(tol, 1e-2) }) continue
+            onIt++
+            for (q in pts) {
+                val d = abs(pipe.offset(q))
+                worst = max(worst, d)
+                assertTrue(d <= tol + 1e-9, "${e.name.label.render()} stands within its stated $tol mm of the pivot's own pipe — $d")
+            }
+        }
+        assertTrue(onIt > 0, "the bore down the corner leaves at least one crease running on the pivot's own pipe")
+        println("canal carrier | pivot bored through its corner | ${faces.size} faces, ${onThePipe.size} on the pipe | level $level | $onIt creases on the pipe, worst $worst")
+    }
+
+    /**
+     * **Both gesture routes and five poses of the bored pivot agree**, and every one of them is named — the
+     * carrier is a statement about surfaces and knows nothing of where the world's axes are.
+     */
+    @Test
+    fun theBoredPivotIsOneBodyInEveryPoseAndBothRoutes() {
+        requireEngine()
+        val poses =
+            listOf(
+                "XY" to Plane3(Vec3.ZERO, Vec3.X, Vec3.Y),
+                "shifted YZ" to Plane3(Vec3(17.0, -9.0, 4.0), Vec3.Y, Vec3.Z),
+                "turned 30° about x" to Plane3(Vec3.ZERO, Vec3.X, Vec3(0.0, cos(PI / 6), sin(PI / 6))),
+                "turned 30° about y" to Plane3(Vec3.ZERO, Vec3(cos(PI / 6), 0.0, -sin(PI / 6)), Vec3.Y),
+                "turned 45° about z and shifted" to Plane3(Vec3(-3.0, 11.0, -7.0), Vec3(1.0, 1.0, 0.0) * (1.0 / sqrt(2.0)), Vec3.Z),
+            )
+        var first: Double? = null
+        var named = 0
+        var onThePipe = 0
+        for ((what, plane) in poses) {
+            val cx = Construction()
+            val (ref, v) = pivotBody(cx, plane) ?: continue
+            val bored = Evaluator().solid(cx.subtract(ref, drill(cx, plane, plane.toLocal(v), 2.0)))
+            assertManifold(bored.mesh, "the bored pivot on $what")
+            val vol = Geom3.volume(bored.mesh)
+            if (first == null) first = vol else assertClose(vol, first, tol = 2e-2, msg = "the same bored pivot on $what takes the same volume")
+            val fs = namedOrRefused(bored, "the bored pivot on $what") ?: continue
+            // …and the pivot's own slot is **there** in every pose, either carrying the pipe it is a patch
+            // of or saying that the bore took the whole of it. Which of the two a pose gets is a fact about
+            // the bore and not about the drawing: the corner face is 3 mm across and the bore 4, so what is
+            // left of it is a sliver the engine's own re-meshing may or may not keep a triangle of.
+            val slot = fs.filter { it.name.label.render().contains("rounded corner") }
+            assertTrue(slot.isNotEmpty(), "the pivot's own corner is a slot of the result on $what")
+            assertTrue(slot.all { it.pipe != null || it.reason != null }, "…carrying its pipe, or saying where its surface went, on $what")
+            if (slot.any { it.pipe != null }) onThePipe++
+            println("canal carrier | pivot pose $what | ${fs.size} faces, ${slot.count { it.pipe != null }} pieces of the corner on the pipe")
+            named++
+        }
+        // **named, or refused by name** (OP-3), and the count is the slice's own open measure: one pose of
+        // the five refuses at a **planar** face's corner that the planes meeting there do not determine,
+        // which is no part of this slice's ground and is queued as its own line.
+        assertTrue(named >= poses.size - 1, "every pose of the bored pivot but at most one is named: $named of ${poses.size}")
+        assertTrue(onThePipe > 0, "and the pivot's own face survives the bore as a piece of its pipe in at least one pose")
+        // …and the **boss** route: the same corner, the same carrier, a union rather than a difference
+        val cx = Construction()
+        val (ref, v) = pivotBody(cx, Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)) ?: return
+        val fused = Evaluator().solid(cx.union(ref, drill(cx, Plane3(Vec3(0.0, 0.0, height), Vec3.X, Vec3.Y), Vec2(v.x, v.y), 2.0)))
+        assertManifold(fused.mesh, "a boss fused onto the pivot's own corner")
+        val fs = assertNotNull(Section3.faces(fused.feature).first, "the fused pivot names its faces")
+        assertTrue(fs.any { it.pipe != null }, "the pivot's canal survives the union as a face of its own")
+        println("canal carrier | pivot | $named poses named, $onThePipe of them keeping the pipe, and the boss route with ${fs.size} faces")
     }
 
     // ---- (d) every pose ----

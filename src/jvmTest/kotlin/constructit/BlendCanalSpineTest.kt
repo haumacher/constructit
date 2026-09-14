@@ -167,18 +167,65 @@ class BlendCanalSpineTest {
             val rs = assertNotNull(regions, "the $what section closes: ${why?.render()}")
             assertTrue(rs.isNotEmpty(), "…with an area")
         }
-        // **and where one does not close it says where** (OP-3), which is this slice's own cut: a vertical
-        // plane standing nearer the corner than `x = 38` crosses the **rounded band** the canal has bitten
-        // deepest into, and the ruled reader has no statement for that trimmed stretch of it. The canal is
-        // not what breaks — the level, the tilted and the vertical sections above all cross the band itself
-        // — and nothing is drawn that does not close.
-        for (x in listOf(38.0, 39.0)) {
-            val (regions, why) = Section3.regionsOf(body.feature, Plane3(Vec3(x, 0.0, 0.0), Vec3.Y, Vec3.Z))
+        // **and where one does not close it says where** (OP-3), which is this slice's own cut and is
+        // narrowed to one sentence by session 86 (OP-31, slice 5l): a plane standing within two millimetres
+        // of the tight bend's corner breaks at the canal's own **flat end**, and by exactly the step-off
+        // that end takes. The band, its rails and its cap now all end at one ring — the ring the tool really
+        // lays, [Canal.grow] past the last station — so the only gap left in the loop is between that cap
+        // and the **wall** its own leg has run out onto past the end of the band it rolls on. The body has a
+        // step there and the drawing does not state it; nothing is drawn that does not close, and the face
+        // it breaks at is named.
+        for ((what, plane) in listOf(
+            "x = 38" to Plane3(Vec3(38.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
+            "x = 39" to Plane3(Vec3(39.0, 0.0, 0.0), Vec3.Y, Vec3.Z),
+            "y = 28" to Plane3(Vec3(0.0, 28.0, 0.0), Vec3.X, Vec3.Z),
+            "y = 29" to Plane3(Vec3(0.0, 29.0, 0.0), Vec3.X, Vec3.Z),
+        )) {
+            val (regions, why) = Section3.regionsOf(body.feature, plane)
             if (regions != null) continue
             val reason = assertNotNull(why, "a section that does not close says why").render()
-            assertTrue(reason.contains("#") || reason.contains("band"), "…naming the face it broke at: $reason")
-            println("canal spine | vertical at x = $x | does not close, and says where | ${reason.take(90)}")
+            assertTrue(reason.contains("flat end"), "…naming the canal's own flat end, which is where it breaks: $reason")
+            println("canal spine | vertical at $what | does not close, and says where | ${reason.take(90)}")
         }
+    }
+
+    /**
+     * **The canal's band, its rails and its cap all end at one ring** (OP-31, slice 5l) — the ring the tool
+     * really lays, which is [Blend3] `Canal.grow` past the last station and not the station itself.
+     *
+     * *Why this is a test and not an implementation detail.* [canalMesh] **moves** a free end's ring rather
+     * than doubling it, so over that last stretch the band is the section translated and the flat end the
+     * body keeps stands there. Slice 5l put the cap patch there because the boolean's own reader has to find
+     * the facet; the band's cut and the rail that sets its neighbour back were still read to the *station*,
+     * so a vertical section through the tight bend broke twice — once between the band and its own cap, and
+     * once between that cap and the face beyond it — each time by exactly the step-off. The first of the two
+     * is what this asserts: the canal's own section piece ends **on** the cap's own, to the tolerance the
+     * band's fitted spine states.
+     */
+    @Test
+    fun theCanalsCutEndsOnItsOwnCap() {
+        val cx = Construction()
+        val two = twoRounds(cx, sequential = false)
+        val base = Evaluator().solid(two)
+        val mitre = mitreOf(base)
+        val sec = BlendSection(BlendKind.FILLET, rc)
+        val choice = assertNotNull(Blend3.choicesFor(base, listOf(mitre), sec).first, "the mitre is scored")[0]
+        val body = Evaluator().solid(canal(cx, two, mitre, choice))
+        val faces = assertNotNull(Section3.faces(body.feature).first, "the body names its faces")
+        val band = assertNotNull(faces.firstOrNull { it.name == FaceName.BlendBand(mitre, 0) }, "the canal is a face")
+        val pipe = assertNotNull(band.pipe, "…carrying its own pipe")
+        val cap =
+            assertNotNull(
+                faces.firstOrNull { it.name is FaceName.BlendCap && (it.name as FaceName.BlendCap).edge == mitre && it.plane != null },
+                "the canal closes on a flat end of its own",
+            )
+        val plane = assertNotNull(cap.plane)
+        // every station of the band's own carrier stands on the run, and the **last** of them stands in the
+        // cap's own plane — which is what "one ring" means
+        assertTrue(pipe.stations.size >= 2, "the pipe has a run of stations")
+        val near = pipe.stations.minOf { abs(plane.distanceTo(it.at)) }
+        assertTrue(near <= 1e-9, "the band's own carrier ends in the plane of the cap it closes on: $near mm away")
+        println("canal spine | band and cap | the run's last station stands $near mm from its own cap")
     }
 
     /**

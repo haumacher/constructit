@@ -4,6 +4,8 @@ import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.PlaneValue
 import constructit.dsl.Construction
+import constructit.dsl.LoftPart
+import constructit.dsl.RegionRef
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
 import constructit.editor.DocumentFormat
@@ -36,6 +38,7 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tan
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -502,6 +505,94 @@ class BoolBevelStripCarrierTest {
             val labels = fs.filter { it.outline.isNotEmpty() || it.plane != null }.map { it.name.label.render() }
             assertEquals(labels.size, labels.toSet().size, "every face of the body has a name of its own: ${labels.groupBy { it }.filter { it.value.size > 1 }.keys}")
         }
+    }
+
+    /**
+     * **Everything a carrier is told about an operand face survives the boolean** (OP-31, slice 5l, probed)
+     * — not only *which surface* it is, which the test above holds, but every number stated **about** that
+     * surface. The one the drawing has that no other fixture here carries is [FacePatch.slack]: a band's
+     * flat end is the one face a *tool* laid rather than the body, so the facet the result keeps stands the
+     * tool's own micron off the plane the drawing states, and the cap says so. A result patch that dropped
+     * it sent the very sliver the first boolean had just placed to no carrier of the **second**, and a body
+     * that named every face after one bore refused its whole list after two.
+     *
+     * *The fixture is the 35° loft's leaning inside corner*, because that is where a band's flat end is a
+     * face of the body rather than a notch in one: on a block every such end stands **in** a face the body
+     * already has and the notch owns it, so a block states no slack at all. Here the two bands that meet at
+     * the pivot each end on a cap of their own, and each says its micron.
+     */
+    @Test
+    fun everyNumberACarrierStatesSurvivesASecondBooleanToo() {
+        requireEngine()
+        val cx = Construction()
+        val plane = Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
+        val (pivot, v) = pivotBody(cx, plane)
+        val dressed = facesOf(Evaluator().solid(pivot))
+        val stated = dressed.filter { it.slack > 0.0 }.map { it.name }.toSet()
+        assertTrue(stated.isNotEmpty(), "the pivot's two bands each end on a cap that states its own slack")
+        val once = cx.subtract(pivot, drill(cx, plane, Vec2(v.x, v.y), 2.0))
+        val first = Evaluator().solid(once)
+        assertManifold(first.mesh, "the pivot bored through its corner")
+        val fs1 = facesOf(first)
+        everyFaceNamed(fs1, "the pivot bored through its corner")
+        val twice = Evaluator().solid(cx.subtract(once, drill(cx, plane, Vec2(10.0, 45.0), 3.0)))
+        assertManifold(twice.mesh, "…and a second time, clear of the corner")
+        val fs2 = facesOf(twice)
+        everyFaceNamed(fs2, "the pivot bored twice")
+        var carried = 0
+        for (fs in listOf(fs1, fs2)) {
+            for (f in fs) {
+                val of = (f.name as? FaceName.BoolFace)?.of ?: continue
+                if (of !in stated || f.plane == null) continue
+                assertClose(f.slack, dressed.first { it.name == of }.slack, tol = 0.0, msg = "${f.name.label.render()} carries the slack its operand states")
+                carried++
+            }
+        }
+        assertTrue(carried >= 2, "both booleans hand the cap's own slack on: $carried")
+        // …and the pivot's own pipe is still a carrier after the second bore, with its pieces as they were
+        assertEquals(
+            fs1.count { it.pipe != null && it.outline.isNotEmpty() },
+            fs2.filter { (it.name as? FaceName.BoolFace)?.operand == 0 }.count { it.pipe != null && it.outline.isNotEmpty() },
+            "the second bore, clear of the corner, leaves the pivot's own pieces as they were",
+        )
+        println("bevel carrier | chained | the cap's slack survives $carried times, ${stated.size} faces state one")
+    }
+
+    /** The 35° loft of two L-sections, its leaning inside corner rounded at 3 mm — the pivot, on [plane]. */
+    private fun pivotBody(
+        cx: Construction,
+        plane: Plane3,
+    ): Pair<SolidRef, Vec3> {
+        val lo = listOf(Vec2(0.0, 0.0), Vec2(60.0, 0.0), Vec2(60.0, 30.0), Vec2(30.0, 30.0), Vec2(30.0, 60.0), Vec2(0.0, 60.0))
+        val shift = height * tan(35.0 * PI / 180.0) / sqrt(2.0)
+        val scale = 1.0 - shift / 30.0
+
+        fun area(pts: List<Vec2>): RegionRef {
+            val ps = pts.map { q -> cx.freePoint("F${ids++}", q.x.mm, q.y.mm) }
+            return cx.region(cx.loop(*pts.indices.map { cx.segment(ps[it], ps[(it + 1) % pts.size]) }.toTypedArray()))
+        }
+        val base = cx.plane(plane.origin, plane.u, plane.v)
+        val loft =
+            cx.loft(
+                listOf(
+                    LoftPart.Area(cx.sketchOn(base, area(lo))),
+                    LoftPart.Area(cx.sketchOn(cx.planeOffset(base, cx.const(height.mm)), area(lo.map { it * scale }))),
+                ),
+            )
+        val v = plane.toWorld(Vec2(30.0 * scale, 30.0 * scale)) + plane.normal.normalized() * height
+        val es = edgesOf(Evaluator().solid(loft))
+        val pair =
+            es.indices.filter { i ->
+                val e = es[i]
+                if (!e.between.a.label.render().contains("section 2's own face") && !e.between.b.label.render().contains("section 2's own face")) return@filter false
+                val path = Blend3.edgePath(e).first ?: return@filter false
+                val a = path.start ?: return@filter false
+                val b = path.end ?: return@filter false
+                (a - v).length() < 1e-6 || (b - v).length() < 1e-6
+            }
+        assertEquals(2, pair.size, "the loft's cap turns a reflex corner between two of its own edges")
+        val (choices, why) = Blend3.choicesFor(Evaluator().solid(loft), pair, BlendSection(BlendKind.FILLET, 3.0))
+        return cx.blendAll(loft, cx.planeXY(), listOf(Construction.BlendRun(BlendKind.FILLET, cx.const(3.0.mm), null, pair, assertNotNull(choices, "the pair rounds: ${why?.render()}")))) to v
     }
 
     /** The diagonal of a face's own trim in its own chart — what says a trim is the trim it was. */
