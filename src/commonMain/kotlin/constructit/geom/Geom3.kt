@@ -1430,14 +1430,12 @@ object Geom3 {
     // ---- features ----
 
     /**
-     * How far a tool stands off a face of the body it works on — the one rule GitHub #33 left with no
-     * exception, *a tool never shares a face with the body*, said here for the **other** tool that shares one
-     * by construction ([Blend3]'s `GROW_MM` is the same micron for the blend's).
-     *
-     * A micron: six orders below any feature a drawing has and five above the general engine's own float32
-     * noise, which is the same window the blend's step-off was measured into.
+     * How far a tool stands off a face of the body it works on — [ToolStep.MM], kept here under the name
+     * this file's own callers have always used. The rule and the reasons are [ToolStep]'s (OP-31, slice 5q,
+     * which gathered this drawing's five separate statements of *a tool never shares a face with the body*
+     * into one); GitHub #33 is where it began.
      */
-    const val TOOL_STEP_MM = 1e-3
+    const val TOOL_STEP_MM = ToolStep.MM
 
     /**
      * The **tool a *Cut* takes out of a body**: [regions], read on [face] from behind, swept [depth] mm into
@@ -3148,7 +3146,33 @@ object Geom3 {
         return if (sameAxis(a.feature, b.feature)) {
             boolean(kind, a, b)
         } else {
-            val (r, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
+            // **A tangency the drawing knows about is decided by the drawing, never left with the kernel**
+            // (OP-31, slice 5q). Two operands the user drew against each other — a foundation hugging
+            // the pillar it was swept around, a boss standing exactly on a face — are tangent by the
+            // drawing's own intent, and a float64 engine leaves that contact exactly tangent, which no
+            // watertight mesh can carry (a zero-thickness flap, an edge used twice). So where the engine
+            // says it cannot close such a result, the **drawing** is asked what the contact is: where its
+            // two operands share a plane — an exact coincidence of the two meshes, not a measurement — the
+            // contact is a statement, and it is restated [ToolStep.MM] apart on the side the operation makes
+            // irrelevant and asked again. Where they share no plane nothing is restated and the engine's own
+            // refusal stands, named: a tangency along a curve between two curved faces is a thing this
+            // drawing cannot say is coincident, and it may not pretend otherwise.
+            //
+            // It is asked **only where the engine has already said it cannot close the result**, and that is
+            // what keeps it honest in both directions: no body this drawing builds today moves by so much as
+            // a micron, because a boolean that answers is never asked twice; and a refusal that the drawing
+            // itself can resolve stops being one. A **tool** the drawing built — a blend's band, a shell's
+            // cavity, a cut's sketch — has stepped itself off the body it works on already ([ToolStep],
+            // GitHub #33), so it rarely reaches here; where it does, its own step-off failed to open the
+            // contact and the same sentence applies to it.
+            val (r0, why0) = MeshBool.boolean(kind, a.mesh, b.mesh)
+            val (r, why) =
+                if (r0 != null) {
+                    r0 to why0
+                } else {
+                    val restated = ToolStep.parted(kind, a.mesh, b.mesh)
+                    if (restated == null) r0 to why0 else MeshBool.boolean(kind, a.mesh, restated)
+                }
             if (r == null) {
                 null to why
             } else {

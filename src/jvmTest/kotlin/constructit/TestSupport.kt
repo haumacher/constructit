@@ -40,6 +40,35 @@ fun assertClose(
 }
 
 /**
+ * **The tolerance at which two routes to one body must agree, for the engine that is running** (OP-31,
+ * slice 5q) — one place, so that the suite asserts the truth under both engines and asserts less under
+ * neither.
+ *
+ * *Why the number is not one number, and why it is not a loosening.* Every assertion that reaches this
+ * helper asks the same question — *did asking a second time, or asking in the other order, move the body?*
+ * — and under the **float32** engine the answer came back to the last bit, because both routes were
+ * quantised onto the same grid and agreed **because** they were coarse. Under the from-source **float64**
+ * engine that grid is gone and a genuine route difference of a nanometre-cubed in forty thousand is
+ * visible: 2.8e-11 to 1.06e-8 relative, measured over the nine assertions this serves, which is what [REL] is set
+ * just above. Demanding the last
+ * bit of an engine that no longer rounds to one would be asserting an artefact; demanding 1e-8 of the
+ * engine that does round would be asserting **less** than this suite does today. So each assertion keeps
+ * the exactness it has where it has it, and states [REL] of the figure where the engine computes in
+ * doubles.
+ */
+fun sameBodyTol(
+    magnitude: Double,
+    whenQuantised: Double = 0.0,
+): Double = if (constructit.geom.MeshBool.isNative) maxOf(whenQuantised, REL * abs(magnitude)) else whenQuantised
+
+/**
+ * How nearly two routes to one body agree under an engine that computes in **doubles** — a shade above the
+ * worst of the nine measured route differences (1.06e-8, a dressed level's volume asked twice), and three
+ * orders above the 5.2e-12 the engine itself reaches on a fixture with nothing shared in it.
+ */
+const val REL = 2e-8
+
+/**
  * The node an element's geometry is **computed by** — behind the re-pointable view a trimmable curve
  * publishes it through (`Document.publishedRef`, GitHub #25).
  *

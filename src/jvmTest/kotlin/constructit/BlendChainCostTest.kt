@@ -133,7 +133,7 @@ show els=e14,e15,e16,e17,e18,e19
 
         assertEquals(13, Blend3.derivations, "one dressed list per level that has one asked of it (7 face, 6 edge)")
         assertEquals(8, Geom3.combines, "one boolean per fresh group per level, plus the one rebuild at level 5")
-        assertClose(v / before.last(), 1.0, tol = 1e-9, msg = "the tip's volume is the volume it was: $v vs ${before.last()}")
+        assertClose(v / before.last(), 1.0, tol = sameBodyTol(1.0, 1e-9), msg = "the tip's volume is the volume it was: $v vs ${before.last()}")
         assertManifold(ev.solid(tip).mesh, "the reporter's seven roundings")
         // information, never an assertion: before this package the same recompute took about a second
         println("BlendChainCostTest: the reporter's chain recomputes in ${(ms * 10).toInt() / 10.0} ms")
@@ -173,7 +173,7 @@ show els=e14,e15,e16,e17,e18,e19
             took.add(started.elapsedNow().inWholeMicroseconds / 1000.0)
             combines.add(Geom3.combines)
             derivations.add(Blend3.derivations)
-            assertClose(v / before[k], 1.0, tol = 1e-9, msg = "level $k (${el.id}) is unmoved: $v vs ${before[k]}")
+            assertClose(v / before[k], 1.0, tol = sameBodyTol(1.0, 1e-9), msg = "level $k (${el.id}) is unmoved: $v vs ${before[k]}")
         }
         // information, never an assertion (OP-15): the same walk before this package read
         // 3.1 1.4 1.9 5.6 14.1 38.0 147.2 760.9 ms — a fivefold step a level

@@ -110,7 +110,7 @@ class BlendIncongruentCornerTest {
                 volumeOf(shallowFirst, Route.ONE_PASS),
                 volumeOf(shallowFirst, Route.STACKED),
             )
-        for (v in vs) assertClose(v, vs[0], 1e-6, "every route builds one body: $vs")
+        for (v in vs) assertClose(v, vs[0], sameBodyTol(vs[0], 1e-6), "every route builds one body: $vs")
         // …and it is the corner's own body and not the naive one: the deeper section's pivot, by Pappus
         val naive = assertNotNull(naive(L.block, deepFirst), "the naive figure")
         val take = Figures.pivotTakes(4.0, BlendKind.FILLET, PI / 2.0, 0.0)
@@ -292,7 +292,9 @@ class BlendIncongruentCornerTest {
     @Test
     fun theCongruentPairIsUnchangedToTheLastBit() {
         val v = volumeOf(listOf(Rounding(alongY, BlendKind.FILLET, 4.0), Rounding(alongX, BlendKind.FILLET, 4.0)), Route.ONE_PASS)
-        assertEquals(40254.536658410776, v, "session 80's own corner, bit for bit")
+        // …bit for bit under the engine that quantises, and to the route difference doubles make visible
+        // under the one that does not ([sameBodyTol], OP-31 slice 5q)
+        assertClose(v, 40254.536658410776, sameBodyTol(40254.536658410776), "session 80's own corner, bit for bit")
         assertEquals(
             1,
             cornerFaces(bodyOf(listOf(Rounding(alongY, BlendKind.FILLET, 4.0), Rounding(alongX, BlendKind.FILLET, 4.0)), Route.ONE_PASS)).size,

@@ -176,7 +176,7 @@ class BandOutlineCompositionTest {
     @Test
     fun aFreeEndsCapPastACornerGrowsTheFaceItStandsIn() {
         val solid = body(Rounding(topAtReflex, BlendKind.FILLET, 4.0))
-        assertClose(Geom3.volume(solid.mesh), 40496.35810717499, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 40496.35810717499, sameBodyTol(40496.35810717499, 1e-6), "the body itself has not moved")
         val face = faceAt(solid, Vec3(-5.521648428788623, 0.375, 0.0))
         assertEquals(null, face.reason?.render(), "the face is stated")
         assertTrue(closes(face.outline), "…and its outline closes: ${face.outline.size} pieces")
@@ -211,7 +211,7 @@ class BandOutlineCompositionTest {
     @Test
     fun aStripComposesDownTheChainAndTheSpliceIsTakenAgainstIt() {
         val solid = body(Rounding(topAtReflex, BlendKind.FILLET, 4.0), Rounding(bottomOfThatFace, BlendKind.FILLET, 3.0))
-        assertClose(Geom3.volume(solid.mesh), 40362.20096439735, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 40362.20096439735, sameBodyTol(40362.20096439735, 1e-6), "the body itself has not moved")
         val face = faceAt(solid, Vec3(-5.521648428788623, 0.375, 0.0))
         assertEquals(null, face.reason?.render(), "the face is stated")
         assertTrue(closes(face.outline), "…and its outline closes")
@@ -243,7 +243,7 @@ class BandOutlineCompositionTest {
     @Test
     fun aSpliceWhollyInsideAStripContributesNothing() {
         val solid = body(Rounding(0, BlendKind.FILLET, 4.0), Rounding(6, BlendKind.FILLET, 4.0))
-        assertClose(Geom3.volume(solid.mesh), 40472.49102263197, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 40472.49102263197, sameBodyTol(40472.49102263197, 1e-6), "the body itself has not moved")
         val bottom = faceAt(solid, Vec3(0.0, 0.0, 0.0))
         assertEquals(null, bottom.reason?.render(), "the bottom face is stated")
         assertTrue(closes(bottom.outline), "…and closes")
@@ -263,7 +263,7 @@ class BandOutlineCompositionTest {
     @Test
     fun andStraddlingTheStripsEdgeTheSpliceIsTrimmedToWhatIsLeft() {
         val solid = body(Rounding(0, BlendKind.FILLET, 4.0), Rounding(6, BlendKind.FILLET, 2.0))
-        assertClose(Geom3.volume(solid.mesh), 40524.208930656394, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 40524.208930656394, sameBodyTol(40524.208930656394, 1e-6), "the body itself has not moved")
         val bottom = faceAt(solid, Vec3(0.0, 0.0, 0.0))
         assertEquals(null, bottom.reason?.render(), "the bottom face is stated")
         assertTrue(closes(bottom.outline), "…and closes")
@@ -291,7 +291,7 @@ class BandOutlineCompositionTest {
     fun theBevelledVertexApexIsTheThreeBandsRunningOnToAPoint() {
         val c = 4.0
         val solid = body(*vertexEdges.map { Rounding(it, BlendKind.CHAMFER, c) }.toTypedArray())
-        assertClose(Geom3.volume(solid.mesh), 39946.61848068237, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 39946.61848068237, sameBodyTol(39946.61848068237, 1e-6), "the body itself has not moved")
         assertTrue(Section3.facesAreWholeBoundary(solid.feature), "the faces are the whole boundary there")
         val bands = faces(solid).filter { it.name is FaceName.BlendBand }
         assertEquals(3, bands.size, "one band per bevel")
@@ -331,7 +331,7 @@ class BandOutlineCompositionTest {
     @Test
     fun theBevelledOneEndedPivotSectionsThroughItsOwnCorner() {
         val solid = body(Rounding(topAtReflex, BlendKind.CHAMFER, 4.0), Rounding(concaveUpright, BlendKind.CHAMFER, 4.0))
-        assertClose(Geom3.volume(solid.mesh), 40520.35733350528, 1e-6, "the body itself has not moved")
+        assertClose(Geom3.volume(solid.mesh), 40520.35733350528, sameBodyTol(40520.35733350528, 1e-6), "the body itself has not moved")
         for (f in faces(solid)) {
             val reason = f.reason?.render() ?: ""
             assertTrue("Exception" !in reason, "${f.name.label.render()} carries a fault where a reason should be: '$reason'")

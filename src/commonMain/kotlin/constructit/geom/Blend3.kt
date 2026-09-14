@@ -231,7 +231,7 @@ object Blend3 {
      * [sectionPolygons]. A micron: four orders below any feature this drawing carries, and two orders above
      * the general engine's own float32 resolution at drawing sizes, which is the gap it exists to open.
      */
-    private const val GROW_MM = 1e-3
+    private const val GROW_MM = ToolStep.MM
 
     /** How far apart two mitre rings' points may be (mm) and still be the same ring — see [ringsAgree]. */
     private const val RING_TOL = 1e-6
@@ -9032,11 +9032,14 @@ object Blend3 {
     private fun canalGrow(
         w1: Wall,
         w2: Wall,
-    ): Double = max(GROW_MM, 2.0 * max(wallSkin(w1), wallSkin(w2)))
+    ): Double = max(ToolStep.off(w1.radiusOrNull), ToolStep.off(w2.radiusOrNull))
 
     /** How far [w]'s own triangles may stand inside its true surface — nothing at all where it is a plane. */
     private fun wallSkin(w: Wall): Double =
         if (w.plane != null) 0.0 else GeomMath.effectiveTol(max(w.radius, Geom3.WELD_TOL), GeomMath.TESS_TOL_MM)
+
+    /** The radius the step-off is asked for — null where the wall is a plane, which is [ToolStep.off]'s own word. */
+    private val Wall.radiusOrNull: Double? get() = if (plane != null) null else radius
 
     /**
      * The crease as a **curve in space** for a canal — the two carriers [pathOf] refuses, lifted.
