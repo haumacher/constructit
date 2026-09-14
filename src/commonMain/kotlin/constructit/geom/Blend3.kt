@@ -1233,11 +1233,13 @@ object Blend3 {
     private fun sectionOf(
         crease: Crease,
         wedge: Wedge,
+        body: Mesh3?,
     ): Pair<Grown?, Msg?> {
         val o = Vec2(0.0, 0.0)
         val arc = wedge.pieces.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }
-        val s1 = stepOf(crease.leg1, wedge.t1, wedge.t2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
-        val s2 = stepOf(crease.leg2, wedge.t2, wedge.t1) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val reach = max(wedge.t1.length(), wedge.t2.length())
+        val s1 = stepOf(crease.leg1, wedge.t1, wedge.t2, crease, crease.face1, reach, body) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
+        val s2 = stepOf(crease.leg2, wedge.t2, wedge.t1, crease, crease.face2, reach, body) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
         val corner = s1.meet(s2) ?: return null to Msgs.refusalBlendTwoFacesThatCreaseRun()
         val g1 = s1.step(wedge.t1)
         val g2 = s2.step(wedge.t2)
@@ -1380,8 +1382,12 @@ object Blend3 {
         leg: FilletLeg,
         t: Vec2,
         other: Vec2,
+        crease: Crease,
+        face: FacePatch,
+        reach: Double,
+        body: Mesh3?,
     ): LegStep? {
-        if (leg.line != null) return outwardAt(t, other)?.let { LegStep(it, null, 1.0, GROW_MM) }
+        if (leg.line != null) return outwardAt(t, other)?.let { LegStep(it, null, 1.0, legStep(crease, face, it, reach, GROW_MM, body)) }
         val c = leg.circle ?: return null
         if (c.radius <= Geom3.WELD_TOL) return null
         val side = if ((other - c.center).length() >= c.radius) -1.0 else 1.0
@@ -1401,6 +1407,56 @@ object Blend3 {
         // own centre
         if (c.radius + side * off <= Geom3.WELD_TOL) return null
         return LegStep(outwardAt(t, other), c, side, off)
+    }
+
+    /**
+     * **A leg's step-off reads the body it stands on** (OP-31, slice 5v) — [GROW_MM] where the body's own
+     * facets are where the drawing says they are, and one skin past them where they are not.
+     *
+     * A face of a dressed body is very often not in the plane its face list states: the tool that cut it
+     * stepped itself a micron off the nominal plane, so what the boolean left is a micron-thick ledge along
+     * the plane the drawing still names. A second tool that steps off the **nominal** face by the same
+     * micron comes down exactly on that ledge, which is the coplanar pair [sectionOf]'s whole rule exists to
+     * abolish — sixteen difference and thirty-two union tools of the matrix's own 288 cells, and slice 5q's
+     * one residue. So the step is asked of [ToolStep.clear], which reads the body's triangles in the very
+     * plane the leg is about to stand in and carries the step past whatever is already there.
+     *
+     * Where there is no body to read — a piece built to be *read* rather than applied ([piecesOf]) — the
+     * answer is the micron it always was, bit for bit.
+     */
+    private fun legStep(
+        crease: Crease,
+        face: FacePatch,
+        out: Vec2,
+        reach: Double,
+        skin: Double,
+        body: Mesh3?,
+    ): Double {
+        if (body == null) return skin
+        val plane = face.plane ?: return skin
+        val u = crease.e1 * out.x + crease.ref.e2 * out.y
+        if (u.length() <= Vec3.EPS) return skin
+        val dir = u.normalized()
+        // the leg lies **in** the face, so the way out of the wedge is the face's own normal, one way or the
+        // other; anything else is not a face of the body being stepped off and keeps the plain skin
+        if (abs(abs(dir.dot(plane.normal.normalized())) - 1.0) > TANGENT_TOL) return skin
+        val (lo, hi) = creaseBox(crease, reach)
+        return ToolStep.clear(body, dir, dir.dot(crease.ref.at), skin, lo, hi)
+    }
+
+    /** The box the crease's own run occupies, grown by how far the section reaches out of it. */
+    private fun creaseBox(
+        crease: Crease,
+        reach: Double,
+    ): Pair<Vec3, Vec3> {
+        var lo = Vec3(Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE)
+        var hi = Vec3(-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE)
+        for (st in crease.stations) {
+            lo = Vec3(min(lo.x, st.at.x), min(lo.y, st.at.y), min(lo.z, st.at.z))
+            hi = Vec3(max(hi.x, st.at.x), max(hi.y, st.at.y), max(hi.z, st.at.z))
+        }
+        val g = reach + GROW_MM
+        return Vec3(lo.x - g, lo.y - g, lo.z - g) to Vec3(hi.x + g, hi.y + g, hi.z + g)
     }
 
     /**
@@ -1443,6 +1499,7 @@ object Blend3 {
         crease: Crease,
         choice: BlendChoice,
         sec: BlendSection,
+        body: Mesh3?,
     ): Pair<Double, Double> {
         if (!choice.convex) return 0.0 to 0.0
         val delta = min(sec.reach(), crease.length / 2.0) * PROBE_FRACTION
@@ -1464,19 +1521,22 @@ object Blend3 {
         if (el is Curve3Element.Arc3) {
             if (el.radius <= Geom3.WELD_TOL || el.arcLength <= Geom3.WELD_TOL) return 0.0 to 0.0
             if (abs(el.sweepAngle) >= 2.0 * PI - 1e-9) return 0.0 to 0.0
-            return capInFace(crease, true) to capInFace(crease, false)
+            return capInFace(crease, true, sec, body) to capInFace(crease, false, sec, body)
         }
         val seg = el as? Curve3Element.Seg3 ?: return 0.0 to 0.0
         val run = seg.end - seg.start
         if (run.length() <= Geom3.WELD_TOL) return 0.0 to 0.0
         val dir = run.normalized()
-        return stepBeyond(crease, seg.start - dir * delta) to stepBeyond(crease, seg.end + dir * delta)
+        return stepBeyond(crease, seg.start - dir * delta, seg.start, dir * -1.0, sec, body) to
+            stepBeyond(crease, seg.end + dir * delta, seg.end, dir, sec, body)
     }
 
     /** Out past the end by [GROW_MM] where the body has a face in the cap's own plane, and nothing where not. */
     private fun capInFace(
         crease: Crease,
         atStart: Boolean,
+        sec: BlendSection,
+        body: Mesh3?,
     ): Double {
         val els = crease.path.elements
         val el = if (atStart) els.first() else els.last()
@@ -1487,14 +1547,44 @@ object Blend3 {
             crease.all.any { f ->
                 f.plane?.let { p -> abs(p.normal.normalized().dot(away)) >= 1.0 - TANGENT_TOL && abs(p.distanceTo(at)) <= ON_BOUNDARY_TOL } == true
             }
-        return if (flush) -GROW_MM else 0.0
+        return if (flush) -capStepOff(at, away, sec, body) else 0.0
     }
 
-    /** Back into the run where [beyond] is material an inside corner keeps, out past its end otherwise. */
+    /**
+     * Back into the run where [beyond] is material an inside corner keeps, out past its end otherwise — and
+     * **as far as the body it stands on leaves room for** either way (OP-31, slice 5v; [ToolStep.clear]).
+     */
     private fun stepBeyond(
         crease: Crease,
         beyond: Vec3,
-    ): Double = if (facesReaching(crease, beyond) == 1) GROW_MM else -GROW_MM
+        at: Vec3,
+        away: Vec3,
+        sec: BlendSection,
+        body: Mesh3?,
+    ): Double {
+        val back = facesReaching(crease, beyond) == 1
+        val dir = if (back) away * -1.0 else away
+        val step = capStepOff(at, dir, sec, body)
+        return if (back) step else -step
+    }
+
+    /**
+     * How far a cap has to stand off the plane square to the crease at [at], stepping along [dir] — the
+     * micron where the body's own facets are where the drawing says they are, one skin past them where an
+     * earlier tool has already carried them (OP-31, slice 5v).
+     */
+    private fun capStepOff(
+        at: Vec3,
+        dir: Vec3,
+        sec: BlendSection,
+        body: Mesh3?,
+    ): Double {
+        if (body == null) return GROW_MM
+        val g = sec.reach() + GROW_MM
+        val lo = Vec3(at.x - g, at.y - g, at.z - g)
+        val hi = Vec3(at.x + g, at.y + g, at.z + g)
+        return ToolStep.clear(body, dir, dir.dot(at), GROW_MM, lo, hi)
+    }
 
     /** How many of the crease's two faces still reach [p] — see [endSteps]. */
     private fun facesReaching(
@@ -1533,8 +1623,14 @@ object Blend3 {
         wedge: Wedge,
         choice: BlendChoice,
         sec: BlendSection,
+        /**
+         * **The body this piece's tool will actually meet** (OP-31, slice 5v), or null where the piece is
+         * built to be *read* rather than applied — and then every step-off is the plain skin it always was,
+         * bit for bit.
+         */
+        body: Mesh3?,
     ): Pair<Piece?, Msg?> {
-        val (section, whySection) = sectionOf(crease, wedge)
+        val (section, whySection) = sectionOf(crease, wedge, body)
         if (section == null) return null to Msgs.refusalQualified(name = crease.edge.name.label, reason = whySection ?: Msg.EMPTY)
         val grown = section.polygon
         val distinct = ArrayList<Vec2>(grown.size)
@@ -1543,7 +1639,7 @@ object Blend3 {
         if (caps == null) {
             return null to Msgs.refusalQualified(name = crease.edge.name.label, reason = whyCaps ?: Msgs.refusalBlendSectionCannotBeTriangulated())
         }
-        val (back0, back1) = endSteps(crease, choice, sec)
+        val (back0, back1) = endSteps(crease, choice, sec, body)
         return Piece(
             index,
             existing,
@@ -1593,7 +1689,9 @@ object Blend3 {
                     val crease = creaseOf(below, edge).first ?: continue
                     val choice = f.choices.getOrNull(k) ?: continue
                     val wedge = wedgeOf(crease, sec, choice).first ?: continue
-                    out.add(pieceOf(i, true, crease, wedge, choice, sec).first ?: continue)
+                    // a piece of the chain **under** this one is read, never applied: it is what says where
+                    // the bands already on the body end, and its own step-off is the plain one (slice 5v)
+                    out.add(pieceOf(i, true, crease, wedge, choice, sec, null).first ?: continue)
                 }
             }
             f = below
@@ -4793,7 +4891,7 @@ object Blend3 {
                         fitPhrase = sec.fitPhrase(fits),
                     )
             }
-            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, sec)
+            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, sec, null)
             if (piece == null) return null to whyPiece
             pieces.add(piece)
         }
@@ -4879,7 +4977,20 @@ object Blend3 {
             body: Solid3,
             group: List<Int>,
         ): Pair<Solid3?, Msg?> {
-            val lead = pieces[group.firstOrNull { !pieces[it].existing } ?: group.first()]
+            // **A step-off reads the body it is standing on, not the plane the drawing names** (OP-31,
+            // slice 5v). The pass's pieces were prepared against the body it *began* with; by the time this
+            // group's tool is cut, the groups before it have left their own step-offs in that body — a
+            // micron-thick ledge along the very face this tool's leg is about to stand in. So the group's
+            // sections and cap steps are restated here, against the body the kernel is actually going to be
+            // handed, and [ToolStep.clear] carries each step past whatever is already there. Where nothing
+            // is there the answer is the micron it always was, bit for bit, which is why no body this
+            // drawing already builds moves: the pieces the corners were read from are untouched.
+            val stood = ArrayList(pieces)
+            for (i in group) {
+                val p = pieces[i]
+                stood[i] = pieceOf(p.index, p.existing, p.crease, p.wedge, p.choice, p.sec, body.mesh).first ?: p
+            }
+            val lead = stood[group.firstOrNull { !stood[it].existing } ?: group.first()]
             val (tool, whyTool) =
                 if (group.size == 1 && !(lead.seg != null && lead.stepped)) {
                     // **the two tools that are still one sweep.** A crease that is not a straight run — a
@@ -4890,7 +5001,7 @@ object Blend3 {
                     revolvedBand(lead)
                         ?: Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.grownRegion), plan = null)
                 } else {
-                    val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings), corners)
+                    val (mesh, whyMesh) = toolMesh(stood, group, rings, buttEnds(stood, group, rings), corners)
                     if (mesh == null) {
                         null to whyMesh
                     } else {
@@ -5165,7 +5276,7 @@ object Blend3 {
             var ok = true
             for (p in pieces) {
                 val w = wedgeOf(p.crease, p.sec.scaledBy(mid), p.choice).first
-                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice, p.sec).first
+                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice, p.sec, null).first
                 if (q == null) {
                     ok = false
                     break
@@ -5787,7 +5898,7 @@ object Blend3 {
             val crease = creaseOf(f.base, edge).first ?: if (canalPath(edge) != null) continue else return null
             val choice = f.choices.getOrNull(k) ?: return null
             val wedge = wedgeOf(crease, sec, choice).first ?: return null
-            out.add(pieceOf(i, false, crease, wedge, choice, sec).first ?: return null)
+            out.add(pieceOf(i, false, crease, wedge, choice, sec, null).first ?: return null)
         }
         out.addAll(chainPieces(f.base))
         return out

@@ -35,13 +35,33 @@ import kotlin.test.assertTrue
  * *And the answer is not zero, so it is stated as the residue it is* (OP-31, slice 5q's one cut; the idiom
  * is `BlendMatrixTest.Residue`'s — a number here is a **claim that a defect is still there**, and it fails
  * the build the moment the number moves either way). Over the matrix's 288 two-edge cells, in both gesture
- * routes, sixteen difference tools and thirty-two union tools still hand the kernel a flush contact, and
- * every one of them is the same case: the plane is the body's own face *already carried a micron by an
- * earlier tool's step-off*, and the next tool steps off the nominal face by the same micron and lands
- * exactly on it. A step-off measured against the face the drawing names cannot see a face the previous
- * boolean left a micron away from it, and the cure — a step-off that reads the body it is standing on — is
- * a slice of its own. Every one of these cells builds today under both engines; what the number says is
- * that they build because the contact happened to be resolvable, not because it was never handed over.
+ * routes, it was **sixteen difference tools and thirty-two union tools**.
+ *
+ * *The thirty-two are gone, and they were all one sentence* (OP-31, slice 5v; [ToolStep.clear]). Their
+ * plane was the body's own face **already carried a micron by an earlier tool's step-off** — a micron-thick
+ * ledge along the very face the next tool's leg was about to stand in — and the next tool stepped off the
+ * *nominal* face by the same micron and came down exactly on it. **A step-off reads the body it is standing
+ * on, not the plane the drawing names**: every tool of a pass is now stated against the body the kernel is
+ * actually going to be handed, and the step is carried past whatever the body really has there. Not one of
+ * the matrix's 288 volumes moves by so much as a bit.
+ *
+ * *The sixteen that remain are two cases, and both of them are about where a corner **lands*** rather than
+ * about how far a band stands off a face — which is why they are still a slice of their own and not this
+ * one:
+ *
+ * - **A ring that stands on a pivot axis takes the plain section** ([toolMesh]'s own rule, the probe of
+ *   GitHub #33): the leg in the face the ball does *not* roll on lies along the axis, and a micron off the
+ *   axis is swept into a zero-thickness disc. Its *other* leg then lies flat in the shared face and the
+ *   pivot sweeps it into a sector of that very face. Stepping only that leg was built and discarded on its
+ *   own evidence: the two rings a `Ledge` joins are then stepped at different indices of the same ring, the
+ *   annulus no longer closes on the tube, and nine tests of the incongruent corner came back *"used 2 times
+ *   with 2 opposite uses"* along the upright itself.
+ * - **A ledge lands in the wall the corner stands against**, because that is where it lands: a `Ledge`'s
+ *   landing plane is square to the shallower band's run, and at an inside corner of two bottom-rim edges
+ *   that plane **is** the upright's own face.
+ *
+ * Every one of these cells builds today under both engines; what the number says is that they build because
+ * the contact happened to be resolvable, not because it was never handed over.
  *
  * It runs under **both** engines: the rule is the drawing's and owes nothing to which kernel is behind the
  * seam, and the from-source one is skipped where it is not built ([MeshBool.isNative]).
@@ -101,7 +121,7 @@ class ToolStepOffTest {
         val (differences, unions) = sweep(pairs)
         println("== tool step-off: 288 cells — $differences difference and $unions union tools hand over a flush contact")
         assertEquals(16, differences, "the difference tools that still lay a face in a face of the body")
-        assertEquals(32, unions, "…and the union tools that back a face onto one")
+        assertEquals(0, unions, "…and the union tools that back a face onto one")
     }
 
     /**
@@ -114,6 +134,6 @@ class ToolStepOffTest {
         assumeTrue(MeshBool.isNative, "not the from-source engine (-Dconstructit.manifold.native=<dir>): ${MeshBool.status}")
         val (differences, unions) = sweep(L.block.pairs.map { (a, b, _) -> a to b })
         assertEquals(16, differences, "the same difference tools under ${MeshBool.status}")
-        assertEquals(32, unions, "…and the same union tools")
+        assertEquals(0, unions, "…and the same union tools")
     }
 }

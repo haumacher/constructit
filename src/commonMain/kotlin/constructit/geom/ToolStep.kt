@@ -66,6 +66,80 @@ object ToolStep {
         floorMm: Double = GeomMath.TESS_TOL_MM,
     ): Double = max(MM, 2.0 * GeomMath.effectiveTol(max(abs(radius), Geom3.WELD_TOL), floorMm))
 
+    /**
+     * **A step-off reads the body it is standing on, not the plane the drawing names** (OP-31, slice 5v) —
+     * how far a tool must stand off the plane `(normal, offset)`, stepping along [normal], so that no facet
+     * [body] really has there is left flush with it.
+     *
+     * *Why the stated plane is not enough.* A face of a dressed body is very often **not** where the drawing
+     * names it: the tool that cut it stepped itself [MM] off the nominal plane, and what the boolean left
+     * behind is a facet a micron away from the plane the face list still states — a micron-thick ledge along
+     * a band's own leg, a cap the previous free end overshot. The next tool steps off the **nominal** plane
+     * by the same micron and lands exactly on that facet, which is the very coplanar pair the whole rule
+     * exists to abolish. Over the matrix's 288 two-edge cells that was sixteen difference tools and
+     * thirty-two union tools, and it was the one residue slice 5q wrote down.
+     *
+     * *So the step composes, and it is stated rather than accumulated.* The body's own triangles say where
+     * its facets are — a measurement the tool already has the triangles for, and the only honest reading of
+     * a face the drawing does not name at all. Every facet parallel to [normal], standing within [window] of
+     * the stated plane and overlapping the contact box `(lo, hi)`, is taken in order, and a step that would
+     * land on one is carried past it by another [skin]. A chain of *n* tools therefore steps *n* skins, each
+     * one stated by the body it stands on rather than assumed, and a tool standing off an undressed face
+     * steps exactly the one skin it always did — which is why no body this drawing already builds moves.
+     *
+     * The contact box is what keeps a micron from being spent for nothing: two faces in one plane and
+     * nowhere near each other are not a contact, and [parted]'s own overlap test is this one.
+     */
+    fun clear(
+        body: Mesh3?,
+        normal: Vec3,
+        offset: Double,
+        skin: Double,
+        lo: Vec3,
+        hi: Vec3,
+        window: Double = WINDOW * skin,
+    ): Double {
+        if (body == null) return skin
+        val ds = ArrayList<Double>()
+        for (t in body.triangles) {
+            val p0 = body.vertices[t.a]
+            val p1 = body.vertices[t.b]
+            val p2 = body.vertices[t.c]
+            val n0 = (p1 - p0).cross(p2 - p0)
+            val len = n0.length()
+            if (len <= 0.0) continue
+            val dot = n0.dot(normal) / len
+            if (abs(abs(dot) - 1.0) > PARALLEL_TOL) continue
+            val d = normal.dot(p0) - offset
+            if (d < -window || d > window) continue
+            if (!meets(p0, p1, p2, lo, hi)) continue
+            ds.add(d)
+        }
+        if (ds.isEmpty()) return skin
+        ds.sort()
+        var step = skin
+        for (d in ds) if (d >= step - Geom3.WELD_TOL && d <= step + Geom3.WELD_TOL) step = d + skin
+        return step
+    }
+
+    /** How many skins out from the stated plane [clear] still looks for a facet — a few, never a feature. */
+    private const val WINDOW = 64.0
+
+    /** Whether the triangle's own box meets the contact box — [clear]'s *"is this a contact at all"*. */
+    private fun meets(
+        p0: Vec3,
+        p1: Vec3,
+        p2: Vec3,
+        lo: Vec3,
+        hi: Vec3,
+    ): Boolean {
+        val tlo = Vec3(min(min(p0.x, p1.x), p2.x), min(min(p0.y, p1.y), p2.y), min(min(p0.z, p1.z), p2.z))
+        val thi = Vec3(max(max(p0.x, p1.x), p2.x), max(max(p0.y, p1.y), p2.y), max(max(p0.z, p1.z), p2.z))
+        return tlo.x <= hi.x + MM && lo.x <= thi.x + MM &&
+            tlo.y <= hi.y + MM && lo.y <= thi.y + MM &&
+            tlo.z <= hi.z + MM && lo.z <= thi.z + MM
+    }
+
     /** [offCurve] where [radius] is given, [MM] where it is null — *"a plane, or a curve of this radius"*. */
     fun off(
         radius: Double?,
