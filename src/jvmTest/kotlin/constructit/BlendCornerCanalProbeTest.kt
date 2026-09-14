@@ -133,6 +133,9 @@ class BlendCornerCanalProbeTest {
 
         val r = ed.doc.scalars.first { it.name == "r" }
         assertTrue(ed.setParameter(r, 1.5), ed.statusHint)
+        // a body that does not build says so in its own words rather than arriving as a missing value
+        val atSmaller = Evaluator().eval(bodyOf(ed).ref.node)
+        assertTrue(atSmaller !is EvalResult.Invalid, "r = 1.5 builds: ${(atSmaller as? EvalResult.Invalid)?.reason}")
         val smaller = Evaluator().solid(bodyOf(ed).ref as SolidRef)
         assertManifold(smaller.mesh, "r = 1.5")
         assertEquals(1, facesOf(smaller).filter { it.name is FaceName.BlendCorner }.size, "the corner follows the radius")

@@ -41,10 +41,11 @@ import kotlin.test.assertTrue
  * in* a face of the body is counted and a tool that **re-cuts** a face the body already carries is not; the
  * number over the matrix is **sixteen** either way, because every cell that had one had the other too.
  *
- * *And the answer is not zero, so it is stated as the residue it is* (OP-31, slice 5q's one cut; the idiom
- * is `BlendMatrixTest.Residue`'s — a number here is a **claim that a defect is still there**, and it fails
- * the build the moment the number moves either way). Over the matrix's 288 two-edge cells, in both gesture
- * routes, it was **sixteen difference tools and thirty-two union tools**.
+ * *And the answer was not zero, so it was stated as the residue it was* (OP-31, slice 5q's one cut; the
+ * idiom is `BlendMatrixTest.Residue`'s — a number here is a **claim about what the drawing hands over**, and
+ * it fails the build the moment the number moves either way). Over the matrix's 288 two-edge cells, in both
+ * gesture routes, it was **sixteen difference tools and thirty-two union tools**; it is now **none of
+ * either**, and the three sentences that took it there are the three below.
  *
  * *The thirty-two are gone, and they were all one sentence* (OP-31, slice 5v; [ToolStep.clear]). Their
  * plane was the body's own face **already carried a micron by an earlier tool's step-off** — a micron-thick
@@ -65,17 +66,24 @@ import kotlin.test.assertTrue
  * rings — is stepped identically and the C¹ meeting between them is exactly what it was. Not one volume in
  * the suite moves by a bit.
  *
- * *What is left is the second, and it is **eight***: **a ledge lands in the wall the corner stands
- * against**, because that is where it lands — a `Ledge`'s landing plane is square to the shallower band's
- * run, and at an inside corner of two bottom-rim edges that plane **is** the upright's own face, so the
- * ledge's cap lies flat in it. Two cures were built and discarded on their own evidence, and both are
- * recorded under OP-31: carrying every tool vertex in that plane by the skin shears the walk's last strip
- * (twenty triangles off their own carriers, the four gesture routes no longer one body), and lifting the cap
- * alone as a slab with a skirt back onto each ring puts four triangles on the pivot's own pole, where the
- * two rings coincide.
+ * *And the second was never a face in a face at all* (OP-31, slice 5v, session 88) — **the eight were a
+ * touch read as an overlap**, and measuring them said so. In every one of them the tool's face is the
+ * `Ledge`'s own cap, 7 triangles and 4.4858 mm² of it, and the body's face is the wall of the upright the
+ * corner stands against — 1347.933 mm² of `Side` at `y = 0.375`, or 655.000 mm² (524.004 mm² in the stacked
+ * route) at `x = −5.521648`. The two are exactly coplanar and they **overlap in nothing**: the cap stands on
+ * the far side of the upright from the wall, buried in the material of the leg beyond it, and meets that
+ * wall along the upright's own line and nowhere else (`x ∈ [−9.522, −5.522]` against `x ∈ [−5.522, 61.875]`
+ * in the one plane, `y ∈ [0.375, 4.375]` against `y ∈ [−32.375, 0.375]` in the other). A face meeting a face
+ * **along a line** is no degeneracy: each is used once, the edge between them once each way, and the kernel
+ * answers it as the ordinary incidence it is — which is why all eight have always built, under both
+ * engines. What has no watertight answer is a face lying **in** a face, and that is an overlap of positive
+ * area.
  *
- * Every one of these cells builds today under both engines; what the number says is that they build because
- * the contact happened to be resolvable, not because it was never handed over.
+ * So the count's own sentence — *"a pair is kept only where the two faces also overlap in the plane"* — is
+ * now what [ToolStep.sharedPlanes] does: the two boxes are read on the **plane's own two axes**, never on
+ * the world's three (one of which is degenerate for any coplanar pair and can say nothing), and an overlap
+ * is an **area** and not a touch. No geometry moved and no volume moved: what moved is what the measurement
+ * claims. And the residue is what it now is — **nothing**, in both senses, under both engines.
  *
  * It runs under **both** engines: the rule is the drawing's and owes nothing to which kernel is behind the
  * seam, and the from-source one is skipped where it is not built ([MeshBool.isNative]).
@@ -134,7 +142,7 @@ class ToolStepOffTest {
         assertTrue(pairs.size == 36, "the matrix's thirty-six pairs: ${pairs.size}")
         val (differences, unions) = sweep(pairs)
         println("== tool step-off: 288 cells — $differences difference and $unions union tools hand over a flush contact")
-        assertEquals(8, differences, "the difference tools that still lay a face in a face of the body")
+        assertEquals(0, differences, "the difference tools that still lay a face in a face of the body")
         assertEquals(0, unions, "…and the union tools that back a face onto one")
     }
 
@@ -147,7 +155,7 @@ class ToolStepOffTest {
     fun theSameNumbersHoldUnderTheFromSourceEngine() {
         assumeTrue(MeshBool.isNative, "not the from-source engine (-Dconstructit.manifold.native=<dir>): ${MeshBool.status}")
         val (differences, unions) = sweep(L.block.pairs.map { (a, b, _) -> a to b })
-        assertEquals(8, differences, "the same difference tools under ${MeshBool.status}")
+        assertEquals(0, differences, "the same difference tools under ${MeshBool.status}")
         assertEquals(0, unions, "…and the same union tools")
     }
 }

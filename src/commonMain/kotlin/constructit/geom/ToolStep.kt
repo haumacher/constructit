@@ -461,14 +461,76 @@ object ToolStep {
         return abs(g.offset - off) <= Geom3.WELD_TOL
     }
 
-    /** Whether the two faces' own boxes meet at all — a cheap *"is this a contact"* before a micron is spent. */
+    /**
+     * Whether the two faces **overlap in the plane** — a cheap *"is this a contact"* before a micron is
+     * spent, and an **area** rather than a touch (OP-31, slice 5v).
+     *
+     * *Why it is read in the plane and not in the world's own three axes.* Two coplanar faces are flat, so
+     * one of the three world extents is degenerate for both of them and no test along it can say anything;
+     * asking there is asking whether two zero-thickness boxes meet, which they always do. So the two boxes
+     * are read on the plane's **own** two axes and nowhere else.
+     *
+     * *And why a touch is not a contact.* Two faces of one plane that meet along a **line** — a tool's cap
+     * standing square against a face of the body across their common edge, which is what a `Blend3.Ledge`'s
+     * landing does at an inside corner — share no face at all: each is used once, the edge between them
+     * once each way, and the kernel answers them as the ordinary incidence they are. What has no watertight
+     * answer is a face lying **in** a face, and that is an overlap of positive area. The eight difference
+     * tools `ToolStepOffTest` carried as its last residue were every one of them a touch of this kind: the
+     * ledge's own cap, 4.486 mm² of it, standing on the far side of the upright from the wall it is
+     * coplanar with and meeting that wall along the upright's own line — 7 triangles against a 1347.933 mm²
+     * (or 655.000 mm²) `Side`, overlapping it in **nothing**. The micron is the same micron everything else
+     * here is stated to: an overlap narrower than one is a line with floating-point noise on it.
+     */
     private fun overlap(
         g: Face,
         f: Face,
-    ): Boolean =
-        g.lo.x <= f.hi.x + MM && f.lo.x <= g.hi.x + MM &&
-            g.lo.y <= f.hi.y + MM && f.lo.y <= g.hi.y + MM &&
-            g.lo.z <= f.hi.z + MM && f.lo.z <= g.hi.z + MM
+    ): Boolean {
+        val (u, v) = axesIn(g.normal)
+        val gu = spanIn(g, u)
+        val fu = spanIn(f, u)
+        if (min(gu.second, fu.second) - max(gu.first, fu.first) <= MM) return false
+        val gv = spanIn(g, v)
+        val fv = spanIn(f, v)
+        return min(gv.second, fv.second) - max(gv.first, fv.first) > MM
+    }
+
+    /** Two orthonormal axes **of** the plane whose normal is [n] — the world axis least aligned with it, turned. */
+    private fun axesIn(n: Vec3): Pair<Vec3, Vec3> {
+        val ax = abs(n.x)
+        val ay = abs(n.y)
+        val az = abs(n.z)
+        val a =
+            if (ax <= ay && ax <= az) {
+                Vec3(1.0, 0.0, 0.0)
+            } else if (ay <= az) {
+                Vec3(0.0, 1.0, 0.0)
+            } else {
+                Vec3(0.0, 0.0, 1.0)
+            }
+        val u = a.cross(n).normalized()
+        return u to n.cross(u).normalized()
+    }
+
+    /** How far [f]'s own box reaches along [d] — its eight corners, which for a flat face is the face itself. */
+    private fun spanIn(
+        f: Face,
+        d: Vec3,
+    ): Pair<Double, Double> {
+        var lo = Double.MAX_VALUE
+        var hi = -Double.MAX_VALUE
+        for (i in 0 until 8) {
+            val p =
+                Vec3(
+                    if (i and 1 == 0) f.lo.x else f.hi.x,
+                    if (i and 2 == 0) f.lo.y else f.hi.y,
+                    if (i and 4 == 0) f.lo.z else f.hi.z,
+                )
+            val t = d.dot(p)
+            lo = min(lo, t)
+            hi = max(hi, t)
+        }
+        return lo to hi
+    }
 
     /** One plane of one mesh, with the box its triangles occupy. */
     private class Face(val normal: Vec3, val offset: Double) {

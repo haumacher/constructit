@@ -169,7 +169,8 @@ fun assertManifold(
         val b = mesh.vertices[t.b]
         val c = mesh.vertices[t.c]
         val area = (b - a).cross(c - a).length() / 2.0
-        assertTrue(area > 1e-12, "$what triangle $i is degenerate (area $area mm^2)")
+        val sides = listOf((b - a).length(), (c - b).length(), (a - c).length())
+        assertTrue(area > 1e-12, "$what triangle $i is degenerate (area $area mm^2) sides=$sides height=${2.0 * area / sides.max()} a=$a b=$b c=$c tol=${constructit.geom.MeshCanon.weldTol(mesh.vertices)}")
     }
     val counts = HashMap<Pair<Int, Int>, Int>()
     for (t in mesh.triangles) {
