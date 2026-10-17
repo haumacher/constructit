@@ -3,6 +3,9 @@
 A parametric **2D/3D CAD tool for mechanical engineering and architectural drawing** — where
 geometry is built as a *construction*, not solved by a constraint solver.
 
+**[▶ Try it out in your browser](https://haumacher.github.io/constructit/)** — the current `master`,
+deployed to GitHub Pages on every push.
+
 You draw by constructing: each object is a pure function of its inputs, and inputs are either free
 parameters or earlier objects. The whole drawing is a directed acyclic graph (DAG). Editing means
 changing a parameter or dragging a free object and recomputing everything downstream — like a
