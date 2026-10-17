@@ -4666,7 +4666,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "c77b5841"
   },
   "refusal.section.planeSectionThisSolidDoes": "the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead",
   "@refusal.section.planeSectionThisSolidDoes": {
@@ -5356,7 +5357,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "6de5066e"
   },
   "refusal.blend.endClosedByACorner": "{name} is no face of this body — a corner closes the band's run at that end, so the surface there is the neighbouring band across the mitre, or the corner's own patch, rather than a flat cap",
   "@refusal.blend.endClosedByACorner": {
@@ -5365,22 +5367,24 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "e8ed4db0"
   },
   "refusal.blend.curvedVertexNotStated": "the vertex where {name}, {name2} and {name3} meet has a curved edge among them, and the ball that stands still there is stated only where all three faces are planes — its three tangency stations are solved on those planes, and a curved face puts them on a curve instead, which is a future extension. Round two of the three edges rather than all three, or leave the curved one sharp",
   "@refusal.blend.curvedVertexNotStated": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
+      "name3": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
       "name2": {
         "type": "message"
-      },
-      "name3": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "d8f2852e"
   },
   "refusal.blend.sharpUprightIsNotStraightSquare": "{what} turns about the edge where {name} meets {name2}, and that edge is neither one straight run nor square to {name3} — the ball pivoting there runs on an ellipse or on a curve of its own rather than on a circle, so the corner it sweeps is a canal surface between two band ends, which this drawing carries along a crease but not yet between the two ends of a run. Leave one of the two edges sharp, or round that corner on a body whose upright stands straight and square to the face the two roundings share",
   "@refusal.blend.sharpUprightIsNotStraightSquare": {
@@ -5389,16 +5393,17 @@
       "what": {
         "type": "message"
       },
+      "name3": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
       "name2": {
         "type": "message"
-      },
-      "name3": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "e514ee2d"
   },
   "refusal.blend.isNotSquareSoCannot": "{name} is not square to {name2}, so {what} cannot be turned about it — the roundings there are a future extension. Leave that upright sharp, or round it on a body whose upright stands square to that face",
   "@refusal.blend.isNotSquareSoCannot": {
@@ -9156,11 +9161,13 @@
       "version": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "edcbb16f"
   },
   "refusal.meshbool.nativeShimCaughtCppThrow": "the general boolean engine threw (ConstructIt's native shim caught it at the JNI boundary)",
   "@refusal.meshbool.nativeShimCaughtCppThrow": {
-    "description": "Why a general boolean could not be computed: the C++ engine raised an exception, which the small JNI shim between Kotlin and Manifold caught rather than letting it cross into the Java virtual machine. Shown as a reason on the node that could not be built."
+    "description": "Why a general boolean could not be computed: the C++ engine raised an exception, which the small JNI shim between Kotlin and Manifold caught rather than letting it cross into the Java virtual machine. Shown as a reason on the node that could not be built.",
+    "x-translated": "cf550a58"
   },
   "refusal.meshbool.nativeShimNamedButNot": "the native Manifold shim was asked for but could not be loaded from {dir} ({message})",
   "@refusal.meshbool.nativeShimNamedButNot": {
@@ -9172,7 +9179,8 @@
       "message": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "ebadac5f"
   },
   "refusal.meshbool.generalBooleanNeedsTwoClosed": "a general boolean needs two closed meshes",
   "@refusal.meshbool.generalBooleanNeedsTwoClosed": {
@@ -19192,7 +19200,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "d6878f2f"
   },
   "refusal.section.boolFaceCoplanar": "this face lies in the very plane {name} of the other solid lies in, and the body they make together has one face there rather than two — it is that one, so nothing is left of this entry",
   "@refusal.section.boolFaceCoplanar": {
@@ -19201,7 +19210,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "51c4c88"
   },
   "refusal.section.boolFaceIsCanal": "{name} is a canal band — the surface a rolling ball leaves, whose section changes along its run — and so is neither a plane nor a surface of revolution; there is nothing to sketch on there, so put a datum plane where you want to sketch",
   "@refusal.section.boolFaceIsCanal": {
@@ -19210,19 +19220,21 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "fbc9d9b2"
   },
   "refusal.section.boolFaceIsCurved": "{name} is {what} and not a plane, so there is nothing to sketch on there; put a datum plane where you want to sketch",
   "@refusal.section.boolFaceIsCurved": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about naming, sectioning and reading the faces and edges of a solid. This one says why one face of the result of a general boolean cannot be sketched on: it is a piece of a curved face of one of the two solids that went into the boolean. {name} is that face's own name and {what} names the kind of curved surface it is (a cylinder, a cone, a sphere, a ring); both are themselves translated messages.",
     "placeholders": {
-      "name": {
-        "type": "message"
-      },
       "what": {
         "type": "message"
+      },
+      "name": {
+        "type": "message"
       }
-    }
+    },
+    "x-translated": "d44e3493"
   },
   "refusal.section.boolTrimNotDetermined": "this solid is a general boolean, and where it trimmed {name} is a curve the two surfaces meeting there do not determine, so its faces cannot be stated exactly and are left unnamed rather than approximated",
   "@refusal.section.boolTrimNotDetermined": {
@@ -19231,7 +19243,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "8f84ae85"
   },
   "refusal.section.boolSurfaceOffCarrier": "this solid is a general boolean, and part of its surface lies on no face of either of the two solids it was made from, so its faces cannot be traced back to one and are left unnamed",
   "@refusal.section.boolSurfaceOffCarrier": {
@@ -19253,7 +19266,8 @@
       "name2": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "5671136"
   },
   "refusal.section.boolCornerOnNoVertex": "the flat face's corner where {name} meets {name2} is not fixed by them — the two cross this face in one and the same line — and the body has no vertex of its own there either, so the outline cannot be stated and its faces are left unnamed rather than approximated",
   "@refusal.section.boolCornerOnNoVertex": {
@@ -19265,7 +19279,8 @@
       "name2": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "92509783"
   },
   "refusal.section.boolFaceAbsentInOperand": "the {which, select, a{first} b{second} other{first}} operand has no such face itself — {reason} — so there is nothing of it on this body either",
   "@refusal.section.boolFaceAbsentInOperand": {
@@ -19277,7 +19292,8 @@
       "reason": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "97e0b962"
   },
   "refusal.section.boolFaceConsumed": "the boolean took this face of the {which, select, a{first} b{second} other{first}} operand away wholly, so none of it is left on this body",
   "@refusal.section.boolFaceConsumed": {
@@ -19345,16 +19361,17 @@
   "@refusal.blend.canalWallNotStatable": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
+      "name3": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
       "name2": {
         "type": "message"
-      },
-      "name3": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "4b027211"
   },
   "refusal.blend.canalNotSimpleCrease": "{name} is no simple crease for a rolling ball — the two faces it stands between do not cut the material into one sector a ball can roll in, so there is nothing there to round",
   "@refusal.blend.canalNotSimpleCrease": {
@@ -19363,19 +19380,21 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "772d8101"
   },
   "refusal.blend.canalDoesNotFitAlong": "a rounding {sizePhrase} does not fit along {name} — a ball of that size leaves one of the two faces it must roll on before it reaches the end of the crease",
   "@refusal.blend.canalDoesNotFitAlong": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "sizePhrase": {
-        "type": "message"
-      },
       "name": {
         "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
       }
-    }
+    },
+    "x-translated": "2e2d5945"
   },
   "refusal.blend.canalBandIsNotPlane": "{name} is the canal band a ball {sizePhrase} sweeps along {name2} — its section changes from one end of the run to the other, so it is neither a plane nor a surface of revolution and there is nothing to sketch on there; put a datum plane where you want to sketch",
   "@refusal.blend.canalBandIsNotPlane": {
@@ -19390,12 +19409,16 @@
       "name2": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "b821eb9f"
   },
   "refusal.blend.cornerCanalIsNotPlane": "{name} is the canal the pivoting ball {sizePhrase} leaves between {name2} and {name3} — its section changes from one band end to the other, so it is neither a plane nor a surface of revolution and there is nothing to sketch on there; put a datum plane where you want to sketch",
   "@refusal.blend.cornerCanalIsNotPlane": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
+      "name3": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
@@ -19404,11 +19427,9 @@
       },
       "name2": {
         "type": "message"
-      },
-      "name3": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "300867bb"
   },
   "refusal.blend.uprightNeedsOneSize": "{what}, and the edge where {name} meets {name2} is neither one straight run nor square to that face. One ball pivots there, so two roundings of unlike size or kind have no one surface between them: give both edges the same rounding (here they are {sizePhrase} and {sizePhrase2})",
   "@refusal.blend.uprightNeedsOneSize": {
@@ -19417,6 +19438,9 @@
       "what": {
         "type": "message"
       },
+      "sizePhrase2": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
@@ -19425,11 +19449,9 @@
       },
       "sizePhrase": {
         "type": "message"
-      },
-      "sizePhrase2": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "b1426a48"
   },
   "refusal.blend.canalRunsRightRound": "{name} closes on itself, so the rounding along it runs right round and has no flat end at all",
   "@refusal.blend.canalRunsRightRound": {
@@ -19438,7 +19460,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "17afbab4"
   },
   "refusal.blend.canalTapersToNothing": "the rounding of {name} tapers to nothing at this end, where the two faces it stands between run tangent to one another, so it has no flat end there",
   "@refusal.blend.canalTapersToNothing": {
@@ -19447,7 +19470,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "621cc29c"
   },
   "refusal.blend.canalSpineNotFollowed": "the rounding of {name} cannot be carried along it — the path its ball would roll on could not be followed from one end of the crease to the other",
   "@refusal.blend.canalSpineNotFollowed": {
@@ -19456,7 +19480,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "f6546fb9"
   },
   "refusal.blend.cornerCurveNotStated": "{name} is a curve this drawing has no exact name for, so it carries no rounding of its own.",
   "@refusal.blend.cornerCurveNotStated": {
@@ -19583,12 +19608,13 @@
   },
   "note.oneDressedBody.capSlotsEverywhere": "{name}'s roundings each name their two flat ends now, whether a notch owns that end or the band closes on a cap of its own, so that a face this body has can never be one the drawing cannot name. This file's face addresses were written under the older numbering and have been mapped to it.",
   "@note.oneDressedBody.capSlotsEverywhere": {
-    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or \u2014 when the tool cannot do what was asked \u2014 why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
+    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "name": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "a77cb6"
   },
   "note.oneDressedBody.slotsRegrouped": "{name}'s rails, free-end notches and corner curves are numbered one block per rounding now, so that adding a rounding to this dressing or taking one off can never make a stored address name a different curve. This file's addresses were written under the older numbering and have been mapped to it.",
   "@note.oneDressedBody.slotsRegrouped": {
@@ -19607,7 +19633,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "e101dd60"
   },
   "refusal.section.boolCanalBand": "this solid is a general boolean, and {name} of one of the two solids it was made from is a canal band — the surface a rolling ball leaves — whose own spine this drawing could not state as a curve at all, so there is nothing to trace a boolean's own triangles back to there and this body's faces stay emergent; make the boolean first and put the rounding on its result",
   "@refusal.section.boolCanalBand": {
@@ -19616,37 +19643,40 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "c17338d9"
   },
   "refusal.blend.pivotToolMeetsTheBody": "the ball {sizePhrase} that pivots between {name} and {name2} leaves a tool this body meets along a surface rather than across one, so the general boolean has no watertight answer for it ({reason}) — round both edges at another radius, or leave one of them sharp",
   "@refusal.blend.pivotToolMeetsTheBody": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Here the rounding of two edges meeting at a corner cannot be cut out of the body because the tool the pivoting ball leaves touches the body tangentially instead of crossing it. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "sizePhrase": {
+      "reason": {
         "type": "message"
       },
       "name": {
         "type": "message"
       },
-      "name2": {
+      "sizePhrase": {
         "type": "message"
       },
-      "reason": {
+      "name2": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "7e724f10"
   },
   "refusal.blend.canalBallLargerThanBend": "a ball {sizePhrase} is larger than the bend of {name}: rolled along it, its own contact turns back before the end of the crease, so there is no one band along it — round the crease smaller, or round the two faces larger",
   "@refusal.blend.canalBallLargerThanBend": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "sizePhrase": {
-        "type": "message"
-      },
       "name": {
         "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
       }
-    }
+    },
+    "x-translated": "b5912ec7"
   },
   "refusal.blend.bevelStripIsNotPlane": "{name} is the ruled strip a chamfer {sizePhrase} leaves along {name2} — it runs between the setback traces on the two faces and the angle between them changes from one end of the run to the other, so it is neither a plane nor a surface of revolution and there is nothing to sketch on there; put a datum plane where you want to sketch",
   "@refusal.blend.bevelStripIsNotPlane": {
@@ -19661,31 +19691,34 @@
       "name2": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "b4d26758"
   },
   "refusal.blend.bevelDoesNotFitAlong": "a chamfer {sizePhrase} does not fit along {name} — a setback of that size runs off one of the two faces it is measured along before it reaches the end of the crease; state a smaller setback, or make the two faces larger",
   "@refusal.blend.bevelDoesNotFitAlong": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "sizePhrase": {
-        "type": "message"
-      },
       "name": {
         "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
       }
-    }
+    },
+    "x-translated": "326057dd"
   },
   "refusal.blend.bevelStripFoldsBack": "a chamfer {sizePhrase} is larger than the bend of {name}: the setback traces on the two faces turn back on themselves before the end of the crease, so the strip between them would run over the same ground twice — state a smaller setback, or round the crease instead",
   "@refusal.blend.bevelStripFoldsBack": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
-      "sizePhrase": {
-        "type": "message"
-      },
       "name": {
         "type": "message"
+      },
+      "sizePhrase": {
+        "type": "message"
       }
-    }
+    },
+    "x-translated": "293e4fe2"
   },
   "refusal.blend.bevelTapersToNothing": "the chamfer of {name} takes nothing at this end, where the two faces it stands between run tangent to one another, so it has no flat end there",
   "@refusal.blend.bevelTapersToNothing": {
@@ -19694,7 +19727,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "f4a71000"
   },
   "refusal.blend.bevelRunsRightRound": "{name} closes on itself, so the chamfer along it runs right round and has no flat end at all",
   "@refusal.blend.bevelRunsRightRound": {
@@ -19703,22 +19737,24 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "8601c08"
   },
   "refusal.blend.bevelWallNotStatable": "{name} lies between {name2} and {name3}, and {name2} is neither a plane nor a cylinder this drawing can measure a setback along, so no chamfer can be carried along that crease",
   "@refusal.blend.bevelWallNotStatable": {
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
+      "name3": {
+        "type": "message"
+      },
       "name": {
         "type": "message"
       },
       "name2": {
         "type": "message"
-      },
-      "name3": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "7e5346a2"
   },
   "refusal.blend.bevelTraceNotFollowed": "the chamfer of {name} cannot be carried along it — the setback traces on the two faces it stands between could not be followed from one end of the crease to the other",
   "@refusal.blend.bevelTraceNotFollowed": {
@@ -19727,7 +19763,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "713cee2f"
   },
   "refusal.section.boolFaceIsRuled": "{name} is a ruled strip — the surface a chamfer leaves along a crease whose angle changes, stated by its own straight rulings — and so is neither a plane nor a surface of revolution; there is nothing to sketch on there, so put a datum plane where you want to sketch",
   "@refusal.section.boolFaceIsRuled": {
@@ -19736,7 +19773,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "e81d74d4"
   },
   "refusal.section.boolBevelStrip": "this solid is a general boolean, and {name} of one of the two solids it was made from is the ruled strip a chamfer leaves along a crease whose angle changes, whose own straight rulings this drawing could not state at all, so there is nothing to trace a boolean's own triangles back to there and this body's faces stay emergent; make the boolean first and put the chamfer on its result",
   "@refusal.section.boolBevelStrip": {
@@ -19745,7 +19783,8 @@
       "name": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "8ca52fb0"
   },
   "refusal.file.notJson": "This file cannot be opened as a drawing: it is not well-formed JSON ({why})",
   "@refusal.file.notJson": {
@@ -19754,23 +19793,26 @@
       "why": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "a86b4123"
   },
   "refusal.file.notDrawing": "This file is not a ConstructIt drawing",
   "@refusal.file.notDrawing": {
-    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. The file is JSON, but not a drawing of this program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands."
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. The file is JSON, but not a drawing of this program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "x-translated": "450062b8"
   },
   "refusal.file.newer": "This drawing is format {version}, and this build reads up to format {max}: it was written by a newer version of ConstructIt",
   "@refusal.file.newer": {
     "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {version} and {max} are file format version numbers; the cure is to use a newer version of the program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "version": {
-        "type": "int"
-      },
       "max": {
         "type": "int"
+      },
+      "version": {
+        "type": "int"
       }
-    }
+    },
+    "x-translated": "da12f95e"
   },
   "refusal.file.malformed": "{feature} cannot be read: {why}",
   "@refusal.file.malformed": {
@@ -19782,19 +19824,21 @@
       "why": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "d64f4a25"
   },
   "refusal.file.dangling": "{feature} refers to {ref}, which nothing in this drawing creates",
   "@refusal.file.dangling": {
     "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is the identity and kind of one feature (for example f12 (tool circle)); {ref} is the identity it names (for example e7 or f3), which no feature of the file creates. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "feature": {
-        "type": "String"
-      },
       "ref": {
         "type": "String"
+      },
+      "feature": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "9c6627e2"
   },
   "refusal.file.duplicate": "{ref} is created twice in this drawing, by {feature} and by {other}",
   "@refusal.file.duplicate": {
@@ -19803,13 +19847,14 @@
       "ref": {
         "type": "String"
       },
-      "feature": {
-        "type": "String"
-      },
       "other": {
         "type": "String"
+      },
+      "feature": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "ae067851"
   },
   "refusal.file.clickField": "it states ''{field}'', the position a click landed on, and a drawing of format {version} states what each click meant instead",
   "@refusal.file.clickField": {
@@ -19821,7 +19866,8 @@
       "version": {
         "type": "int"
       }
-    }
+    },
+    "x-translated": "49fd48bc"
   },
   "refusal.file.address": "it states ''{field}'', and the tool {tool} picks no {field} of the solid it works on",
   "@refusal.file.address": {
@@ -19833,34 +19879,37 @@
       "tool": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "2f3f8071"
   },
   "refusal.file.cycle": "{feature} is built from its own result: {chain}; the features of a drawing cannot depend on one another in a circle",
   "@refusal.file.cycle": {
     "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)) and {chain} lists the features of the circle, joined by arrows, in the order each depends on the next. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "feature": {
-        "type": "String"
-      },
       "chain": {
         "type": "String"
+      },
+      "feature": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "39b99c95"
   },
   "refusal.file.count": "{feature} created {created, plural, one{{created} element} other{{created} elements}}, but the file states {declared}",
   "@refusal.file.count": {
     "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)); when it was rebuilt it produced a different number of elements than the file lists for it, which means the file was written by a different version of the program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
+      "declared": {
+        "type": "int"
+      },
       "feature": {
         "type": "String"
       },
       "created": {
         "type": "int"
-      },
-      "declared": {
-        "type": "int"
       }
-    }
+    },
+    "x-translated": "b1a5161f"
   },
   "refusal.file.inFeature": "{feature}: {why}",
   "@refusal.file.inFeature": {
@@ -19872,7 +19921,8 @@
       "why": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "4c25123d"
   },
   "refusal.op.edgeGone": "this solid has no edge {edge} any more: a face it lay between is no longer made by anything",
   "@refusal.op.edgeGone": {
@@ -19881,7 +19931,8 @@
       "edge": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "977c51f8"
   },
   "refusal.op.faceGone": "this solid has no face {face} any more: what made it is no longer in the drawing",
   "@refusal.op.faceGone": {
@@ -19890,7 +19941,8 @@
       "face": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "2972f9"
   },
   "status.refactor.noInputs": "{name} was not made by a tool, so it has no inputs to replace",
   "@status.refactor.noInputs": {
@@ -19899,7 +19951,8 @@
       "name": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "842d2d8b"
   },
   "status.refactor.notTool": "{name} was not made by a tool, so nothing reads it through a tool's input; delete it instead",
   "@status.refactor.notTool": {
@@ -19908,7 +19961,8 @@
       "name": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "378839b7"
   },
   "status.refactor.notInFile": "{name} is not part of the drawing yet, so nothing can be built on it",
   "@status.refactor.notInFile": {
@@ -19917,73 +19971,78 @@
       "name": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "5941f0d5"
   },
   "status.refactor.same": "{name} already is the {role} of {feature}",
   "@status.refactor.same": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user tried to replace an input of a feature with the element that already is that input, so nothing changes. {name} is an element identifier such as e13, {role} is the tool's word for that input (for example solid, curve, point), {feature} is the feature's identifier such as f12. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "name": {
-        "type": "String"
-      },
       "role": {
         "type": "String"
       },
       "feature": {
         "type": "String"
+      },
+      "name": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "b8c9943a"
   },
   "status.refactor.slotRefused": "{name} cannot be the {role} of {feature}: that input takes a {slot}",
   "@status.refactor.slotRefused": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user tried to replace an input of a feature with an element of a kind that input does not accept (for example a circle where a solid is needed). {name} is the picked element's identifier such as e7, {role} is the tool's word for that input, {feature} the feature's identifier such as f12, and {slot} the generic word for what the input accepts (for example solid, curve, area). Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "name": {
-        "type": "String"
-      },
       "role": {
         "type": "String"
       },
       "feature": {
+        "type": "String"
+      },
+      "name": {
         "type": "String"
       },
       "slot": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "66ef3c60"
   },
   "status.refactor.cycle": "{name} is built from what {feature} makes, so it cannot be its input: the construction would go round in a circle",
   "@status.refactor.cycle": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features (a directed graph without cycles). The user tried to replace an input of a feature with an element that is itself made from that feature's result, which would make the feature depend on itself; the replacement is refused. {name} is the picked element's identifier such as e17, {feature} the feature's identifier such as f12. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "name": {
-        "type": "String"
-      },
       "feature": {
         "type": "String"
+      },
+      "name": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "540a3e49"
   },
   "status.refactor.replaced": "{feature} now reads {new} as its {role}, in place of {old}{clause}",
   "@status.refactor.replaced": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. An input of a feature was replaced by another element and the drawing was rebuilt; edges and faces the feature named on the old input are looked up by name on the new one. {feature} is the feature's identifier such as f12, {new} and {old} are element identifiers such as e13 and e14, {role} is the tool's word for that input (for example solid). {clause} is either empty or a further sentence saying the feature cannot be built now and why. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "feature": {
-        "type": "String"
+      "clause": {
+        "type": "message"
       },
       "new": {
-        "type": "String"
-      },
-      "old": {
         "type": "String"
       },
       "role": {
         "type": "String"
       },
-      "clause": {
-        "type": "message"
+      "feature": {
+        "type": "String"
+      },
+      "old": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "ea315188"
   },
   "status.refactor.butInvalid": " — {name} cannot be built now: {why}",
   "@status.refactor.butInvalid": {
@@ -19995,22 +20054,24 @@
       "why": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "b9e87774"
   },
   "status.refactor.rerouteScalar": "{feature} cannot be deleted with its dependents rerouted: {dependent} reads the value {scalar} it makes, and nothing else gives that value",
   "@status.refactor.rerouteScalar": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user asked to delete a feature and reroute everything that used it onto the feature's own input; that is refused because something reads a number the feature computes (a measurement, for example), which no input can stand in for. The ordinary delete still works. {feature} and {scalar} are identifiers such as f12 and f15; {dependent} is the identifier or the name of what reads it. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
+      "scalar": {
+        "type": "String"
+      },
       "feature": {
         "type": "String"
       },
       "dependent": {
         "type": "String"
-      },
-      "scalar": {
-        "type": "String"
       }
-    }
+    },
+    "x-translated": "727bd1a1"
   },
   "status.refactor.rerouteRefused": "{feature} cannot be deleted with its dependents rerouted: {dependent} reads {element} as a {slot}, and none of the inputs of {feature} can take its place",
   "@status.refactor.rerouteRefused": {
@@ -20019,31 +20080,33 @@
       "feature": {
         "type": "String"
       },
+      "slot": {
+        "type": "String"
+      },
       "dependent": {
         "type": "String"
       },
       "element": {
         "type": "String"
-      },
-      "slot": {
-        "type": "String"
       }
-    }
+    },
+    "x-translated": "24164296"
   },
   "status.refactor.rerouted": "Deleted {feature}; {count, plural, =0{nothing read it} one{{count} feature that read it now reads its input instead} other{{count} features that read it now read its input instead}}{clause}",
   "@status.refactor.rerouted": {
     "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. A feature was deleted and every feature that used its result was rerouted onto the deleted feature's own input (instead of being deleted with it); edges and faces they named are looked up by name on that input. {feature} is the deleted feature's identifier such as f11, {count} how many features were rerouted. {clause} is either empty or a further sentence saying one of them cannot be built now and why. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
+      "clause": {
+        "type": "message"
+      },
       "feature": {
         "type": "String"
       },
       "count": {
         "type": "int"
-      },
-      "clause": {
-        "type": "message"
       }
-    }
+    },
+    "x-translated": "e1ba9385"
   },
   "status.refactor.failed": "The edit was not made: {why}",
   "@status.refactor.failed": {
@@ -20052,7 +20115,8 @@
       "why": {
         "type": "message"
       }
-    }
+    },
+    "x-translated": "35f63996"
   },
   "refusal.refactor.lost": "{feature} would no longer make {element}, which {reader} reads",
   "@refusal.refactor.lost": {
@@ -20061,28 +20125,30 @@
       "feature": {
         "type": "String"
       },
-      "element": {
-        "type": "String"
-      },
       "reader": {
         "type": "String"
+      },
+      "element": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "d5bd4a33"
   },
   "status.refactor.arm": "Click the element that is to replace {old} as the {role} of {feature} — Esc cancels",
   "@status.refactor.arm": {
     "description": "Status line prompt of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user chose, in the side panel, to replace one input of a feature (the operation that made the selected element) by another element; the next click in the drawing picks that element. {old} is the current input's identifier such as e14, {role} the tool's word for the input (for example solid), {feature} the feature's identifier such as f12. Esc is the Escape key. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
     "placeholders": {
-      "old": {
-        "type": "String"
-      },
       "role": {
         "type": "String"
       },
       "feature": {
         "type": "String"
+      },
+      "old": {
+        "type": "String"
       }
-    }
+    },
+    "x-translated": "cb1c0548"
   },
   "status.refactor.missed": "That click hit no {slot} to take the place of the {role} — click one, or press Esc",
   "@status.refactor.missed": {
@@ -20094,11 +20160,13 @@
       "slot": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "a93c8e84"
   },
   "status.refactor.cancelled": "No input replaced",
   "@status.refactor.cancelled": {
-    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. The user pressed Escape while the program was waiting for a click to pick the element that replaces an input of a feature, so nothing was changed."
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. The user pressed Escape while the program was waiting for a click to pick the element that replaces an input of a feature, so nothing was changed.",
+    "x-translated": "11547be1"
   },
   "status.refactor.rerouteOne": "Select one element to delete with its dependents rerouted, not {count}",
   "@status.refactor.rerouteOne": {
@@ -20107,19 +20175,23 @@
       "count": {
         "type": "int"
       }
-    }
+    },
+    "x-translated": "484e4634"
   },
   "ui.deleteReroute": "Delete, keep dependents",
   "@ui.deleteReroute": {
-    "description": "Button label in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element (beside Hide and Show; the plain Delete button is in the top bar). It deletes the feature that made the selected element but, instead of deleting everything built from it too, reroutes those dependents onto the deleted feature's own input (for example: delete the first fillet of a chain, and the second fillet now sits on the extruded body). Keep it short."
+    "description": "Button label in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element (beside Hide and Show; the plain Delete button is in the top bar). It deletes the feature that made the selected element but, instead of deleting everything built from it too, reroutes those dependents onto the deleted feature's own input (for example: delete the first fillet of a chain, and the second fillet now sits on the extruded body). Keep it short.",
+    "x-translated": "1ceb8ebc"
   },
   "ui.deleteReroute.title": "Delete the selection's feature and reroute everything built on it onto that feature's own input, instead of deleting it too (Shift+Delete)",
   "@ui.deleteReroute.title": {
-    "description": "Tooltip of a button in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element. The button deletes the feature that made the selected element and reroutes everything that used its result onto the deleted feature's own input. Shift+Delete is the keyboard shortcut and stays as written."
+    "description": "Tooltip of a button in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element. The button deletes the feature that made the selected element and reroutes everything that used its result onto the deleted feature's own input. Shift+Delete is the keyboard shortcut and stays as written.",
+    "x-translated": "5aa84705"
   },
   "ui.inspector.replace": "replace",
   "@ui.inspector.replace": {
-    "description": "Label of a row in the selection inspector of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The row lists the inputs of the operation that made the selected element, each as a small button; clicking one lets the user pick, in the drawing, another element to take that input's place. This word labels the row and is a verb meaning: replace one of these inputs. Keep it to one or two words, lower case like the inspector's other row labels."
+    "description": "Label of a row in the selection inspector of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The row lists the inputs of the operation that made the selected element, each as a small button; clicking one lets the user pick, in the drawing, another element to take that input's place. This word labels the row and is a verb meaning: replace one of these inputs. Keep it to one or two words, lower case like the inspector's other row labels.",
+    "x-translated": "c9d2445"
   },
   "ui.inspector.replace.title": "Replace this input of {feature} with another element of the same kind: click it in the drawing next",
   "@ui.inspector.replace.title": {
@@ -20128,6 +20200,7 @@
       "feature": {
         "type": "String"
       }
-    }
+    },
+    "x-translated": "6e2747bc"
   }
 }
