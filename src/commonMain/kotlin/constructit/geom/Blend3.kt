@@ -233,6 +233,21 @@ object Blend3 {
      */
     private const val GROW_MM = ToolStep.MM
 
+    /**
+     * The least share of a pivot leg's in-plane step that may lie along the near wall's own in-plane normal
+     * (OP-31, slice 5x): the step is lengthened to `len / (dir·n̂)` — its mitre — so the wall is cleared by
+     * what the leg states, and no further than four times, the mitre of two faces whose normals stand 150°
+     * apart, a crease far sharper than any a ball rolls along.
+     */
+    private const val MITRE_FLOOR = 0.25
+
+    /**
+     * How far a wall's normal must lean out of a pivot's station plane (`|n·t|`) before the section leans
+     * after it (OP-31, slice 5x) — below this the plane already holds the normal to the arithmetic's last
+     * bits, and a shortfall over a vanishing `n·t` would be a division by noise.
+     */
+    private const val LEAN_SLANT_MIN = 1e-9
+
     /** How far apart two mitre rings' points may be (mm) and still be the same ring — see [ringsAgree]. */
     private const val RING_TOL = 1e-6
 
@@ -11457,6 +11472,8 @@ object Blend3 {
         /** The contact on the upright — exact, and in this station's own plane. */
         val pU: Vec3,
         val poly: List<Vec2>,
+        /** How far each vertex of [poly] stands **out of** this station's plane, along [t] ([CornerSection]). */
+        val lean: List<Double>,
         val a1: Double,
         val sweep: Double,
         val apex: Vec2,
@@ -11466,7 +11483,25 @@ object Blend3 {
         val s: Double,
     ) {
         fun world(q: Vec2): Vec3 = at + ax * q.x + ay * q.y
+
+        /** Vertex [m] of this station's section in the world, out of the plane by its own [lean]. */
+        fun at3(m: Int): Vec3 = world(poly[m]) + t * lean[m]
     }
+
+    /**
+     * A pivot's section as [cornerSectionAt] states it: the polygon in the station's own plane and, for each
+     * of its vertices, how far that vertex stands **out of** the plane along the spine (OP-31, slice 5x).
+     *
+     * The lean is what a step taken in the plane falls short of along a wall's **true** normal: the near
+     * leg's off the wall it walks, and the contact's and the arc's off both walls of the void they are
+     * carried into. The shared leg leans by nothing — the shared face's normal lies in every station plane,
+     * since the ball's centre runs parallel to it — and so does every vertex of the walk's two **end** rings,
+     * which are capped in their own plane and carried off the far wall whole by the end step.
+     */
+    private class CornerSection(
+        val poly: List<Vec2>,
+        val lean: List<Double>,
+    )
 
     /** The pivot between two band ends about an upright the circle cannot follow, ready to be swept. */
     private class CanalTurn(
@@ -11987,7 +12022,9 @@ object Blend3 {
         sFar: Int,
         grow: Double,
         cut: CapCut?,
-    ): List<Vec2>? {
+        /** Whether this is one of the walk's two **end** stations, whose ring is capped in its own plane. */
+        end: Boolean = false,
+    ): CornerSection? {
         val place = raw.place
         val q1 = Vec2(r * cos(raw.a1), r * sin(raw.a1))
         val q2 = Vec2(r * cos(raw.a1 + raw.sweep), r * sin(raw.a1 + raw.sweep))
@@ -12004,15 +12041,62 @@ object Blend3 {
         val outApex =
             (flat(gF) * -sF.toDouble() + flat(gN) * -sNear.toDouble() + flat(gFar) * (-sFar.toDouble() * near0))
                 .let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+
         // **the way out of the body at the contact is the void's own bisector**, and it has to be: the
         // contact stands on the *edge* where the pair's two other faces cross, and stepping it off one of
         // them alone walks **into** the material the other one bounds — which is how a leg that lies along
         // that edge came back as a coincident pair of triangles. Between the contact and the crease point
         // the step turns from the one to the other, so the leg leaves the body all the way along.
+        //
+        // **a step is a vector of the station's own frame, and its third component is not always zero**
+        // (OP-31, slice 5x): `(cx, cy)` in the station's plane and `t` along the spine, out of it. The
+        // in-plane part is the reading this section always made; the third is what that reading cannot
+        // reach. A canal's ball is tangent to both walls, so their normals lie in the station plane and the
+        // plane reaches everything; a pivot's second contact is the **upright**, so the near wall's normal
+        // leans out of the plane — `|n·t|` runs from 0 at the first station to 0.997 at the ring pivot's
+        // hand-over — and an in-plane step of `d` clears that wall by only `d·|flat(n)|`: 1.4 µm of a
+        // stated 80, which is the zero-thickness flap the from-source engine named 18 µm inside the body's
+        // own cylinder of radius 20.
+        fun local(v: Vec3): Vec3 = Vec3(v.dot(place.cx), v.dot(place.cy), v.dot(raw.t))
+
+        fun inPlane(v: Vec3): Vec3 = Vec3(v.dot(place.cx), v.dot(place.cy), 0.0)
+
+        /**
+         * The lean along `t` that carries an in-plane step [sv] a distance [need] off the wall whose true
+         * outward normal is [n] — **only what the plane falls short by**, `(need − sv·n) / (n·t)`, and none
+         * where it does not. Where the ball is tangent to the near wall — the two ends of the walk — that
+         * wall's `n·t` is zero and so is the shortfall; where `n·t` is large the shortfall is at most `need`
+         * and the lean at most `need / |n·t|`, never the sixfold in-plane division the record measured and
+         * refused. Nothing is solved: it is one subtraction and one division per vertex.
+         */
+        fun leanOff(
+            sv: Vec3,
+            n: Vec3,
+            need: Double,
+        ): Double {
+            if (abs(n.z) <= LEAN_SLANT_MIN) return 0.0
+            val short = need - sv.dot(n)
+            return if (short <= 0.0) 0.0 else short / n.z
+        }
         val gnU = near.grad(raw.pU) ?: return null
         val gfU = far.grad(raw.pU) ?: return null
-        val outVoid =
-            (flat(gnU) * -sNear.toDouble() + flat(gfU) * -sFar.toDouble()).let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+        val nU = local(gnU) * -sNear.toDouble()
+        val fU = local(gfU) * -sFar.toDouble()
+        val outVoid = (inPlane(gnU) * -sNear.toDouble() + inPlane(gfU) * -sFar.toDouble()).let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+        // …and the **void's own bisector in space**, which is what the in-plane one is the shadow of: the
+        // contact stands on both walls at once, so it is carried off each of them by what the true bisector
+        // would carry it — and by leaning, never by turning the in-plane step, so two stations the ball
+        // reaches the same point of a straight upright at (a symmetric pivot's mirror pair) keep two
+        // distinct contacts in their two planes rather than one point said twice.
+        val bisector = (nU + fU).let { if (it.length() <= Geom3.WELD_TOL) nU else it.normalized() }
+
+        // …and at the walk's two ends the station plane lies **in** the far wall at a ring, whose normal is
+        // then the spine itself: there the lean is not taken, because the end step carries the whole ring
+        // off that wall and the ring is capped in its own plane ([cornerMesh]).
+        fun voidStep(len: Double): Vec3 {
+            val sv = outVoid * len
+            return Vec3(sv.x, sv.y, leanOff(sv, nU, len * bisector.dot(nU)) + leanOff(sv, fU, len * bisector.dot(fU)))
+        }
 
         // **and a leg leaves the body through *every* face it comes up to, weighted by how near it stands
         // to each** (OP-31, slice 5o). The near leg runs from the contact on the upright to the crease
@@ -12024,22 +12108,44 @@ object Blend3 {
         // with 2 opposite uses"*, which is a tangent contact and not a crossing. The apex had this reading
         // already (`outApex`, and the far wall's weight in it); what it did not have was the rest of the
         // leg, and the weight is the same one measured at each point rather than at the apex only.
-        fun awayAt(
+        //
+        // **And the step is measured where the wall is, not where the plane is** (OP-31, slice 5x). The
+        // weighted direction is read in the plane as before; its *length* is then whatever reaches [len]
+        // along the near wall's in-plane normal — the leg's own **mitre**, `len / (dir·n̂)`, which the band's
+        // section already takes ([LegStep.meet]) and the pivot's did not: where the shared face joins the
+        // step the unit bisector cleared each face by `len·cos 45°`, 57 µm of a stated 80 at the ring's
+        // first station. And what the plane still falls short of along the wall's **true** normal is the
+        // lean ([leanOff]).
+        fun stepOff(
             q: Vec2,
             tau: Double,
-        ): Vec2 {
+            len: Double,
+        ): Vec3 {
             val p = place.at(q)
             val gNq = near.grad(p)
             val gFq = wF.grad(p)
             val gRq = far.grad(p)
-            if (gNq == null || gFq == null || gRq == null) return outVoid
+            if (gNq == null || gFq == null || gRq == null) return outVoid * len
             val wS = max(0.0, 1.0 - (p - (wF.nearest(p) ?: p)).length() / max(r, Geom3.WELD_TOL))
             val wR = max(0.0, 1.0 - (p - (far.nearest(p) ?: p)).length() / max(r, Geom3.WELD_TOL))
-            val v = flat(gNq) * -sNear.toDouble() + flat(gFq) * (-sF.toDouble() * wS) + flat(gRq) * (-sFar.toDouble() * wR)
+            val flatN = inPlane(gNq) * -sNear.toDouble()
+            val v = flatN + inPlane(gFq) * (-sF.toDouble() * wS) + inPlane(gRq) * (-sFar.toDouble() * wR)
             val away = if (v.length() <= Geom3.WELD_TOL) outVoid else v.normalized()
-            return (outVoid * (1.0 - tau) + away * tau).let { if (it.length() <= Geom3.WELD_TOL) outVoid else it.normalized() }
+            val dir = (outVoid * (1.0 - tau) + away * tau).let { if (it.length() <= Geom3.WELD_TOL) outVoid else it.normalized() }
+            val reach = if (flatN.length() <= Geom3.WELD_TOL) 1.0 else dir.dot(flatN.normalized())
+            val sv = dir * (len / max(reach, MITRE_FLOOR))
+            return Vec3(sv.x, sv.y, leanOff(sv, local(gNq) * -sNear.toDouble(), len))
         }
         val out = ArrayList<Vec2>(2 * legSteps + arcSteps + 2)
+        val lean = ArrayList<Double>(2 * legSteps + arcSteps + 2)
+
+        fun put(
+            q: Vec2,
+            step: Vec3,
+        ) {
+            out.add(Vec2(q.x + step.x, q.y + step.y))
+            lean.add(if (end) 0.0 else step.z)
+        }
         // **the fourth side, and it is a straight line stated exactly** (OP-31, slice 5o). The cut is a
         // *plane*, so its own signed distance is **affine** in the station's two coordinates and its trace
         // in this plane is a line with no fitting in it at all. Two terms set where that line stands, and
@@ -12088,11 +12194,11 @@ object Blend3 {
         // about `x`. The leg's own step carries it off: the same face, the same gradient, the same
         // direction out of the material as the points that follow it (GitHub #36).
         val gF1 = wF.grad(place.at(q1)) ?: return null
-        out.add(q1 + flat(gF1) * (-sF.toDouble() * grow))
+        put(q1, inPlane(gF1) * (-sF.toDouble() * grow))
         for (i in 1 until legSteps) {
             val q = onWall(wF, place, q1 + (raw.apex - q1) * (tF * i.toDouble() / legSteps)) ?: return null
             val g = wF.grad(place.at(q)) ?: return null
-            out.add(q + flat(g) * (-sF.toDouble() * grow))
+            put(q, inPlane(g) * (-sF.toDouble() * grow))
         }
         // …and where the apex comes up to the upright it comes up to the **body's own vertex**, where three
         // faces meet: a tool vertex standing on one is the one contact a general boolean has no answer for.
@@ -12106,21 +12212,21 @@ object Blend3 {
         // already has — and the **hand-over**, where the apex is the corner's own vertex and stands nearer
         // than any cap. Where the cut does bite, the fourth side's two ends are ordinary points of the two
         // legs and take their own legs' steps off the walls they stand on.
-        val apexStep = raw.apex + awayAt(raw.apex, 1.0) * lift(r, raw.sweep, arcSteps, grow, near0, near0)
+        val apexStep = stepOff(raw.apex, 1.0, lift(r, raw.sweep, arcSteps, grow, near0, near0))
         if (tF >= 1.0) {
-            out.add(apexStep)
+            put(raw.apex, apexStep)
         } else {
             val q = onWall(wF, place, q1 + (raw.apex - q1) * tF) ?: return null
             val g = wF.grad(place.at(q)) ?: return null
-            out.add(q + flat(g) * (-sF.toDouble() * grow))
+            put(q, inPlane(g) * (-sF.toDouble() * grow))
         }
         if (tN >= 1.0) {
-            out.add(apexStep)
+            put(raw.apex, apexStep)
         } else {
             val q = onWall(near, place, q2 + (raw.apex - q2) * tN) ?: return null
-            out.add(q + awayAt(q, tN) * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tN, near0)))
+            put(q, stepOff(q, tN, lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tN, near0))))
         }
-        val nearLeg = ArrayList<Vec2>(legSteps)
+        val nearLeg = ArrayList<Pair<Vec2, Vec3>>(legSteps)
         for (i in 1 until legSteps) {
             val tau = tN * i.toDouble() / legSteps
             val q = onWall(near, place, q2 + (raw.apex - q2) * tau) ?: return null
@@ -12134,17 +12240,22 @@ object Blend3 {
             // wall's gradient lies in the station's own normal plane exactly and an in-plane step of length
             // `d` carries the leg a true `d` off the wall. A pivot's second contact is the **upright**, not
             // a tangency, so the near wall's gradient leans out of the station plane — measured on the ring
-            // pivot of `r = 1.5`, `|grad·(cx, cy)|` runs from 0.17 at the first station to 1 at the
-            // hand-over — and an in-plane step of `d` carries the leg only `d·|flat(grad)|` off the wall.
-            // Dividing by that factor to make it exact multiplies the step by six at the far station; taking
-            // it as it is leaves the leg a fifth of a step clear and the tool folds where it was. Both were
-            // built and measured: the plain reading turned the probe's own `r = 2` body, which builds today,
-            // into *"the edge between (10.08, 19.9, 0.005) mm and (10.072, 19.9, 0) mm is used 2 times with 2
-            // opposite uses"*. So the weighted way out of the body stands, and the near leg is the one run of
-            // this section that states no surface — by name, and the tool states all its others.
-            nearLeg.add(q + awayAt(q, tau) * lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0)))
+            // pivot of `r = 1.5`, `|n·t|` runs from 0 at the first station to 0.997 at the hand-over — and an
+            // in-plane step of `d` carries the leg only `d·|flat(n)|` off the wall. Within the plane there
+            // are two cures and both were built and measured: dividing by `|flat(n)|` multiplies the step
+            // sixfold at the far station, and stepping along the in-plane gradient alone turned the probe's
+            // own `r = 2` body into *"the edge between (10.08, 19.9, 0.005) mm and (10.072, 19.9, 0) mm is
+            // used 2 times with 2 opposite uses"*.
+            //
+            // *So the step leaves the plane* (OP-31, slice 5x): [stepOff] keeps the in-plane step it always
+            // took, mitred, and leans along the spine by exactly what that falls short of along the wall's
+            // true normal. Measured that way the step the leg states is the step it takes — 80.000 µm at
+            // every ring of the ring pivot, where it was 1.4 µm at the hand-over — and the lean is zero at
+            // the two ends of the walk, where the ball is tangent to the near wall and `n·t` is zero by the
+            // canal's own proof, so the end rings are the plane sections they always were.
+            nearLeg.add(q to stepOff(q, tau, lift(r, raw.sweep, arcSteps, grow, near0, max(1.0 - tau, near0))))
         }
-        out.addAll(nearLeg.reversed())
+        for ((q, st) in nearLeg.reversed()) put(q, st)
         // **and the ball's own arc leaves the body where it touches the upright, not *on* it.** The last
         // chord before the contact runs within a sagitta of the upright's own line — a hundredth of a
         // millimetre where the step-off is a micron — so the tool's surface and the body's edge approach
@@ -12152,13 +12263,17 @@ object Blend3 {
         // chords that reach it are therefore carried **into the void** the upright bounds, by a step that
         // covers that sagitta: the tool takes no more material for it (the void is air) and the crossing
         // becomes transversal. It decays over the arc, so only the chords that stand near the contact move.
-        out.add(q2 + outVoid * lift(r, raw.sweep, arcSteps, grow, near0, 1.0))
+        //
+        // …and *into the void* is read with the near wall's true normal in it as well (OP-31, slice 5x): the
+        // contact stands **on** the near wall, so a bisector read in the plane alone clears it by the same
+        // foreshortened `|flat(n)|` the leg did.
+        put(q2, voidStep(lift(r, raw.sweep, arcSteps, grow, near0, 1.0)))
         for (i in arcSteps - 1 downTo 1) {
             val a = raw.a1 + raw.sweep * i / arcSteps
             val fade = max(0.0, 1.0 - (arcSteps - i).toDouble() / 3.0)
-            out.add(Vec2(r * cos(a), r * sin(a)) + outVoid * lift(r, raw.sweep, arcSteps, grow, near0, fade))
+            put(Vec2(r * cos(a), r * sin(a)), voidStep(lift(r, raw.sweep, arcSteps, grow, near0, fade)))
         }
-        return out
+        return CornerSection(out, lean)
     }
 
     /**
@@ -12325,8 +12440,9 @@ object Blend3 {
                 cornerSectionAt(
                     wF, near, if (raw.nearA) wB else wA, raw, r, legSteps, arcSteps, sF, sNear, if (raw.nearA) sB else sA, grow,
                     if (raw.nearA) cutA else cutB,
+                    k == 0 || k == set.size - 1,
                 ) ?: return null to notStatable
-            stations.add(CornerStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.pF, raw.pU, poly, raw.a1, raw.sweep, raw.apex, raw.nearA, s))
+            stations.add(CornerStation(raw.at, raw.t, raw.place.cx, raw.place.cy, raw.pF, raw.pU, poly.poly, poly.lean, raw.a1, raw.sweep, raw.apex, raw.nearA, s))
         }
         return CanalTurn(
             i, aAtStart, j, bAtStart, placeA, placeB, shared, at, stations, r, a.sec, a.choice.convex,
@@ -12397,7 +12513,7 @@ object Blend3 {
                 } else {
                     0.0
                 }
-            rings.add(st.poly.map { st.world(it) + st.t * step })
+            rings.add(st.poly.indices.map { st.at3(it) + st.t * step })
         }
         val tris = ArrayList<Triple<Vec3, Vec3, Vec3>>()
         val owners = ArrayList<Int>()
@@ -12584,6 +12700,59 @@ object Blend3 {
     internal fun cornerToolMeshes(f: Feature3.Blend): List<Mesh3> {
         val pieces = piecesOf(f) ?: return emptyList()
         return cornersOf(pieces).list.filterIsInstance<CanalTurn>().mapNotNull { cornerMesh(it) }
+    }
+
+    /**
+     * How far a pivot's **near leg** really stands off the wall it walks, ring by ring — measured on the
+     * tool's own vertices along that wall's **true** normal, beside the step the leg states (OP-31, slice
+     * 5x). The seam the clearance is asserted on.
+     */
+    internal class NearLegClearance(
+        /** The station's index along the walk. */
+        val station: Int,
+        /** Whether the first band's other face is the near wall here. */
+        val nearA: Boolean,
+        /** The least distance off the near wall, out of the body, over the leg's vertices at this ring. */
+        val least: Double,
+        /** The step the leg states — the tool's own step-off. */
+        val stated: Double,
+        /** How far the near wall's normal leans out of the station plane, at most along this leg (`|n·t|`). */
+        val slant: Double,
+    )
+
+    internal fun cornerNearLegClearances(f: Feature3.Blend): List<List<NearLegClearance>> {
+        val pieces = piecesOf(f) ?: return emptyList()
+        return cornersOf(pieces).list.filterIsInstance<CanalTurn>().map { turn ->
+            val cf = turn.frame
+            turn.stations.withIndex().map { (k, st) ->
+                val near = if (st.nearA) turn.wA else turn.wB
+                val s =
+                    if (cf == null) {
+                        1
+                    } else if (st.nearA) {
+                        cf.sA
+                    } else {
+                        cf.sB
+                    }
+                var least = Double.MAX_VALUE
+                var slant = 0.0
+                // …measured on the ring the tool really carries, the two end rings stepped past their bands
+                val step =
+                    if (k == 0) {
+                        -turn.endStep.first
+                    } else if (k == turn.stations.size - 1) {
+                        turn.endStep.second
+                    } else {
+                        0.0
+                    }
+                for (m in turn.legSteps + 1..2 * turn.legSteps) {
+                    val p = st.at3(m) + st.t * step
+                    least = min(least, -s * near.out(p))
+                    near.grad(p)?.let { g -> slant = max(slant, abs(g.dot(st.t))) }
+                }
+                NearLegClearance(k, st.nearA, least, turn.grow, slant)
+            }
+        }
     }
 
     /**
@@ -12801,7 +12970,7 @@ object Blend3 {
             val sFar = if (raw.nearA) cf.sB else cf.sA
             val poly =
                 cornerSectionAt(turn.wF, near, far, raw, turn.r, legs, arcs, cf.sF, sNear, sFar, 0.0, if (raw.nearA) turn.cutA else turn.cutB)
-                    ?: return 0.0
+                    ?.poly ?: return 0.0
             var twice = 0.0
             var mx = 0.0
             var my = 0.0
