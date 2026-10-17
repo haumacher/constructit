@@ -100,6 +100,15 @@ class Step(val kind: String, val args: List<Arg>) {
     var tips: List<Element?> = emptyList()
     var runs: List<List<Int>?> = emptyList()
 
+    /**
+     * **What this step's pick meant, by name** (OP-32, slice 3): the [constructit.geom.Provenance] key of the edge
+     * or face its address names, and of every edge of each run it rounds (null where a run is the picked edge
+     * alone) — the truth the indices of [runs] and the `signs` address were resolved from. Written in place of
+     * the indices from [DocumentFormat.KEY_VERSION] on, so an edit of topology upstream cannot move the pick.
+     */
+    var addressKey: String? = null
+    var runKeys: List<List<String>?> = emptyList()
+
     /** Scalars this step introduced (a parameter, a measurement) — a dependency unit for delete too. */
     val createsScalars = ArrayList<ScalarEntry>()
 
@@ -148,7 +157,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 12
+    const val VERSION = 13
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -344,6 +353,18 @@ object DocumentFormat {
      * it, which is the whole of what changed about them.
      */
     const val MEANING_VERSION = 12
+
+    /**
+     * **Picks by name** (OP-32, slice 3): from this version on an edge or face a tool picked is stated as its
+     * [constructit.geom.Provenance] key (`"edge": "e11|top"`) rather than its index, and so are the edges of a
+     * stated run and of a dressing's shared-slot record, and the face a face space stands on (`"piece": "e11"`)
+     * — the address a vertex inserted upstream cannot move. The same version states the order no reference
+     * gives (`after`, see [GraphFormat]'s `orderEdges`).
+     * An index is still read at every version (a body that names no generator states its position), and an older
+     * file's indices are resolved once against the geometry in dependency order — the old load itself — and
+     * saved by key.
+     */
+    const val KEY_VERSION = 13
 
     /**
      * The step kinds the file **folds into something else** and therefore numbers nothing for (OP-32): a space
@@ -915,6 +936,13 @@ object DocumentFormat {
          * different size ([resized]).
          */
         internal val step: Int = -1,
+        /**
+         * Every identity's **kind** before the re-stamp — what lets a ride whose own count changed keep each
+         * copy's identities by role (OP-32 slice 3): copy *k*'s first side stays copy *k*'s first side, which a
+         * face named by the side it was swept from depends on. Null where the caller states none (the identities
+         * then map positionally, as they always did).
+         */
+        internal val kinds: Map<String, ElementKind>? = null,
     ) {
         val notes = ArrayList<String>()
 
@@ -993,7 +1021,8 @@ object DocumentFormat {
         feature: Int,
         pattern: String,
         count: Int,
-    ): Pair<Document, List<String>> = GraphFormat.read(asGraph(text), Restamp(pattern, count, feature))
+        kinds: Map<String, ElementKind>? = null,
+    ): Pair<Document, List<String>> = GraphFormat.read(asGraph(text), Restamp(pattern, count, feature, kinds))
 
     /** [text] as a graph: itself, or a journal imported and written as one. */
     private fun asGraph(text: String): String = if (isGraph(text)) text else save(load(text))
@@ -1093,6 +1122,8 @@ object DocumentFormat {
         restamp: Restamp?,
         where: (String) -> String,
         countError: (Int) -> String,
+        /** A feature a graph edit touched, which may create more or fewer than it declares (OP-32, slice 3). */
+        elastic: Boolean = false,
     ): List<Element>? {
         val before = doc.elements.toHashSet()
         restamp?.resized = false
@@ -1126,17 +1157,17 @@ object DocumentFormat {
         val created = doc.elements.filter { it !in before }
         // only a step the re-stamp itself resized may create a different number of elements than the
         // file declares; everywhere else that is still the load error it always was (OP-18)
-        val elastic = restamp?.resized == true
+        val resized = elastic || restamp?.resized == true
         // …and the one **named** migration that legitimately creates more than the script declares: a
         // rounding in a file older than [DRESSED_BODY_VERSION] now makes its body's first entry too
         // (see [Document.migrationExtras]). The names still map from the start, so `-> e14` is the body.
         val migrated = doc.takeMigrationExtras()
-        if (created.size != declared + migrated && !elastic) throw LoadError(countError(created.size))
+        if (created.size != declared + migrated && !resized) throw LoadError(countError(created.size))
         return created
     }
 
     /** The tool rows that make a rounding — the steps OP-30's dressing is built out of. */
-    private val DRESS_TOOLS =
+    internal val DRESS_TOOLS =
         setOf(Tools.BLEND_EDGE, Tools.BLEND_FACE, Tools.CHAMFER_EDGE, Tools.CHAMFER_FACE, Tools.PROFILE_EDGE, Tools.PROFILE_FACE)
 
     /**

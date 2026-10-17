@@ -19873,5 +19873,261 @@
         "type": "String"
       }
     }
+  },
+  "refusal.op.edgeGone": "this solid has no edge {edge} any more: a face it lay between is no longer made by anything",
+  "@refusal.op.edgeGone": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something cannot be built. A rounding, chamfer or shell names the edge of a solid it works on by what made that edge: the two faces it lies between, each named by the drawing element whose sweep made it (for example e5|top is the edge between the face swept by curve e5 and the top face). This one says that the named edge no longer exists, because one of the curves or faces that made it was deleted or replaced by an edit further up the construction. {edge} is that name, a technical identifier that stays exactly as written. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "edge": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.op.faceGone": "this solid has no face {face} any more: what made it is no longer in the drawing",
+  "@refusal.op.faceGone": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something cannot be built. A rounding, a shell or a projection names the face of a solid it works on by what made that face (for example e5 is the face swept by curve e5, top is the top cap). This one says that the named face no longer exists, because the curve or feature that made it was deleted or replaced by an edit further up the construction. {face} is that name, a technical identifier that stays exactly as written. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "face": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.noInputs": "{name} was not made by a tool, so it has no inputs to replace",
+  "@status.refactor.noInputs": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features (each feature is one application of a tool to the elements it picked). The user asked to replace an input of the feature that made the selected element, and that element was not made by a tool (for example it is a free point or part of a drawn path). {name} is an element identifier such as e7. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.notTool": "{name} was not made by a tool, so nothing reads it through a tool's input; delete it instead",
+  "@status.refactor.notTool": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user asked to delete the feature that made the selected element while rerouting everything that used it onto the feature's own input; that is only possible for a feature made by a tool, and this element was made by something else (a drawn path, a parameter, a sketch space). The ordinary delete still works. {name} is an element identifier such as e7. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.notInFile": "{name} is not part of the drawing yet, so nothing can be built on it",
+  "@status.refactor.notInFile": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. The user picked an element to become the new input of a feature, but the element is still being made by an unfinished gesture and has no identity in the drawing yet. {name} is the element's name. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.same": "{name} already is the {role} of {feature}",
+  "@status.refactor.same": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user tried to replace an input of a feature with the element that already is that input, so nothing changes. {name} is an element identifier such as e13, {role} is the tool's word for that input (for example solid, curve, point), {feature} is the feature's identifier such as f12. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      },
+      "feature": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.slotRefused": "{name} cannot be the {role} of {feature}: that input takes a {slot}",
+  "@status.refactor.slotRefused": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user tried to replace an input of a feature with an element of a kind that input does not accept (for example a circle where a solid is needed). {name} is the picked element's identifier such as e7, {role} is the tool's word for that input, {feature} the feature's identifier such as f12, and {slot} the generic word for what the input accepts (for example solid, curve, area). Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      },
+      "feature": {
+        "type": "String"
+      },
+      "slot": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.cycle": "{name} is built from what {feature} makes, so it cannot be its input: the construction would go round in a circle",
+  "@status.refactor.cycle": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features (a directed graph without cycles). The user tried to replace an input of a feature with an element that is itself made from that feature's result, which would make the feature depend on itself; the replacement is refused. {name} is the picked element's identifier such as e17, {feature} the feature's identifier such as f12. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "feature": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.replaced": "{feature} now reads {new} as its {role}, in place of {old}{clause}",
+  "@status.refactor.replaced": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. An input of a feature was replaced by another element and the drawing was rebuilt; edges and faces the feature named on the old input are looked up by name on the new one. {feature} is the feature's identifier such as f12, {new} and {old} are element identifiers such as e13 and e14, {role} is the tool's word for that input (for example solid). {clause} is either empty or a further sentence saying the feature cannot be built now and why. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "new": {
+        "type": "String"
+      },
+      "old": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      },
+      "clause": {
+        "type": "message"
+      }
+    }
+  },
+  "status.refactor.butInvalid": " — {name} cannot be built now: {why}",
+  "@status.refactor.butInvalid": {
+    "description": "A clause of ConstructIt's status line, appended to the message that an edit of the construction (an input replaced, a feature deleted with its dependents rerouted) was made. It says that the element the edit affected cannot be built in its new place, followed by the reason (often that an edge or face it names does not exist on its new input). The edit stands and can be undone. It starts with a space and a dash because it continues the sentence before it. {name} is an element identifier such as e16 and {why} is the reason, a sentence of its own. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "why": {
+        "type": "message"
+      }
+    }
+  },
+  "status.refactor.rerouteScalar": "{feature} cannot be deleted with its dependents rerouted: {dependent} reads the value {scalar} it makes, and nothing else gives that value",
+  "@status.refactor.rerouteScalar": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user asked to delete a feature and reroute everything that used it onto the feature's own input; that is refused because something reads a number the feature computes (a measurement, for example), which no input can stand in for. The ordinary delete still works. {feature} and {scalar} are identifiers such as f12 and f15; {dependent} is the identifier or the name of what reads it. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "dependent": {
+        "type": "String"
+      },
+      "scalar": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.rerouteRefused": "{feature} cannot be deleted with its dependents rerouted: {dependent} reads {element} as a {slot}, and none of the inputs of {feature} can take its place",
+  "@status.refactor.rerouteRefused": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user asked to delete a feature and reroute every feature that used its result onto the deleted feature's own input; that is refused because one of those dependents needs a kind of input (for example a solid, or a curve) that none of the deleted feature's inputs is. The ordinary delete still works. {feature} and {dependent} are feature identifiers such as f11 and f12, {element} an element identifier such as e14, {slot} the word for the kind of input the dependent needs. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "dependent": {
+        "type": "String"
+      },
+      "element": {
+        "type": "String"
+      },
+      "slot": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.rerouted": "Deleted {feature}; {count, plural, =0{nothing read it} one{{count} feature that read it now reads its input instead} other{{count} features that read it now read its input instead}}{clause}",
+  "@status.refactor.rerouted": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. A feature was deleted and every feature that used its result was rerouted onto the deleted feature's own input (instead of being deleted with it); edges and faces they named are looked up by name on that input. {feature} is the deleted feature's identifier such as f11, {count} how many features were rerouted. {clause} is either empty or a further sentence saying one of them cannot be built now and why. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      },
+      "clause": {
+        "type": "message"
+      }
+    }
+  },
+  "status.refactor.failed": "The edit was not made: {why}",
+  "@status.refactor.failed": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. An edit of the construction (an input replaced, a feature deleted with its dependents rerouted) could not be made because the edited drawing would not load; the drawing is left exactly as it was. {why} is the reason, a sentence of its own. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "why": {
+        "type": "message"
+      }
+    }
+  },
+  "refusal.refactor.lost": "{feature} would no longer make {element}, which {reader} reads",
+  "@refusal.refactor.lost": {
+    "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features (each with an identity such as f12) and elements (each with an identity such as e14). After an edit of the construction (an input replaced, a dependent rerouted) a feature makes something different from before — for example a rounding that used to make a body of its own now joins another one — and another feature still reads an element the first one no longer makes, so the edit is refused. {feature} and {reader} are feature identities, each possibly followed by what kind of feature it is in parentheses; {element} is an element identity. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "element": {
+        "type": "String"
+      },
+      "reader": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.arm": "Click the element that is to replace {old} as the {role} of {feature} — Esc cancels",
+  "@status.refactor.arm": {
+    "description": "Status line prompt of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The user chose, in the side panel, to replace one input of a feature (the operation that made the selected element) by another element; the next click in the drawing picks that element. {old} is the current input's identifier such as e14, {role} the tool's word for the input (for example solid), {feature} the feature's identifier such as f12. Esc is the Escape key. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "old": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      },
+      "feature": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.missed": "That click hit no {slot} to take the place of the {role} — click one, or press Esc",
+  "@status.refactor.missed": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. While replacing an input of a feature, the user clicked in the drawing but hit nothing of the kind that input accepts. {slot} is the generic word for what is accepted (for example solid, curve), {role} the tool's own word for the input. Esc is the Escape key. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "role": {
+        "type": "String"
+      },
+      "slot": {
+        "type": "String"
+      }
+    }
+  },
+  "status.refactor.cancelled": "No input replaced",
+  "@status.refactor.cancelled": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. The user pressed Escape while the program was waiting for a click to pick the element that replaces an input of a feature, so nothing was changed."
+  },
+  "status.refactor.rerouteOne": "Select one element to delete with its dependents rerouted, not {count}",
+  "@status.refactor.rerouteOne": {
+    "description": "Status line message of ConstructIt, a parametric 2D/3D CAD program. Deleting a feature while rerouting everything that used it onto its own input works on one selected element at a time; the user had several selected. {count} is how many are selected (always two or more). Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ui.deleteReroute": "Delete, keep dependents",
+  "@ui.deleteReroute": {
+    "description": "Button label in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element (beside Hide and Show; the plain Delete button is in the top bar). It deletes the feature that made the selected element but, instead of deleting everything built from it too, reroutes those dependents onto the deleted feature's own input (for example: delete the first fillet of a chain, and the second fillet now sits on the extruded body). Keep it short."
+  },
+  "ui.deleteReroute.title": "Delete the selection's feature and reroute everything built on it onto that feature's own input, instead of deleting it too (Shift+Delete)",
+  "@ui.deleteReroute.title": {
+    "description": "Tooltip of a button in the side panel of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features, among the actions on the selected element. The button deletes the feature that made the selected element and reroutes everything that used its result onto the deleted feature's own input. Shift+Delete is the keyboard shortcut and stays as written."
+  },
+  "ui.inspector.replace": "replace",
+  "@ui.inspector.replace": {
+    "description": "Label of a row in the selection inspector of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The row lists the inputs of the operation that made the selected element, each as a small button; clicking one lets the user pick, in the drawing, another element to take that input's place. This word labels the row and is a verb meaning: replace one of these inputs. Keep it to one or two words, lower case like the inspector's other row labels."
+  },
+  "ui.inspector.replace.title": "Replace this input of {feature} with another element of the same kind: click it in the drawing next",
+  "@ui.inspector.replace.title": {
+    "description": "Tooltip of a button in the selection inspector of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph of features. The button stands for one input of the operation (feature) that made the selected element; clicking it makes the next click in the drawing pick the element that replaces that input, after which edges and faces the operation named are looked up by name on the new input. {feature} is the feature's identifier such as f12. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      }
+    }
   }
 }

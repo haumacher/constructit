@@ -1,0 +1,16 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":9,"f":8},
+  "parameters": [
+    {"id":"f6","name":"c","value":"10 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[60,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"segment","pts":["e1","e2"],"creates":["e3"]},
+    {"id":"f4","kind":"point","at":[0,60],"creates":["e4"]},
+    {"id":"f5","kind":"tool","tool":"segment","pts":["e1","e4"],"creates":["e5"]},
+    {"id":"f7","kind":"tool","tool":"chamfer","els":["e3","e5"],"params":["f6"],"signs":[1,1,2,2],"creates":["e6","e7","e8"]}
+  ]
+}

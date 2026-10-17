@@ -1165,6 +1165,14 @@ data class BoolProvenance(
      * boolean made with it stays mesh-only with exactly the sentence it has always had.
      */
     val whole: Boolean = true,
+    /**
+     * **Each operand's face keys** ([Provenance]), in that operand's own face order — what names a result face
+     * by the operand face it is a piece of, in terms that survive a vertex inserted into that operand's profile
+     * (OP-32, slice 3). Read off the two operand features where they are known, which is only here: the result
+     * carries no operand, so the keys travel on the provenance that already speaks of them. Null for a
+     * provenance assembled without its operands (a blend's tool), whose faces then keep their position.
+     */
+    val operandKeys: List<List<String>?>? = null,
 )
 
 /**
@@ -3914,6 +3922,7 @@ object Section3 {
         // …and each operand's own creases, because a crease between two faces of one operand is that
         // operand's own curve and never a fit (OP-31, slice 5l — see [BoolFace3.OperandCrease])
         val operandEdges = listOf(a, b).map { edges(it).first ?: emptyList() }
-        return BoolFace3.assemble(carriers, r, operandEdges)
+        val (made, why) = BoolFace3.assemble(carriers, r, operandEdges)
+        return made?.copy(operandKeys = listOf(Provenance.faceKeys(a), Provenance.faceKeys(b))) to why
     }
 }

@@ -1,0 +1,20 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":13,"f":16},
+  "parameters": [],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[100,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"dimlinear","els":["e1","e2"],"dofs":[{"mm":20}],"creates":["e3"],"scalars":["f4"]},
+    {"id":"f5","kind":"point","at":[0,-60],"creates":["e4"]},
+    {"id":"f6","kind":"point","at":[30,-60],"creates":["e5"]},
+    {"id":"f7","kind":"tool","tool":"circle","pts":["e4","e5"],"creates":["e6"]},
+    {"id":"f8","kind":"tool","tool":"dimradial","els":["e6"],"dofs":[{"deg":90},{"mm":20}],"creates":["e7"],"scalars":["f9"]},
+    {"id":"f10","kind":"tool","tool":"line","pts":["e1","e2"],"creates":["e8"]},
+    {"id":"f11","kind":"point","at":[0,-50],"creates":["e9"]},
+    {"id":"f12","kind":"point","at":[100,50],"creates":["e10"]},
+    {"id":"f13","kind":"tool","tool":"line","pts":["e9","e10"],"creates":["e11"]},
+    {"id":"f14","kind":"tool","tool":"dimangular","els":["e8","e11"],"signs":[-1,1],"dofs":[{"mm":20.615528128088297}],"creates":["e12"],"scalars":["f15"]}
+  ]
+}

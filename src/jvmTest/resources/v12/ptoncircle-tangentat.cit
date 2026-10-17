@@ -1,0 +1,13 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":6,"f":6},
+  "parameters": [],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[25,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"circle","pts":["e1","e2"],"creates":["e3"]},
+    {"id":"f4","kind":"tool","tool":"ptoncircle","els":["e3"],"dofs":[{"deg":0}],"creates":["e4"]},
+    {"id":"f5","kind":"tool","tool":"tangentat","els":["e4"],"creates":["e5"]}
+  ]
+}

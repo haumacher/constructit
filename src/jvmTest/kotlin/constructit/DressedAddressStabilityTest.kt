@@ -397,8 +397,9 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
      */
     @Test
     fun aStepAddressingACornerCurveSurvivesAnotherRoundingInTheDressing() {
-        val three = DocumentFormat.save(DocumentFormat.load(script2.lines().filter { "r2" !in it }.joinToString("\n") + "\n"))
-        assertTrue(saved(three).slotRecords().any { it.startsWith("2:r2.13.14-0") }, "the three bevels record their corner's slots:\n$three")
+        val threeDoc = DocumentFormat.load(script2.lines().filter { "r2" !in it }.joinToString("\n") + "\n")
+        val three = DocumentFormat.save(threeDoc)
+        assertTrue(saved(three).slotRecords(threeDoc).any { it.startsWith("2:r2.13.14-0") }, "the three bevels record their corner's slots:\n$three")
         val rail = EdgeName.BlendCornerRail(listOf(2, 13, 14), 0)
 
         fun dressed(doc: constructit.editor.Document): Element = doc.elements.filter { it.kind == ElementKind.SOLID }.let { it[it.size - 2] }
@@ -455,7 +456,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertTrue(edges[at].reason == null, "the crease between the two rims is a crease of this body still")
         assertTrue(volumeOf(body(ed)) > congruent, "…and the smaller first rounding really did take less away")
         // …and the record is not touched by a *value*: it is structure, decided when the gesture ran (OP-21)
-        assertTrue(saved(ed.doc).slotRecords().any { it.startsWith("1:m8.9-0;2:m9.10-0") }, "the record is the gesture's:\n${DocumentFormat.save(ed.doc)}")
+        assertTrue(saved(ed.doc).slotRecords(ed.doc).any { it.startsWith("1:m8.9-0;2:m9.10-0") }, "the record is the gesture's:\n${DocumentFormat.save(ed.doc)}")
     }
 
     /**
@@ -518,7 +519,7 @@ tool filletedge els=e10 clicks=20,30 scalar="r" signs=10;-1;1;0;1 -> e13
         assertEquals(EdgeName.BlendMitre(listOf(8, 9), 0), edges[12], "the first mitre is where the older numbering had it")
         assertEquals(EdgeName.BlendMitre(listOf(9, 10), 0), edges[13], "…and so is the second")
         val once = DocumentFormat.save(doc)
-        assertTrue(saved(once).slotRecords().any { it.startsWith("2:m8.9-0;2:m9.10-0") }, "…and the record says so, in the last block:\n$once")
+        assertTrue(saved(once).slotRecords(doc).any { it.startsWith("2:m8.9-0;2:m9.10-0") }, "…and the record says so, in the last block:\n$once")
         val again = DocumentFormat.load(once)
         assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
         assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")
@@ -551,7 +552,7 @@ tool filletedge els=e10 clicks=20,30 scalar="r" signs=10;-1;1;0;1 -> e13
 
         val once = DocumentFormat.save(doc)
         assertEquals(DocumentFormat.VERSION, saved(once).version, "it is saved at the version this build writes:\n$once")
-        assertTrue(saved(once).slotRecords().any { it.startsWith("2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2") }, "…with the record the body states:\n$once")
+        assertTrue(saved(once).slotRecords(doc).any { it.startsWith("2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2") }, "…with the record the body states:\n$once")
         val again = DocumentFormat.load(once)
         assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
         assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")

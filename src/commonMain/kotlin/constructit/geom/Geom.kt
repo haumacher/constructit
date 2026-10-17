@@ -124,7 +124,26 @@ data class Profile(val elements: List<ProfileElement>)
  * traversal direction. Failing either makes the *node* invalid (OP-3), so the type itself carries
  * no validity flag.
  */
-data class Loop(val elements: List<ProfileElement>)
+data class Loop(val elements: List<ProfileElement>) {
+    /**
+     * **What generated each piece** (OP-32, slice 3) — one opaque token per entry of [elements], the identity of
+     * the drawing's curve the piece is a trim of (`e7`), or null where the loop was built by nothing that can
+     * say (a polygon ring, a boolean's outline, a sampled silhouette).
+     *
+     * It is what lets a face swept from this piece be **named by provenance** rather than by its position in the
+     * loop ([Provenance]): insert a vertex upstream and every piece after it moves, while the token stays with
+     * the curve. Deliberately *not* part of the value's equality or its text — two loops of the same curves are
+     * the same loop whoever drew them, and every golden that prints a loop prints its geometry — so it rides
+     * beside the data and is carried by the operations that keep the pieces (a reversal, an affine map) and
+     * dropped by the ones that make new pieces, which is the honest answer: a new piece has no generator.
+     */
+    var tags: List<String>? = null
+        private set
+
+    constructor(elements: List<ProfileElement>, tags: List<String>?) : this(elements) {
+        this.tags = tags?.takeIf { it.size == elements.size }
+    }
+}
 
 /**
  * An area: an [outer] boundary with zero or more [holes] (OP-14). By convention [outer] runs
@@ -437,7 +456,7 @@ object GeomMath {
     fun signedArea(loop: Loop): Double = loop.elements.sumOf { doubleSignedArea(it) } / 2.0
 
     /** The same loop traversed the other way (so its signed area flips). */
-    fun reverseLoop(loop: Loop): Loop = Loop(loop.elements.reversed().map { reverse(it) })
+    fun reverseLoop(loop: Loop): Loop = Loop(loop.elements.reversed().map { reverse(it) }, loop.tags?.reversed())
 
     /** [loop] oriented counter-clockwise if [ccw], else clockwise. */
     fun orient(
@@ -1300,7 +1319,7 @@ object GeomMath {
         t: Affine,
     ): Loop {
         val wasCcw = signedArea(loop) >= 0.0
-        return orient(Loop(loop.elements.map { transform(it, t) }), wasCcw)
+        return orient(Loop(loop.elements.map { transform(it, t) }, loop.tags), wasCcw)
     }
 
     /** Axis-aligned bounding box of a set of points, or null if empty. */

@@ -692,6 +692,10 @@ private fun setupApp() {
                 // tool wants) and the single letters that arm a tool. Only without a modifier — Ctrl+S and
                 // friends belong to the browser, and one of them would otherwise switch tools.
                 !ctrl && editor.key(key) -> e.preventDefault()
+                // Shift+Delete keeps what was built on the selection, rerouted onto its input (OP-32, slice 3)
+                key == "Delete" && e.shiftKey -> {
+                    if (editor.deleteSelectionRerouting()) e.preventDefault()
+                }
                 key == "Delete" || key == "Backspace" -> {
                     if (editor.deleteSelection()) e.preventDefault()
                 }
@@ -759,6 +763,7 @@ private fun setupApp() {
     (document.getElementById("e-undo") as HTMLElement).addEventListener("click", { editor.undo() })
     (document.getElementById("e-redo") as HTMLElement).addEventListener("click", { editor.redo() })
     (document.getElementById("e-delete") as HTMLElement).addEventListener("click", { editor.deleteSelection() })
+    (document.getElementById("e-delete-reroute") as HTMLElement).addEventListener("click", { editor.deleteSelectionRerouting() })
 
     // ---- selection: bulk visibility and flat groups (OP-16). The DOM only routes; the Editor decides ----
     (document.getElementById("s-hide") as HTMLElement).addEventListener("click", { editor.setSelectionVisible(false) })
@@ -1034,6 +1039,12 @@ private fun setupApp() {
     })
     inspector.addEventListener("mouseleave", { editor.setSpotlight(null) })
     inspector.addEventListener("click", {
+        // an input of the selection's feature, armed to be replaced by the next click in the drawing (OP-32, slice 3)
+        (it.target as? HTMLElement)?.closest(".repl")?.getAttribute("data-ri")?.toIntOrNull()?.let { i ->
+            editor.beginReplaceInput(i)
+            repaint()
+            return@addEventListener
+        }
         val eid = (it.target as? HTMLElement)?.closest(".dep")?.getAttribute("data-eid") ?: return@addEventListener
         editor.doc.elements.firstOrNull { e -> e.id == eid }?.let { el -> editor.selectElement(el) }
     })
@@ -1914,7 +1925,8 @@ private fun dependencyRows(editor: Editor): String {
 
     val inputs = editor.selectionInputs()
     val dependents = editor.selectionDependents()
-    if (inputs.isEmpty() && dependents.isEmpty()) return ""
+    val replaceable = editor.replaceableInputs()
+    if (inputs.isEmpty() && dependents.isEmpty() && replaceable.isEmpty()) return ""
     val from =
         if (inputs.isEmpty()) {
             ""
@@ -1929,7 +1941,18 @@ private fun dependencyRows(editor: Editor): String {
             "<div class=\"drow used\"><span class=\"dlabel\">${Messages.uiInspectorUsedby()}</span>" +
                 dependents.joinToString("") { chip(it, null) } + "</div>"
         }
-    return from + by
+    // the inputs a click in the drawing can replace, one button each (OP-32, slice 3)
+    val feature = editor.selection?.let { editor.doc.creatingStep(it)?.fid }?.let { "f$it" } ?: ""
+    val swap =
+        if (replaceable.isEmpty()) {
+            ""
+        } else {
+            "<div class=\"drow\"><span class=\"dlabel\">${Messages.uiInspectorReplace()}</span>" +
+                replaceable.withIndex().joinToString("") { (i, r) ->
+                    "<button class=\"repl\" data-ri=\"$i\" title=\"${attr(Messages.uiInspectorReplaceTitle(feature))}\">⇄ ${r.role} ${r.element}</button>"
+                } + "</div>"
+        }
+    return from + by + swap
 }
 
 /** The unit beside a value field. A word in the bundle, because not every language writes every unit alike. */

@@ -70,7 +70,10 @@ param "h2" = 4mm
         word: String,
     ): kotlinx.serialization.json.JsonObject? = saved(ed.doc).tools(word).firstOrNull()
 
-    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.addressed().first()
+    private fun addressOf(
+        ed: Editor,
+        step: kotlinx.serialization.json.JsonObject,
+    ): Int = step.addressed(ed.doc).first()
 
     @Suppress("UNCHECKED_CAST")
     private fun feature(ed: Editor) = Evaluator().solid(ed.solids().first().ref as SolidRef).feature
@@ -101,7 +104,7 @@ param "h2" = 4mm
         val ed = armed(Tools.BLEND_EDGE)
         view(ed, Camera3(target = Vec3(17.0, -8.0, 10.0), distance = 300.0, yaw = 0.5, pitch = -1.1)).clickWorld(Vec3(-16.2, -32.375, 0.0))
         val step = assertNotNull(stepOf(ed, "filletedge"), "a fillet from below: ${ed.statusHint}")
-        assertEquals(setOf(0.0), edgeHeights(ed, false, addressOf(step)), "the bottom rim, both ends: $step / ${ed.statusHint}")
+        assertEquals(setOf(0.0), edgeHeights(ed, false, addressOf(ed, step)), "the bottom rim, both ends: $step / ${ed.statusHint}")
         assertSolidsManifold(ed)
     }
 
@@ -111,14 +114,14 @@ param "h2" = 4mm
         val above = armed(Tools.BLEND_FACE)
         view(above, Camera3(target = Vec3(17.0, -8.0, 10.0), distance = 300.0, yaw = 0.7, pitch = 1.0)).clickWorld(Vec3(-16.0, -20.0, 20.0))
         val top = assertNotNull(stepOf(above, "filletfaceedges"), "top cap from above: ${above.statusHint}")
-        assertEquals(setOf(20.0), edgeHeights(above, true, addressOf(top)), "the top cap's whole boundary: $top / ${above.statusHint}")
+        assertEquals(setOf(20.0), edgeHeights(above, true, addressOf(above, top)), "the top cap's whole boundary: $top / ${above.statusHint}")
         assertTrue("6 edges" in above.statusHint, "all six pieces: ${above.statusHint}")
         assertSolidsManifold(above)
 
         val below = armed(Tools.CHAMFER_FACE)
         view(below, Camera3(target = Vec3(17.0, -8.0, 10.0), distance = 300.0, yaw = 0.7, pitch = -1.0)).clickWorld(Vec3(-16.0, -20.0, 0.0))
         val bottom = assertNotNull(stepOf(below, "chamferfaceedges"), "bottom cap from below: ${below.statusHint}")
-        assertEquals(setOf(0.0), edgeHeights(below, true, addressOf(bottom)), "the bottom cap's whole boundary: $bottom / ${below.statusHint}")
+        assertEquals(setOf(0.0), edgeHeights(below, true, addressOf(below, bottom)), "the bottom cap's whole boundary: $bottom / ${below.statusHint}")
         assertSolidsManifold(below)
     }
 
@@ -138,8 +141,8 @@ param "h2" = 4mm
         ed.pointerDown(s)
         ed.pointerUp(s)
         val flat = assertNotNull(stepOf(ed, "filletedge"), "from the plan: ${ed.statusHint}")
-        assertEquals(addressOf(in3d), addressOf(flat), "one edge, two gestures: $in3d vs $flat")
-        assertEquals(in3d.ids("params") to in3d.addressed(), flat.ids("params") to flat.addressed(), "same choices after the click")
+        assertEquals(in3d.addressKey(), flat.addressKey(), "one edge, two gestures: $in3d vs $flat")
+        assertEquals(in3d.ids("params") to in3d.ints("signs"), flat.ids("params") to flat.ints("signs"), "same choices after the click")
         assertSolidsManifold(ed)
     }
 }

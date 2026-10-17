@@ -71,6 +71,19 @@ fun JsonObject.ints(key: String): List<Int> = (this[key] as? JsonArray)?.map { i
  */
 fun JsonObject.addressed(): List<Int> = listOfNotNull(int("edge") ?: int("face")) + ints("signs")
 
+/**
+ * The same, **as the build in [doc] read it** (OP-32 slice 3): since version 13 the file states the address by
+ * name (`"edge": "e11|top"`), and the index it resolved to on the body is the build's — read back from the
+ * document the file was saved from, so a test of *which edge* still speaks the body's own numbers.
+ */
+fun JsonObject.addressed(doc: constructit.editor.Document): List<Int> {
+    val fid = str("id")!!.removePrefix("f").toInt()
+    return doc.storedSigns(doc.journal.first { it.fid == fid })
+}
+
+/** The pick's address **by name** — the key the file states (`"e11|top"`), or null. */
+fun JsonObject.addressKey(): String? = (this["edge"] as? JsonPrimitive ?: this["face"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
 /** A list of numbers or quantities, each as its plain number (`{"mm": 2}` -> 2.0). */
 fun JsonObject.nums(key: String): List<Double> = (this[key] as? JsonArray)?.map { numberOf(it) } ?: emptyList()
 
@@ -216,11 +229,21 @@ fun slotsOf(f: JsonObject): String =
                 "rail" -> "r"
                 else -> "f"
             }
-        "${o.str("entry")}:$letter${o.ints("edges").joinToString(".")}-${o.str("piece")}"
+        "${o.str("entry")}:$letter${o.ids("edges").joinToString(".")}-${o.str("piece")}"
     }
 
 /** Every corner record a saved drawing states, one per dressing, in the compact spelling of [slotsOf]. */
 fun Saved.slotRecords(): List<String> = features.filter { it.containsKey("slots") }.map { slotsOf(it) }
+
+/**
+ * Every corner record, **as the document [doc] lays it out** — each base edge by its index, in [slotsOf]'s compact
+ * spelling (OP-32 slice 3: the file names the edges by key, and the index form is the dressing's own).
+ */
+fun Saved.slotRecords(doc: constructit.editor.Document): List<String> =
+    features.filter { it.containsKey("slots") }.mapNotNull { f ->
+        val fid = f.str("id")!!.removePrefix("f").toInt()
+        doc.dressingSlotsOf(doc.journal.first { it.fid == fid })?.let { DocumentFormat.encodeSlots(it) }
+    }
 
 /** The features that are a rounding's tombstone (OP-30): `removed` says how many band slots it keeps. */
 fun Saved.tombstones(): List<JsonObject> = features.filter { it.containsKey("removed") }

@@ -107,7 +107,10 @@ param "h2" = 9mm
     ): kotlinx.serialization.json.JsonObject? = saved(ed.doc).tools(word).firstOrNull()
 
     /** The edge index a blend step recorded — the first of its `signs=`. */
-    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.addressed().first()
+    private fun addressOf(
+        ed: Editor,
+        step: kotlinx.serialization.json.JsonObject,
+    ): Int = step.addressed(ed.doc).first()
 
     /** Where the edge that step named actually runs, so a test can say *which* edge in the drawing's terms. */
     @Suppress("UNCHECKED_CAST")
@@ -132,7 +135,7 @@ param "h2" = 9mm
         view(ed, cam).clickWorld(target)
         val step = assertNotNull(stepOf(ed, word), "a blend was made from $cam: ${ed.statusHint}")
         assertSolidsManifold(ed)
-        return addressOf(step) to ed
+        return addressOf(ed, step) to ed
     }
 
     // ---- the report: one edge, whatever the camera ----
@@ -186,7 +189,7 @@ param "h2" = 9mm
         assertTrue(
             step.ids("els") == listOf("e13") && !step.containsKey("clicks") &&
                 step.ids("params") == listOf(ed.doc.scalars.first { it.name == "h2" }.serial.let { "f$it" }) &&
-                step.int("edge") == 12 && step.ints("signs") == listOf(-1, 1, 0, 1) &&
+                step.addressKey() == "e12|top" && step.ints("signs") == listOf(-1, 1, 0, 1) &&
                 // …and it declares two names: the dressed body, and the rounding that is its first entry (OP-30)
                 step.ids("creates") == listOf("e14", "e15"),
             "the reporter's own expected step: $step",
@@ -245,7 +248,7 @@ param "h2" = 9mm
         ed.pointerDown(s)
         ed.pointerUp(s)
         val step = assertNotNull(stepOf(ed, "filletedge"), "the fillet was made in the plan: ${ed.statusHint}")
-        assertEquals(12, addressOf(step), "the top rim over leg e12, as the plan has always read it: $step")
+        assertEquals(12, addressOf(ed, step), "the top rim over leg e12, as the plan has always read it: $step")
         assertTrue("3D view" !in ed.statusHint.substringBefore(" — the radius"), "no 3D view answered: ${ed.statusHint}")
         assertSolidsManifold(ed)
     }

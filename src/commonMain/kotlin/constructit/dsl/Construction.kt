@@ -77,6 +77,7 @@ import constructit.geom.Handedness
 import constructit.geom.Intersect3
 import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
+import constructit.geom.KeyedCornerSlots
 import constructit.geom.Line
 import constructit.geom.LoftGuide
 import constructit.geom.LoftSection
@@ -90,6 +91,7 @@ import constructit.geom.Point3Set
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
 import constructit.geom.Project3
+import constructit.geom.Provenance
 import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Section3
@@ -1965,7 +1967,16 @@ class Construction {
      * after the first is flipped if that is what continues the chain, so pieces may be named in
      * traversal order without regard to how their own endpoints happened to be ordered.
      */
-    fun loop(vararg parts: Ref<*>): LoopRef =
+    fun loop(
+        vararg parts: Ref<*>,
+        /**
+         * **What generated each part** (OP-32, slice 3): the drawing's identity of each curve, asked at evaluation
+         * time — an identity may be handed out after the node is built — and carried on the loop as [Loop.tags],
+         * so a face swept from a piece is named by its curve and not by its position ([constructit.geom.Provenance]).
+         * Null, or an answer of the wrong length, leaves the loop untagged.
+         */
+        tags: (() -> List<String>?)? = null,
+    ): LoopRef =
         op(*parts) { args ->
             val elems = ArrayList<ProfileElement>(args.size)
             for (v in args) {
@@ -1986,7 +1997,9 @@ class Construction {
             if (chained == null) {
                 EvalResult.Invalid(reason ?: Msgs.refusalOpNotClosedLoop())
             } else {
-                EvalResult.Ok(LoopValue(GeomMath.orient(chained, ccw = true)))
+                // the chain keeps the parts' order (it only flips a piece's own direction), so the tags line up
+                val tagged = tags?.invoke()?.let { t -> Loop(chained.elements, t) } ?: chained
+                EvalResult.Ok(LoopValue(GeomMath.orient(tagged, ccw = true)))
             }
         }
 
@@ -2958,6 +2971,8 @@ class Construction {
         from: PlaneRef,
         solid: SolidRef,
         face: Int,
+        /** The face **by key** (OP-32, slice 3), resolved against the body as it stands; null keeps [face]. */
+        faceKey: String? = null,
     ): Path3Ref =
         op(view, from, solid) { args ->
             val pieces =
@@ -2968,8 +2983,10 @@ class Construction {
             if (faces == null) {
                 return@op EvalResult.Invalid(why ?: Msgs.refusalOpThisBodyHasNoNamed())
             }
+            val at =
+                if (faceKey == null) face else Provenance.faceIndex(feature, faceKey) ?: return@op EvalResult.Invalid(Msgs.refusalOpFaceGone(face = faceKey))
             val patch =
-                faces.getOrNull(face)
+                faces.getOrNull(at)
                     ?: return@op EvalResult.Invalid(
                         Msgs.refusalOpThisBodyNowHasFace(count = faces.size, face = face + 1),
                     )
@@ -3524,6 +3541,13 @@ class Construction {
          * a replay resolves the run again from the drawing it just rebuilt.
          */
         run: List<Int> = emptyList(),
+        /**
+         * The pick **by key** ([Provenance], OP-32 slice 3): the address's own key and, for an edge pick, the
+         * run's — resolved at evaluation time against the body as it stands, so a change of topology upstream
+         * cannot move the blend onto another edge; a key the body no longer has makes it invalid, naming it.
+         */
+        addressKey: String? = null,
+        runKeys: List<String>? = null,
     ): SolidRef {
         // structure at build time (OP-21): whether this blend chains onto an earlier one is a fact about the
         // *graph*, so it decides the arity here rather than being read off a value inside compute
@@ -3552,8 +3576,24 @@ class Construction {
                 val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, Msg.text("${kind.word} ${kind.sizeWord}")).mm
                 val drawn = if (iProfile < 0) emptyList() else (it[iProfile] as ProfileValue).profile.elements
                 val sec = BlendSection(kind, r, drawn)
+                // the pick, by name where it has one (OP-32, slice 3)
+                val at =
+                    if (addressKey == null) {
+                        address
+                    } else if (whole) {
+                        Provenance.faceIndex(body.feature, addressKey) ?: return@op EvalResult.Invalid(Msgs.refusalOpFaceGone(face = addressKey))
+                    } else {
+                        Provenance.edgeIndex(body.feature, addressKey) ?: return@op EvalResult.Invalid(Msgs.refusalOpEdgeGone(edge = addressKey))
+                    }
+                val along =
+                    if (runKeys == null || whole) {
+                        run
+                    } else {
+                        val keys = Provenance.edgeKeys(body.feature)?.withIndex()?.associate { (i, k) -> k to i } ?: emptyMap()
+                        runKeys.map { k -> keys[k] ?: return@op EvalResult.Invalid(Msgs.refusalOpEdgeGone(edge = k)) }
+                    }
                 val (resolved, whyTargets) =
-                    if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
+                    if (!whole && along.isNotEmpty()) along to null else Blend3.targets(body.feature, whole, at)
                 val targets = resolved
                 if (targets == null) return@op EvalResult.Invalid(whyTargets ?: Msgs.refusalOpThisSolidHasNoEdge())
                 val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
@@ -3648,6 +3688,14 @@ class Construction {
          * edge address that does not resolve is stated as the run itself, and the pass refuses it by name.
          */
         val refusal: Msg? = null,
+        /**
+         * **What each of [targets] is called** ([Provenance] keys, OP-32 slice 3), parallel to it — the truth the
+         * indices were resolved from when the run was built. The pass resolves them again **at evaluation time**
+         * against the body as it stands, so a vertex inserted upstream (which renumbers the base's edges) leaves
+         * the rounding on the edge it was put on; an edge whose key the body no longer has makes the pass invalid,
+         * naming it, and heals the pass it is back. Null for a run with no keys (the indices are the address).
+         */
+        val keys: List<String>? = null,
     ) {
         val absent: Boolean get() = absentBands >= 0
     }
@@ -3670,6 +3718,11 @@ class Construction {
          * cannot move a curve some step already addresses ([Feature3.Blend.corners]).
          */
         corners: CornerSlots = CornerSlots.NONE,
+        /**
+         * The same record **by key** (OP-32, slice 3), resolved against the body at evaluation time — the truth
+         * [corners] was derived from. Null where the dressing states no keys.
+         */
+        keyedCorners: KeyedCornerSlots? = null,
     ): SolidRef {
         // the chain's undressed root, read off the graph exactly as [blend] reads it (session 81)
         val chainRoot = chainRootOf(from.node)
@@ -3701,6 +3754,11 @@ class Construction {
                 openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
                 // a rounding whose pick no longer resolves says so, in its own words (OP-32 slice 2)
                 runs.firstNotNullOfOrNull { r -> r.refusal.takeIf { !r.absent } }?.let { why -> return@op EvalResult.Invalid(why) }
+                // **the addresses, resolved by name against the body as it stands** (OP-32, slice 3): the keys are
+                // the truth, the indices what they meant when the run was built — the same unless a change of
+                // topology upstream has renumbered the base's edges since
+                val keyed = keyedCorners != null || runs.any { r -> r.keys != null }
+                val index = if (keyed) Provenance.edgeKeys(body.feature)?.withIndex()?.associate { (i, k) -> k to i } else null
                 val targets = ArrayList<Int>()
                 val sections = ArrayList<BlendSection>()
                 val choices = ArrayList<BlendChoice>()
@@ -3710,7 +3768,15 @@ class Construction {
                         if (iSize[k] < 0) 0.0 else sc(it[iSize[k]]).requireDim(Dimension.LENGTH, Msg.text("${run.kind.word} ${run.kind.sizeWord}")).mm
                     val drawn = if (iProfile[k] < 0) emptyList() else (it[iProfile[k]] as ProfileValue).profile.elements
                     val sec = BlendSection(run.kind, r, drawn)
-                    for ((j, t) in run.targets.withIndex()) {
+                    for ((j, t0) in run.targets.withIndex()) {
+                        val key = run.keys?.getOrNull(j)
+                        // a tombstone whose edge is gone keeps its slot where it stood: it rounds nothing
+                        val t =
+                            if (key == null || index == null) {
+                                t0
+                            } else {
+                                index[key] ?: if (run.absent) t0 else return@op EvalResult.Invalid(Msgs.refusalOpEdgeGone(edge = key))
+                            }
                         if (run.absent) absent[targets.size] = run.absentBands
                         targets.add(t)
                         sections.add(sec)
@@ -3720,7 +3786,8 @@ class Construction {
                 val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
                 val (out, why) = Blend3.blended(body, body, targets, sections, choices, absent, rootBody)
                 if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotBlendThatEdge())
-                val f = Feature3.Blend(body.feature, targets, sections, choices, absent, corners)
+                val slots = if (keyedCorners != null && index != null) keyedCorners.resolve(index) else corners
+                val f = Feature3.Blend(body.feature, targets, sections, choices, absent, slots)
                 val (faces, whyFaces) = Section3.faces(f)
                 if (faces == null) return@op EvalResult.Invalid(whyFaces ?: Msgs.refusalOpThisBlendHasNoFaces())
                 EvalResult.Ok(SolidValue(out.restated(f)))
@@ -3784,11 +3851,15 @@ class Construction {
     fun shell(
         base: SolidRef,
         thickness: ScalarRef,
-        openFaces: List<Int>,
+        openFaces0: List<Int>,
+        /** The open faces **by key** (OP-32, slice 3), resolved against the body as it stands; null keeps the indices. */
+        openFaceKeys: List<String>? = null,
     ): SolidRef =
         op(base, thickness) {
             val body = (it[0] as SolidValue).solid
             openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
+            val openFaces =
+                openFaceKeys?.map { k -> Provenance.faceIndex(body.feature, k) ?: return@op EvalResult.Invalid(Msgs.refusalOpFaceGone(face = k)) } ?: openFaces0
             val t = sc(it[1]).requireDim(Dimension.LENGTH, Msgs.refusalOpWallThickness()).mm
             // the open face is an address the file states (OP-32 slice 2): one the body does not have is the
             // shell's reason to be invalid, in the words the gesture would have refused it with (OP-3)
@@ -4377,9 +4448,13 @@ class Construction {
     fun sideFacePlane(
         solid: SolidRef,
         piece: Int,
+        /** The face **by key** (OP-32, slice 3), resolved against the body as it stands; null keeps [piece]. */
+        key: String? = null,
     ): PlaneRef =
         op(solid) {
-            val (face, why) = Section3.facePatchOfFootprintPiece((it[0] as SolidValue).solid.feature, piece)
+            val feature = (it[0] as SolidValue).solid.feature
+            val at = if (key == null) piece else Provenance.faceIndex(feature, key) ?: return@op EvalResult.Invalid(Msgs.refusalOpFaceGone(face = key))
+            val (face, why) = Section3.facePatchOfFootprintPiece(feature, at)
             val plane = face?.plane
             if (plane == null) EvalResult.Invalid(why ?: Msgs.refusalOpNoSuchSideFace()) else EvalResult.Ok(PlaneValue(plane))
         }

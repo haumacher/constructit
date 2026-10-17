@@ -395,7 +395,11 @@ class FaceSketchTest {
         // and it round-trips: the space is a step, the cut is a tool step (OP-18)
         val text = DocumentFormat.save(ed.doc)
         val face1 = saved(text).kind("sketchspace").single()
-        assertTrue(face1.str("name") == "face1" && face1.str("el") == "e9" && face1.int("piece") == 0, text)
+        assertTrue(face1.str("name") == "face1" && face1.str("el") == "e9", text)
+        // the face by what made it (OP-32 slice 3): the key of face 0 of the plate, the side over its first leg
+        val plate = ed.doc.elements.first { ed.doc.nameOf(it) == "e9" }
+        val plateFeature = (constructit.core.Evaluator().eval(plate.ref.node) as constructit.core.EvalResult.Ok).value.let { (it as constructit.core.SolidValue).solid.feature }
+        assertEquals(0, constructit.geom.Provenance.faceIndex(plateFeature, face1.str("piece")!!), text)
         assertTrue(saved(text).hasTool("cut"), text)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save must be byte-equal")
     }

@@ -82,7 +82,7 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
         assertEquals(listOf("20 mm", "4 mm"), s.parameters.map { it.str("value") })
         assertEquals(listOf("h", "r"), s.parameters.map { it.str("name") })
         assertEquals(2, s.tools(Tools.BLEND_EDGE).size)
-        assertEquals(13, s.tools(Tools.BLEND_EDGE)[0].int("edge"), "the edge the pick named, under its own name (OP-32 slice 2)")
+        assertEquals("e11|top", s.tools(Tools.BLEND_EDGE)[0].addressKey(), "the edge the pick named, by what made it (OP-32 slices 2 and 3)")
         assertEquals(listOf(-1, 1, 0, 1), s.tools(Tools.BLEND_EDGE)[0].ints("signs"), "and the sector it chose")
         assertEquals(listOf(s.param("r")!!.str("id")), s.tools(Tools.BLEND_EDGE)[0].ids("params"), "a parameter is referenced by identity")
         // hide-all then show-all leaves nothing: the view states what is, and nothing is hidden (OP-32)

@@ -437,7 +437,7 @@ class EdgeBlendToolTest {
         val step = saved(text).tool(Tools.BLEND_FACE)
         assertTrue(step.containsKey("signs"), "the blend restates every choice it scored: $step")
         // the address, then four integers per broken edge
-        val signs = step.addressed()
+        val signs = step.addressed(ed.doc)
         assertEquals(1 + 4 * 4, signs.size, "one address and four choices per edge: $step")
         assertTrue(step.containsKey("face"), "the address is the face, under its own name (OP-32 slice 2): $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
@@ -485,11 +485,13 @@ class EdgeBlendToolTest {
         val back = DocumentFormat.load(text)
         val steps = saved(text).tools(Tools.BLEND_EDGE)
         assertEquals(1, steps.size, "one blend step\n$text")
-        val address = steps[0].addressed().first()
+        // the edge by what made it (OP-32 slice 3): the drag turns the rectangle inside out, which renumbers its
+        // pieces, and the name still says which leg's rim was clicked
+        val address = assertNotNull(steps[0].addressKey())
         val reloaded = DocumentFormat.save(back)
         assertEquals(text, reloaded, "save -> load -> save byte-equal after the drag")
         assertTrue(
-            saved(reloaded).tool(Tools.BLEND_EDGE).addressed().first() == address,
+            saved(reloaded).tool(Tools.BLEND_EDGE).addressKey() == address,
             "the reload takes the recorded edge verbatim rather than scoring the click again",
         )
         assertManifold(meshOf(back.elements.last { it.kind == ElementKind.SOLID }), "the reloaded blend")

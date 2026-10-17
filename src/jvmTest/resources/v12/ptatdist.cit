@@ -1,0 +1,15 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":6,"f":7},
+  "parameters": [
+    {"id":"f5","name":"d","value":"15 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[-50,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[50,0],"creates":["e2"]},
+    {"id":"f3","kind":"point","at":[0,0],"creates":["e3"]},
+    {"id":"f4","kind":"tool","tool":"line","pts":["e1","e2"],"creates":["e4"]},
+    {"id":"f6","kind":"tool","tool":"ptatdist","pts":["e3"],"els":["e4"],"params":["f5"],"signs":[1],"creates":["e5"]}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":33,"f":8},
+  "parameters": [
+    {"id":"f5","name":"fillet","value":"20 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[100,0],"creates":["e2"]},
+    {"id":"f3","kind":"pattern","name":"P1","shape":"circular","ref":"e2","centre":"e1","count":6,"creates":["e3","e4","e5","e6","e7"]},
+    {"id":"f4","kind":"orbit","pattern":"f3","tool":"segment","pts":[{"el":"e2","at":[0]},{"el":"e2","at":[1]}],"creates":["e8","e9","e10","e11","e12","e13"]},
+    {"id":"f6","kind":"orbit","pattern":"f3","tool":"fillet","els":[{"el":"e8","at":[0]},{"el":"e8","at":[1]}],"params":["f5"],"signs":[-1,1],"creates":["e14","e15","e16","e17","e18","e19"]},
+    {"id":"f7","kind":"tool","tool":"outline","els":["e8","e14","e9","e15","e10","e16","e11","e17","e12","e18","e13","e19"],"signs":[0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,1,0,1,0,1],"creates":["e20","e21","e22","e23","e24","e25","e26","e27","e28","e29","e30","e31","e32"]}
+  ]
+}

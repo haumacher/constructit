@@ -89,6 +89,7 @@ import constructit.geom.ChamferVariant
 import constructit.geom.Conics
 import constructit.geom.Continuity
 import constructit.geom.CornerCut
+import constructit.geom.CornerSlot
 import constructit.geom.CornerSlots
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
@@ -105,6 +106,8 @@ import constructit.geom.GeomMath
 import constructit.geom.Handedness
 import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
+import constructit.geom.KeyedCornerSlots
+import constructit.geom.KeyedSlot
 import constructit.geom.Mesh3
 import constructit.geom.Path3
 import constructit.geom.Pierce
@@ -113,6 +116,7 @@ import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
 import constructit.geom.Project3
+import constructit.geom.Provenance
 import constructit.geom.RegionBool
 import constructit.geom.Revolve3
 import constructit.geom.Section3
@@ -1547,13 +1551,49 @@ class Document {
      * took it — and written on the feature's own step ([Step.tips], [Step.runs]); a graph file's load reads it
      * back from there ([tape]) and asks nothing of visibility at all.
      */
-    internal class Tape(private val tips: List<Element?>, private val runs: List<List<Int>?>) {
+    internal class Tape(
+        private val tips: List<Element?>,
+        private val runs: List<List<Int>?>,
+        /**
+         * What the feature's pick names **by key** (OP-32, slice 3) — its address, each run's edges and its slot
+         * record's key table — read from a file at [DocumentFormat.KEY_VERSION] and resolved by the build against
+         * the body as it stands, in place of the indices an older file states.
+         */
+        private val statedAddressKey: String? = null,
+        private val runKeys: List<List<String>?> = emptyList(),
+        private val statedSlotKeys: List<String>? = null,
+    ) {
         private var tip = 0
         private var run = 0
+        private var runKey = 0
+
+        /**
+         * How the keys carry over to the copy of a ride now building (OP-23): a ride states its pick once, in the
+         * terms of its all-zero copy, and each copy reads it in its own ([Document.shiftKey]). Null outside a ride.
+         */
+        var shift: ((String) -> String)? = null
 
         fun nextTip(): Element? = tips.getOrNull(tip++)
 
         fun nextRun(): List<Int>? = runs.getOrNull(run++)
+
+        /** A key as this copy reads it, in its one spelling ([Provenance.canonical]). */
+        private fun read(k: String): String = Provenance.canonical(shift?.invoke(k) ?: k)
+
+        val addressKey: String? get() = statedAddressKey?.let { read(it) }
+
+        val slotKeys: List<String>? get() = statedSlotKeys?.map { read(it) }
+
+        /** The next run by key — null where the file states the picked edge alone. */
+        fun nextRunKeys(): List<String>? = runKeys.getOrNull(runKey++)?.map { read(it) }
+
+        /** Every copy of a ride reads the one run the ride states. */
+        fun rewindKeys() {
+            runKey = 0
+        }
+
+        /** Whether the file states its picks by key. */
+        val keyed: Boolean get() = statedAddressKey != null
     }
 
     /** The decisions the feature now replaying states — set by the graph reader for each feature (OP-32). */
@@ -1562,8 +1602,63 @@ class Document {
     private val pendingTips = ArrayList<Element?>()
     private val pendingRuns = ArrayList<List<Int>?>()
 
+    /** The keys the operation being recorded named its pick by — see [Step.addressKey] (OP-32, slice 3). */
+    private var pendingAddressKey: String? = null
+    private val pendingRunKeys = ArrayList<List<String>?>()
+
+    /**
+     * Record that the operation being recorded picked [address] (and ran along [run]) **by these keys** — the
+     * first such pick of an operation is its own; an orbit's copies after the first state theirs only in the
+     * session's nodes, since the step states the rule once (OP-32, slice 3).
+     */
+    internal fun noteAddressKeys(
+        address: String?,
+        run: List<String>?,
+    ) {
+        if (pendingAddressKey != null || address == null) return
+        // a ride states its pick in the terms of its all-zero copy, whichever copy scored it (OP-23)
+        val b = building
+        val zero: (String) -> String = if (b == null) { k -> k } else { k -> shiftKey(k, b.gesture, b.index, List(b.index.size) { 0 }) }
+        pendingAddressKey = zero(address)
+        pendingRunKeys.add(run?.map(zero))
+    }
+
+    /**
+     * [key] with every element it names carried from copy [from] to copy [to] of the ride [g] (OP-32 slice 3,
+     * OP-23): a face of copy *k*'s body is swept from copy *k*'s curve, so the same pick on another copy names that
+     * copy's curves — found by the orbit each of them is a member of, exactly as a replicated pick is. Carried along
+     * the outermost level; a name that is no member of it (a curve every copy shares) stays as it is.
+     */
+    internal fun shiftKey(
+        key: String,
+        g: OrbitGesture,
+        from: List<Int>,
+        to: List<Int>,
+    ): String {
+        val d = to.getOrElse(0) { 0 } - from.getOrElse(0) { 0 }
+        if (d == 0) return key
+        val p = g.levels.firstOrNull()?.pattern ?: return key
+        return KEY_TOKEN.replace(key) { m ->
+            val el = elements.firstOrNull { "e${it.serial}" == m.value } ?: return@replace m.value
+            val site = memberSites(el).firstOrNull { it.pattern === p } ?: return@replace m.value
+            val n = site.orbit.members.size
+            val i = site.index + d
+            site.orbit.members.getOrNull(if (p.wraps && n > 0) ((i % n) + n) % n else i)?.let { nameOf(it) } ?: m.value
+        }
+    }
+
+    private val KEY_TOKEN = Regex("\\be\\d+\\b")
+
     /** Whether decisions are read off the feature rather than taken: a graph file's load (OP-32). */
     private val readsTape: Boolean get() = (replayingVersion ?: 0) > DocumentFormat.JOURNAL_VERSION
+
+    /**
+     * Set while a feature a **graph edit** touched is being rebuilt (OP-32, slice 3 — [GraphFormat.Refactor]):
+     * its inputs changed, so what it decided from them — whether a rounding joins the dressing of the body it now
+     * names — is decided again as a gesture decides it, and it works on the very body the edit named (no chain tip
+     * is looked for: the user said which). What it *meant* (an edge by key, a sign) is still read off the file.
+     */
+    internal var refactoring: Boolean = false
 
     /**
      * The tip a chain rule lands on for [base]: taken by [live] (the visible chain) in a gesture or a journal
@@ -1574,7 +1669,16 @@ class Document {
         base: Element,
         live: () -> Element?,
     ): Element {
-        val t = if (readsTape) tape?.nextTip() ?: base else live() ?: base
+        // …and a feature a graph edit re-pointed works on the very body the edit named — the user said which, so
+        // nothing is taken from what happens to be visible (OP-32, slice 3)
+        val t =
+            if (refactoring) {
+                base
+            } else if (readsTape) {
+                tape?.nextTip() ?: base
+            } else {
+                live() ?: base
+            }
         pendingTips.add(t.takeIf { it !== base })
         return t
     }
@@ -1698,6 +1802,8 @@ class Document {
         pendingPath = null
         pendingTips.clear()
         pendingRuns.clear()
+        pendingAddressKey = null
+        pendingRunKeys.clear()
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1728,6 +1834,10 @@ class Document {
             step.runs = pendingRuns.toList()
             pendingTips.clear()
             pendingRuns.clear()
+            step.addressKey = pendingAddressKey
+            step.runKeys = pendingRunKeys.toList()
+            pendingAddressKey = null
+            pendingRunKeys.clear()
             // …and the step's **file identities** (OP-32): its own feature number, then a number for every
             // element it made, in the order it made them, and one for every scalar. A parameter *is* the scalar
             // it declares, so the two share one number; a step the file folds into something else (a name, a
@@ -1785,6 +1895,8 @@ class Document {
             pendingSkinMatch = null
             pendingTips.clear()
             pendingRuns.clear()
+            pendingAddressKey = null
+            pendingRunKeys.clear()
             throw t
         } finally {
             recordDepth--
@@ -2964,12 +3076,20 @@ class Document {
         // further on past every rounding whose crease is one straight run. It is mapped by **name**, once,
         // and said — never re-resolved by where the plane happens to be, which would put a sketch on a
         // different face the moment a part is edited (OP-18).
-        val at = migratedFaceAddress(solid, piece)
-        if (faceRefusal(solid, at) != null) return null
+        //
+        // …and from [DocumentFormat.KEY_VERSION] on the file states the face **by key** (OP-32, slice 3): resolved
+        // here against the body as it stands, and by the plane whenever it evaluates — a face that is gone makes
+        // the space's plane invalid, naming it, rather than the file fail to load
+        val statedKey = if (readsTape) tape?.addressKey else null
+        val feature = (Evaluator().valueOf(solid.ref) as? SolidValue)?.solid?.feature
+        val at = if (statedKey != null) feature?.let { Provenance.faceIndex(it, statedKey) } ?: -1 else migratedFaceAddress(solid, piece)
+        if (statedKey == null && faceRefusal(solid, at) != null) return null
+        val key = statedKey ?: feature?.let { Provenance.faceKeys(it)?.getOrNull(at) }
         val name = named ?: nextSpaceName()
         if (spaceNamed(name) != null) return null
         return recording("sketchspace", Arg.Label(name), Arg.Keyed("el", Arg.El(solid)), Arg.Keyed("piece", Arg.Text(at.toString()))) {
-            val intrinsic = cx.sideFacePlane(solid.ref as SolidRef, at)
+            noteAddressKeys(key, null)
+            val intrinsic = cx.sideFacePlane(solid.ref as SolidRef, at, key)
             val space = addSpace(SketchSpace(name, null, solid, at), intrinsic)
             space
         }
@@ -9385,7 +9505,7 @@ class Document {
         val view = path.loop
         if (view == null) {
             val pieces = roundedPiecesOf(path)
-            return cx.indirect(cx.loop(*pieces.map { it.ref }.toTypedArray())).also {
+            return cx.indirect(cx.loop(*pieces.map { it.ref }.toTypedArray(), tags = tagsOf(pieces))).also {
                 path.loop = it
                 path.loopPieces = pieces
             }
@@ -9398,9 +9518,18 @@ class Document {
         val view = path.loop?.node as? IndirectNode ?: return
         val pieces = roundedPiecesOf(path)
         if (pieces.size == path.loopPieces.size && pieces.indices.all { pieces[it] === path.loopPieces[it] }) return
-        view.boundTo = cx.loop(*pieces.map { it.ref }.toTypedArray()).node
+        view.boundTo = cx.loop(*pieces.map { it.ref }.toTypedArray(), tags = tagsOf(pieces)).node
         path.loopPieces = pieces
     }
+
+    /**
+     * **What generated each piece of a loop**, by identity (OP-32, slice 3) — asked when the loop evaluates, since
+     * a piece built inside the operation now recording is given its identity only when the step is written. A
+     * piece with none yet leaves the loop untagged for that pass, which names its faces by position until it
+     * has one ([constructit.geom.Provenance]).
+     */
+    private fun tagsOf(pieces: List<Element>): () -> List<String>? =
+        { pieces.takeIf { p -> p.all { it.serial > 0 } }?.map { "e${it.serial}" } }
 
     /**
      * Record a rounding as **this corner's own radius** when [leg1] and [leg2] are two adjacent legs of one
@@ -10078,7 +10207,8 @@ class Document {
             val stored = if (stated) signs[n + i] else null
             pieces.add(trimPiece(picks[i], from, to, near(i), ev, stored) { choices[n + i] = it } ?: return null)
         }
-        return add(cx.loop(*pieces.toTypedArray()), ElementKind.OUTLINE, Styles.RESULT).also { registerSigns(it, choices.toList()) }
+        // each piece is a trim of the curve picked for it, and that curve is what generated it (OP-32, slice 3)
+        return add(cx.loop(*pieces.toTypedArray(), tags = tagsOf(picks)), ElementKind.OUTLINE, Styles.RESULT).also { registerSigns(it, choices.toList()) }
     }
 
     /**
@@ -11075,7 +11205,7 @@ class Document {
             // was rounded reads the rounded loop afterwards (GitHub #25 — see [orthoLoopOf])
             else ->
                 (legOf(el)?.first ?: orthoCornerOf(el))?.takeIf { it.closed }?.let { cx.region(orthoLoopOf(it)) }
-                    ?: boundaryPiecesOf(el)?.let { pieces -> cx.region(cx.loop(*pieces.map { it.ref }.toTypedArray())) }
+                    ?: boundaryPiecesOf(el)?.let { pieces -> cx.region(cx.loop(*pieces.map { it.ref }.toTypedArray(), tags = tagsOf(pieces))) }
         }
 
     /**
@@ -11108,10 +11238,24 @@ class Document {
         // ...and so does a click on the corner piece itself: a rounded corner is part of the boundary, so
         // the arc is as good a place to pick the area by as any leg (GitHub #25)
         orthoCornerOf(el)?.let { path -> if (path.closed) return roundedPiecesOf(path) }
+        // …and of a **ride** (OP-23), the pieces its own copy built, where they close by themselves: a ride is one
+        // step for the whole fan, and the pieces of every copy together are no boundary — a ring of squares is
+        // three squares, not one chain through the point they share (found by OP-32 slice 3's patterned probe)
+        copyPiecesOf(el)?.let { return it }
         val step = creatingStep(el) ?: return null
         val pieces = step.creates.filter { c -> c.isCurve && elements.any { it === c } }
         if (pieces.size < 2 || pieces.none { it === el }) return null
         return pieces
+    }
+
+    /** The curves the copy of a ride that built [el] made, in the order it made them — where they close a loop. */
+    private fun copyPiecesOf(el: Element): List<Element>? {
+        val g = gestureOf(el) ?: return null
+        val o = g.outputs.firstOrNull { o -> o.members.any { it === el } } ?: return null
+        val i = o.members.indexOfFirst { it === el }
+        val copy = g.outputs.filter { it.pattern === o.pattern }.mapNotNull { it.members.getOrNull(i) }.filter { c -> c.isCurve && elements.any { it === c } }
+        if (copy.size < 2 || copy.none { it === el }) return null
+        return copy.takeIf { closesALoop(it, Evaluator()) }
     }
 
     /**
@@ -12429,8 +12573,10 @@ class Document {
                 noteMsg = Msgs.noteProjectionOntoFaceProjectOntoFaceHasNo3(name = nameOf(view))
                 return null
             }
+        // the face **by key**, where the file states it so (OP-32, slice 3); the node resolves it again when it evaluates
+        val statedKey = if (readsTape) tape?.addressKey else null
         val chosen =
-            signs.getOrNull(0) ?: run {
+            (if (statedKey != null) Provenance.faceIndex(feature, statedKey) ?: -1 else signs.getOrNull(0)) ?: run {
                 val (index, why) = Project3.landingFace(feature, pieces, from)
                 index ?: run {
                     noteMsg =
@@ -12438,13 +12584,16 @@ class Document {
                     return null
                 }
             }
+        // the face by name, so a change of topology upstream cannot throw the drawing onto another (OP-32, slice 3)
+        val faceKey = statedKey ?: Provenance.faceKeys(feature)?.getOrNull(chosen)
         val curve =
             add(
-                cx.projectedOntoFace(view.ref, planeRef, solid.ref as SolidRef, chosen),
+                cx.projectedOntoFace(view.ref, planeRef, solid.ref as SolidRef, chosen, faceKey),
                 ElementKind.SPACE_CURVE,
                 Styles.SPACE_CURVE,
             )
         curve.space = view.space
+        noteAddressKeys(faceKey, null)
         registerSigns(curve, listOf(chosen))
         val patch = Section3.faces(feature).first?.getOrNull(chosen)
         val made = patch?.let { Project3.projectedOnto(pieces, from, it).first }
@@ -14212,6 +14361,12 @@ class Document {
          * words until the drawing is rebuilt with the face back ([Construction.BlendRun.refusal]).
          */
         val refusal: Msg? = null,
+        /**
+         * What each of [targets] is called ([constructit.geom.Provenance], OP-32 slice 3) — the truth the pass
+         * resolves at evaluation time, so a vertex inserted upstream cannot move the rounding. Null where the
+         * entry was built with no keys to state.
+         */
+        val keys: List<String>? = null,
     ) {
         /** Whether this entry is a **tombstone**: its rounding was removed and only its slots are left. */
         val absent: Boolean get() = absentBands >= 0
@@ -14244,6 +14399,12 @@ class Document {
          * so a corner that is gone leaves a tombstoned slot and a fresh one appends.
          */
         var corners: CornerSlots = CornerSlots.NONE
+
+        /**
+         * [corners] **by key** (OP-32, slice 3) — the record the file states and the pass resolves at evaluation
+         * time; [corners] is what it meant against the base when it was last recorded.
+         */
+        var cornerKeys: KeyedCornerSlots? = null
 
         /** The roundings that **stand** — what the element list shows and what the user can take off. */
         val standing: List<DressEntry> get() = entries.filter { !it.absent }
@@ -14372,7 +14533,7 @@ class Document {
     private fun restampDressing(d: Dressing) {
         @Suppress("UNCHECKED_CAST")
         val from = d.base.ref as SolidRef
-        val tip = cx.blendAll(from, planeOfSpace(d.base.space), d.entries.map { runOf(it) }, d.corners)
+        val tip = cx.blendAll(from, planeOfSpace(d.base.space), d.entries.map { runOf(it) }, d.corners, d.cornerKeys)
         (d.body.ref.node as IndirectNode).boundTo = tip.node
     }
 
@@ -14393,10 +14554,11 @@ class Document {
      */
     private fun recordSlots(d: Dressing) {
         if (replayingVersion != null) return
-        val was = d.corners
         val now = slotsOf(d) ?: return
-        if (now == was) return
+        val keyed = keyedSlots(d, now)
+        if (now == d.corners && keyed == d.cornerKeys) return
         d.corners = now
+        d.cornerKeys = keyed
         restampDressing(d)
     }
 
@@ -14405,6 +14567,22 @@ class Document {
         val f = (Evaluator().valueOf(d.body.ref) as? SolidValue)?.solid?.feature as? Feature3.Blend ?: return null
         return Blend3.sharedSlots(f)
     }
+
+    /**
+     * [slots] — in the index form of [d]'s base **as it stands** — by key (OP-32, slice 3): the record the file
+     * states. Null where the base has no value to name its edges by.
+     */
+    private fun keyedSlots(
+        d: Dressing,
+        slots: CornerSlots,
+    ): KeyedCornerSlots? {
+        val base = (Evaluator().valueOf(d.base.ref) as? SolidValue)?.solid?.feature ?: return null
+        return KeyedCornerSlots.of(slots, Provenance.edgeKeys(base))
+    }
+
+    /** The keyed record the step [step] writes, or null where it makes no dressing's body or states none (OP-32). */
+    internal fun dressingKeyedSlotsOf(step: Step): KeyedCornerSlots? =
+        dressings.firstOrNull { d -> step.creates.any { it === d.body } }?.cornerKeys?.takeIf { !it.isEmpty }
 
     /**
      * **Every dressing's record completed, at the end of a load** (OP-31, slice 5g) — which is a *migration*
@@ -14426,9 +14604,16 @@ class Document {
         var said = false
         for (d in dressings) {
             val now = slotsOf(d) ?: continue
-            if (now == d.corners || now.isEmpty) continue
+            if (now.isEmpty) continue
+            val keyed = keyedSlots(d, now)
+            if (now == d.corners && keyed == d.cornerKeys) continue
+            // …a record that only changes its *form* — the keys of a load whose file stated indices — is no
+            // migration the user is told about: nothing moved (OP-32, slice 3)
+            val moved = now != d.corners
             d.corners = now
+            d.cornerKeys = keyed
             restampDressing(d)
+            if (!moved) continue
             // …**once for the drawing**, not once per body: it is a fact about the file's version, and a
             // note that fires per dressing would bury the one about the drawing it was migrated from (OP-18)
             if (say && !said) noteLoad(Msgs.noteOneDressedBodyCornerSlotsRecorded())
@@ -14465,6 +14650,7 @@ class Document {
             e.choices,
             absentBands = e.absentBands,
             refusal = e.refusal,
+            keys = e.keys,
         )
 
     /** A dressing's **first** rounding, built through the one construction [runOf] states (OP-30). */
@@ -14480,7 +14666,9 @@ class Document {
         absentBands: Int = -1,
         corners: CornerSlots = CornerSlots.NONE,
         refusal: Msg? = null,
-    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands, refusal)), corners)
+        keys: List<String>? = null,
+        cornerKeys: KeyedCornerSlots? = null,
+    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands, refusal, keys)), corners, cornerKeys)
 
     /**
      * Take the entry [el] off its dressing **in place** (OP-30): the journal loses its step, the entry list
@@ -14505,7 +14693,7 @@ class Document {
         if (!tombstoneStep(el, bands, signsOfEntry(e))) return false
         // **the slot stays**: the entry becomes a tombstone in the very position it stood, so every band,
         // rail and address after it keeps its number (OP-30, OP-17)
-        d.entries[k] = DressEntry(null, e.kind, e.size, e.profile, e.profileRef, e.whole, e.address, e.targets, e.choices, e.where, bands)
+        d.entries[k] = DressEntry(null, e.kind, e.size, e.profile, e.profileRef, e.whole, e.address, e.targets, e.choices, e.where, bands, keys = e.keys)
         elements.removeAll { it === el }
         scoredSigns.remove(el.id)
         rebuildDressing(d)
@@ -14523,8 +14711,12 @@ class Document {
         d: Dressing,
         e: DressEntry,
     ): Int {
-        val target = e.targets.firstOrNull() ?: return 1
-        val faces = (Evaluator().valueOf(d.body.ref) as? SolidValue)?.solid?.feature?.let { Section3.faces(it).first } ?: return 1
+        val ev = Evaluator()
+        // the target as it stands now, by name where the entry has one (OP-32, slice 3)
+        val target =
+            e.keys?.firstOrNull()?.let { k -> (ev.valueOf(d.base.ref) as? SolidValue)?.solid?.feature?.let { Provenance.edgeIndex(it, k) } }
+                ?: e.targets.firstOrNull() ?: return 1
+        val faces = (ev.valueOf(d.body.ref) as? SolidValue)?.solid?.feature?.let { Section3.faces(it).first } ?: return 1
         return maxOf(1, faces.count { (it.name as? FaceName.BlendBand)?.edge == target })
     }
 
@@ -14733,10 +14925,15 @@ class Document {
         // …from the last journal on, whose addresses no migration maps any more (OP-31's regrouping and cap slots
         // read the body to map them, and a body with no value has nothing to read)
         val loading = signs.isNotEmpty() && (replayingVersion ?: 0) >= DocumentFormat.CAP_SLOT_VERSION
+        // **what the file names the pick by** (OP-32, slice 3): a file at [DocumentFormat.KEY_VERSION] states the
+        // address, the run and the slot record **by key**, resolved here against the body as it stands — an older
+        // one states indices, and the keys are read off the body once, exactly as a gesture reads them: the
+        // migration is the old load itself
+        val stated = if (readsTape) tape?.takeIf { it.keyed } else null
         val bodyNow = (ev.valueOf(baseEl?.ref ?: on.ref) as? SolidValue)?.solid
         if (loading && (bodyNow == null || baseEl == null || (dressingOf(on) != null && baseEl !== on))) {
             val why = (ev.eval(on.ref.node) as? EvalResult.Invalid)?.why ?: Msgs.noteOneDressedBodyHasNoValueRightNow(what = what, name = nameOf(on))
-            return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, null, why)
+            return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, null, why, stated)
         }
         val body =
             bodyNow ?: run {
@@ -14767,7 +14964,7 @@ class Document {
         val removedBands = if (version == null) -1 else dressingRemoved
         val joins =
             when {
-                version == null -> true
+                version == null || refactoring -> true
                 version >= DocumentFormat.DRESSED_BODY_VERSION -> dressingDeclares == (if (removedBands >= 0) 0 else 1)
                 else -> dressingJoins
             }
@@ -14775,8 +14972,14 @@ class Document {
         // how the click named its target, so the note can say it (see [BlendPick]); false on a replay, which
         // scores nothing at all
         var inView = false
+        val statedKey = stated?.addressKey
         val picked =
-            signs.getOrNull(0) ?: run {
+            if (statedKey != null) {
+                (if (whole) Provenance.faceIndex(body.feature, statedKey) else Provenance.edgeIndex(body.feature, statedKey))
+                    ?: return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, tipEl, gone(whole, statedKey), stated)
+            } else {
+                signs.getOrNull(0)
+            } ?: run {
                 val pick = blendTarget(body, whole, at, view, ev)
                 inView = pick.inView
                 pick.index ?: run {
@@ -14811,8 +15014,18 @@ class Document {
             } else {
                 regrouped
             }
+        val names = Provenance.Names(body.feature)
+        // the run the file states by key — a face's whole boundary, or an edge's tangent run — resolved against the
+        // body as it stands (OP-32, slice 3); null where it states the picked edge alone
+        val statedRun = stated?.nextRunKeys()
         val (targets, whyTargets) =
-            if (whole) {
+            if (stated != null && (statedRun != null || !whole)) {
+                val ks = statedRun ?: listOf(statedKey!!)
+                val ix = names.edgeKeys?.withIndex()?.associate { (i, k) -> k to i } ?: emptyMap()
+                val missing = ks.firstOrNull { it !in ix }
+                if (missing != null) return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, tipEl, gone(false, missing), stated, statedRun)
+                ks.map { ix.getValue(it) } to null
+            } else if (whole) {
                 Blend3.targets(body.feature, true, address)
             } else {
                 decideRun(address, Blend3.targets(body.feature, false, address)) { Blend3.targets(body.feature, false, address, oneRun(baseEl, ev)) }
@@ -14884,6 +15097,12 @@ class Document {
                 Section3.edges(body.feature).first?.getOrNull(address)?.let { Section3.words(it) } ?: Msgs.noteOneDressedBodyEdge()
             }
         val entrySigns = listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() }
+        // **the pick by name** (OP-32, slice 3): what the step writes and what the pass resolves at evaluation time.
+        // A face pick's boundary is a decision as an edge pick's tangent run is — taken once, here, and stated — so
+        // a face that later gains an edge keeps rounding exactly the edges it was picked with
+        val addressKey = statedKey ?: (if (whole) names.faceKeys else names.edgeKeys)?.getOrNull(address)
+        val targetKeys = statedRun ?: names.edgeKeys?.let { ek -> targets.map { ek.getOrNull(it) ?: "edge#$it" } }
+        noteAddressKeys(addressKey, if (!whole && targets == listOf(address)) null else targetKeys)
         // **One dressing per part** (OP-30): where this gesture rounds an edge or a face of the *base* of a
         // body that is already dressed, it is one more **entry** of that dressing and not a body of its own.
         // The node is re-stamped with the new entry list and the body keeps its identity, its name and
@@ -14891,12 +15110,12 @@ class Document {
         // …and **only a live gesture asks whether the pick addresses the base** (the rail decision): where the
         // file has already said this rounding joins, that is the answer, and re-deriving it would let a body
         // whose parameter changed under it fail to *load* rather than merely be invalid (OP-3, OP-18).
-        val join = dress?.takeIf { replayingVersion != null || addressesBase(it, whole, address, targets, ev) }
+        val join = dress?.takeIf { (replayingVersion != null && !refactoring) || addressesBase(it, whole, address, targets, ev) }
         // **a tombstone joins as a slot and nothing else** (OP-30): no row in the element list — a tombstone
         // is the addresses' business, not the user's — no size read, no note, and the body re-stamped in
         // place so that the entries after it keep their numbers.
         if (removedBands >= 0) {
-            val tomb = DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands)
+            val tomb = DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, keys = targetKeys)
             if (join != null) {
                 join.entries.add(tomb)
                 rebuildDressing(join)
@@ -14910,13 +15129,14 @@ class Document {
             // **the record the file states rides with the very first pass** (OP-31, slice 5g): a dressing's
             // shared slots are laid out from it, so a replay numbers them the same way from the first step
             // on rather than growing into the numbering the finished drawing has
-            val slots0 = dressingSlots
-            val made = passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, removedBands, slots0)
+            val (slots0, keyed0) = statedSlots(body.feature)
+            val made = passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, removedBands, slots0, keys = targetKeys, cornerKeys = keyed0)
             val body0 = add(cx.indirect(made), ElementKind.SOLID, Styles.SOLID)
             body0.space = baseEl.space
             dressings.add(
                 Dressing(body0, baseEl).also {
                     it.corners = slots0
+                    it.cornerKeys = keyed0
                     it.entries.add(tomb)
                 },
             )
@@ -14936,7 +15156,7 @@ class Document {
             }
             val el = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
             el.space = join.base.space
-            join.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
+            join.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where, keys = targetKeys))
             rebuildDressing(join)
             registerSigns(el, entrySigns)
             val why = (Evaluator().eval(join.body.ref.node) as? EvalResult.Invalid)?.why
@@ -14951,10 +15171,10 @@ class Document {
         val dressable = baseEl === tipEl
         // …with the record the file states, for the reason a tombstoned first rounding carries it too
         // (OP-31, slice 5g)
-        val slots0 = dressingSlots
+        val (slots0, keyed0) = statedSlots(body.feature)
         val made =
             if (dressable) {
-                passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, -1, slots0)
+                passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, -1, slots0, keys = targetKeys, cornerKeys = keyed0)
             } else {
                 cx.blend(
                     tipEl.ref as SolidRef,
@@ -14968,6 +15188,9 @@ class Document {
                     // the run the pick stands for, resolved from the registry here and never stored (#29)
                     run = if (whole) emptyList() else targets,
                     profile = profileRef,
+                    // …and by name, resolved when it evaluates (OP-32, slice 3)
+                    addressKey = addressKey,
+                    runKeys = if (whole) null else targetKeys,
                 )
             }
         // **The dressed body publishes itself behind a view** (OP-30): re-stamping it with one more entry
@@ -14982,7 +15205,8 @@ class Document {
             dressings.add(
                 Dressing(el, baseEl).also {
                     it.corners = slots0
-                    it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
+                    it.cornerKeys = keyed0
+                    it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where, keys = targetKeys))
                 },
             )
             recordSlots(dressings.last())
@@ -15070,28 +15294,43 @@ class Document {
         profileRef: ProfileRef?,
         tip: Element?,
         why: Msg,
+        /** The tape of a file that states its picks by key (OP-32, slice 3), or null. */
+        stated: Tape? = null,
+        /** The run that file states, read off [stated] once — null where it states the picked edge alone. */
+        statedRun: List<String>? = stated?.nextRunKeys(),
     ): Element? {
         val address = signs[0]
         val tipEl = tip ?: decideTip(on) { tipOfChain(on, Evaluator()) }
         val removedBands = dressingRemoved
-        val joins = dressingDeclares == (if (removedBands >= 0) 0 else 1)
+        val joins = if (refactoring) dressingOf(on) != null else dressingDeclares == (if (removedBands >= 0) 0 else 1)
         val perEdge = if (kind == BlendKind.PROFILE) 5 else 4
         val stored = signs.drop(1).chunked(perEdge).mapNotNull { BlendChoice.of(it) }
+        // **by key, the run resolves when the pass evaluates** (OP-32, slice 3): an edge — or a face's boundary
+        // — whose body had no value while the file was read is built as the keys the file states, and the pass
+        // resolves them the first time it can, naming the one that is missing until then
+        val runKeys = statedRun ?: stated?.addressKey?.takeIf { !whole }?.let { listOf(it) }
+        // a face whose key is not on a body that *has* a value is gone, and says so in the face's own words
+        val faceGone = whole && tip != null
         val targets: List<Int>
         val refusal: Msg?
-        if (whole) {
+        if (whole && (runKeys == null || faceGone)) {
             targets = emptyList()
             refusal = why
+        } else if (runKeys != null) {
+            targets = List(runKeys.size) { address }
+            refusal = null
         } else {
             targets = decideRun(address, listOf(address) to null) { listOf(address) to null }.first ?: listOf(address)
             refusal = null
         }
+        val keys = runKeys?.takeIf { targets.isNotEmpty() }
+        noteAddressKeys(stated?.addressKey, statedRun)
         val choices = if (whole) stored else stored.take(targets.size)
         val where = if (whole) Msgs.noteDressAFace() else Msgs.noteOneDressedBodyEdge()
         val dress = dressingOf(on)?.takeIf { tipEl === on && joins }
         if (dress != null) {
             if (removedBands >= 0) {
-                dress.entries.add(DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal))
+                dress.entries.add(DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal, keys))
                 rebuildDressing(dress)
                 pendingTombstone = removedBands to signs
                 noteEdit()
@@ -15099,7 +15338,7 @@ class Document {
             }
             val el = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
             el.space = dress.base.space
-            dress.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where, refusal = refusal))
+            dress.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where, refusal = refusal, keys = keys))
             rebuildDressing(dress)
             registerSigns(el, signs)
             return el
@@ -15115,19 +15354,46 @@ class Document {
             return el
         }
         // …and a rounding that makes its dressing's body: the body, over the tip, with this one entry in it
-        val slots0 = dressingSlots
-        val made = passRef(tipRef, planeOfSpace(tipEl.space), kind, size, profileRef, targets, choices, removedBands, slots0, refusal)
+        val (slots0, keyed0) = statedSlots((Evaluator().valueOf(tipRef) as? SolidValue)?.solid?.feature)
+        val made = passRef(tipRef, planeOfSpace(tipEl.space), kind, size, profileRef, targets, choices, removedBands, slots0, refusal, keys, keyed0)
         val body0 = add(cx.indirect(made), ElementKind.SOLID, Styles.SOLID)
         body0.space = tipEl.space
         val entryEl = if (removedBands >= 0) null else add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID).also { it.space = tipEl.space }
         dressings.add(
             Dressing(body0, tipEl).also {
                 it.corners = slots0
-                it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal))
+                it.cornerKeys = keyed0
+                it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal, keys))
             },
         )
         if (entryEl != null) registerSigns(entryEl, signs) else pendingTombstone = removedBands to signs
         return body0
+    }
+
+    /** Why a pick stated by [key] does not resolve: the edge, or the face, is gone (OP-32, slice 3). */
+    private fun gone(
+        whole: Boolean,
+        key: String,
+    ): Msg = if (whole) Msgs.refusalOpFaceGone(face = key) else Msgs.refusalOpEdgeGone(edge = key)
+
+    /**
+     * The shared-slot record the step now replaying states, in both forms (OP-32, slice 3): the index form
+     * against [base] as it stands, and the keyed truth. A file at [DocumentFormat.KEY_VERSION] states it by key —
+     * its words carry indices into the tape's key table — and an older one by index, which is keyed here against
+     * [base] once. Null keys where there is no record, or no base to name it against.
+     */
+    private fun statedSlots(base: Feature3?): Pair<CornerSlots, KeyedCornerSlots?> {
+        val table = if (readsTape) tape?.slotKeys else null
+        val keys = base?.let { Provenance.edgeKeys(it) }
+        if (table == null) {
+            if (dressingSlots.isEmpty || base == null) return dressingSlots to null
+            return dressingSlots to KeyedCornerSlots.of(dressingSlots, keys)
+        }
+
+        fun one(c: CornerSlot) = KeyedSlot(c.kind, c.edges.map { table.getOrElse(it) { "edge#$it" } }, c.piece)
+        val keyed = KeyedCornerSlots(dressingSlots.edges.map { row -> row.map { one(it) } }, dressingSlots.faces.map { row -> row.map { one(it) } })
+        val index = keys?.withIndex()?.associate { (i, k) -> k to i } ?: emptyMap()
+        return keyed.resolve(index) to keyed
     }
 
     /**
@@ -15236,16 +15502,20 @@ class Document {
         }
         val ev = Evaluator()
         val tipEl = decideTip(solid) { tipOfChain(solid, ev) }
+        // the open face **by key**, where the file states it so (OP-32, slice 3) — resolved here against the body as
+        // it stands, and again by the node whenever it evaluates
+        val statedKey = if (readsTape && open) tape?.addressKey else null
         // **a graph load builds what the file states and lets the shell say what is wrong with it** (OP-32 slice 2,
         // OP-3): the open face is its address, and a face the body does not have — or a body with no value right
         // now — makes the shell invalid with that reason rather than refusing to load (the node checks the face)
         if ((replayingVersion ?: 0) >= DocumentFormat.CAP_SLOT_VERSION && (!open || signs.isNotEmpty())) {
             val bodyNow = (ev.valueOf(tipEl.ref) as? SolidValue)?.solid
-            val faceNow = signs.getOrNull(0)
+            val faceNow = if (statedKey != null) bodyNow?.feature?.let { Provenance.faceIndex(it, statedKey) } ?: -1 else signs.getOrNull(0)
             if (bodyNow == null || (faceNow != null && Shell3.openFaceRefusal(bodyNow.feature, faceNow) != null)) {
                 val openFaces = if (open) listOfNotNull(faceNow) else emptyList()
-                val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces), ElementKind.SOLID, Styles.SOLID)
+                val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces, statedKey?.let { listOf(it) }), ElementKind.SOLID, Styles.SOLID)
                 el.space = tipEl.space
+                noteAddressKeys(statedKey, null)
                 registerSigns(el, openFaces)
                 return el
             }
@@ -15266,7 +15536,7 @@ class Document {
                 emptyList()
             } else {
                 val face =
-                    signs.getOrNull(0) ?: run {
+                    (if (statedKey != null) Provenance.faceIndex(body.feature, statedKey) else signs.getOrNull(0)) ?: run {
                         val (i, why) = faceForOpening(body, at, view, ev)
                         i ?: run {
                             noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(tipEl), why = why ?: Msg.EMPTY)
@@ -15280,8 +15550,11 @@ class Document {
                 openLabel = Section3.faces(body.feature).first?.getOrNull(face)?.name?.label ?: Msgs.noteDressAFace()
                 listOf(face)
             }
-        val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces), ElementKind.SOLID, Styles.SOLID)
+        // …stated by name, so a change of topology upstream cannot open another face (OP-32, slice 3)
+        val keys = Provenance.Names(body.feature).faceKeys?.let { fk -> openFaces.map { fk.getOrElse(it) { "face#$it" } } }
+        val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces, keys), ElementKind.SOLID, Styles.SOLID)
         el.space = tipEl.space
+        noteAddressKeys(keys?.firstOrNull(), null)
         registerSigns(el, openFaces)
         madeSolid(
             el,
@@ -18417,7 +18690,14 @@ class Document {
                 } else {
                     activeSpace.anchor?.let { anchor -> decideTip(anchor) { tipOfChain(anchor, Evaluator()) } }
                 }
+            // the pick a ride's file states by key is in the terms of its all-zero copy: each copy reads it in its own
+            // (OP-32, slice 3)
+            val keyTape = tape?.takeIf { it.keyed }
             for (index in cells(plan.copies)) {
+                keyTape?.let { t ->
+                    t.shift = { k -> shiftKey(k, g, List(index.size) { 0 }, index) }
+                    t.rewindKeys()
+                }
                 val before = elements.toHashSet()
                 // a fresh pass per copy: a chained gesture resolves its base against what the copy before it
                 // just built, so this loop is the one place a cached pass would be looking at the wrong document
@@ -18438,6 +18718,7 @@ class Document {
                 if (scored.isEmpty()) scored = storedSigns(made)
                 perCopy[index] = made
             }
+            keyTape?.shift = null
         }
         // nothing built means the gesture had no effect at all: the caller falls back to applying it once.
         // Asked of what the copies *made* rather than of the journal, because a ride nested inside another one

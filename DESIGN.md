@@ -2413,7 +2413,7 @@ formats one must therefore be dimension-safe, and `Document.evalMm`/`scalarMm` n
 read at *draw* time, where the same fault would have thrown out of the renderer — which is what the user's own
 file, whose wall thickness is a dimensionless parameter, would eventually have done.
 
-### The document is a graph of features, not a journal (OP-32 — RESOLVED, slices 1 and 2 of 3 delivered session 89)
+### The document is a graph of features, not a journal (OP-32 — RESOLVED, slices 1, 2 and 3 delivered session 89)
 
 **The user's decision, verbatim:** *"It started with a simple 'recording of what has been done'. But this is not a
 valid solution for a construction tool. Construction must be edited and refactored. Doing this on a journal of
@@ -2506,7 +2506,8 @@ is, and nothing is hidden. A drawing with hidden elements states them once, as a
   themselves, so **shuffling a file is the same drawing and saves to the same bytes** (asserted over six
   shuffles of two drawings). Where creation order is *meaningful* and no reference states it — a dressing's
   entries (OP-30) and the vertices of a path — it is exactly this identity order, and slice 3 will have to state
-  each one explicitly before it can reorder anything. **Visibility is no longer one of them**: it is not in the
+  each one explicitly before it can reorder anything — **stated by slice 3** (`after`, see *(3d) Order without
+  accident*: an aggregate's touches in the order they were made, and nothing else). **Visibility is no longer one of them**: it is not in the
   build order at all (see *Decisions taken from what the user sees are recorded*, below).
   A reference nothing creates (`refusal.file.dangling`), an identity created twice (`refusal.file.duplicate`) and a
   reference cycle (`refusal.file.cycle`, naming the circle) are load errors that **name the feature**, in the
@@ -2578,8 +2579,9 @@ which is what kept the suite's hundreds of name-addressed fixtures valid unchang
 - ~~**Picks still stored as clicks** — `clicks` on every `tool` feature, `click` on `intersectnear`/`pointoncurve`,
   `cells` on an `orbit`.~~ — **slice 2, delivered in session 89**: see *Slice 2 — picks as meanings* below, whose
   inventory classifies every row (the 33 this scan named, and that the delegating rest read nothing).
-- **The editor still edits through its in-memory journal**: the graph is the file, the snapshot and the load order;
-  replacing an input, re-routing a dependent and delete-with-reroute are **slice 3**.
+- ~~**The editor still edits through its in-memory journal**: the graph is the file, the snapshot and the load order;
+  replacing an input, re-routing a dependent and delete-with-reroute are **slice 3**.~~ — **slice 3, delivered in
+  session 89**: both are edits of the graph followed by its load; see *Slice 3 — refactoring on the graph* below.
 - **An import's payload** (`mesh`, `path` of `import`/`importcurve`) stays its existing encoded text inside one JSON
   string: it is the geometry of a body that has no construction, not a construction, and typing it as JSON arrays
   is a separable change — queued with slice 2, and left out of it as not a pick (it keeps its own queue entry).
@@ -2656,6 +2658,11 @@ invalid body has not got, so the writer would fall back to the index exactly whe
 name would move under a topology change exactly where the index moves. What would really be more stable is a
 naming authority whose names survive a vertex inserted upstream; that is a property of the names, not of the file,
 and it is recorded below as a future extension rather than half-done here.
+
+> **Re-decided by slice 3 (session 89), each reason answered rather than overruled:** the address is now a
+> **provenance key** — an ordinal where a pair of faces meets more than once, decided when the pick is built and kept
+> on the step (so the writer needs no value), and every positional part of the structural name replaced by what
+> generated it (the curve a side face is swept from). See *Slice 3 — refactoring on the graph*, (3a).
 
 **Generic, per meaning kind — no case per tool.** The machinery that turns a pick into its meaning already existed
 and is now the only one: a build scores its choice from the click *once* and states it through the document's one
@@ -2886,11 +2893,12 @@ line had put beside this slice is left for its own: **typing an import's payload
 `import`/`importcurve`). It is not a pick — it is the geometry of a body that has no construction — and it is
 separable, so it keeps its own queue entry.
 
-**Future extension, recorded rather than claimed**: an address is index-stable under every *value* change and under
+~~**Future extension, recorded rather than claimed**: an address is index-stable under every *value* change and under
 every edit the dressing machinery already guards (OP-30's tombstones, OP-31's slots), but an upstream **topology**
 change — a vertex inserted into the profile an extrusion sweeps — renumbers the pieces, and with them the edges and
 faces. The file now says exactly what the pick was in the authority's own terms; making those terms survive an
-inserted vertex is the naming authority's next step, and slice 3's refactoring will meet it first.
+inserted vertex is the naming authority's next step, and slice 3's refactoring will meet it first.~~ — **delivered by
+slice 3** (format 13): see *(3a) Addresses by provenance* below.
 
 #### Implementation status (as built — slice 2, session 89)
 
@@ -2922,6 +2930,201 @@ read the new spelling (`addressed()` in `SavedFile.kt`: the address and the sign
 `clicks` in a hand-built feature). **3099 → 3111 tests** (12 new: `V11CorpusTest` 2, `PicksAsMeaningsTest` 10;
 3107 passed + 4 skipped with `-De2e=1`), all green, `ktlintCheck` and `jsBrowserDistribution` green;
 `assertManifold` on every solid the corpus and the probes build.
+
+#### Slice 3 — refactoring on the graph (as built, session 89)
+
+**The point of the first two slices, delivered.** Slice 1 made the file a graph whose references are identities;
+slice 2 made every pick in it a meaning. What the user asked for — *"Construction must be edited and refactored"* —
+needed two more things the file could not yet say, and then the operations themselves: (3a) an address that
+survives a change of topology, (3d) an order no identity decides, and (3b, 3c) replacing an input and deleting with
+the dependents rerouted. Format **13** (`DocumentFormat.KEY_VERSION`).
+
+##### (3a) Addresses by provenance — the naming scheme
+
+Slice 2 kept the edge's **index** as its address and recorded the stable name as a future extension, for three
+reasons: *"the pair does not name an edge uniquely … writing a name needs the body's value at save time, which an
+invalid body has not got … and `FaceName`/`EdgeName` are themselves positional, so a name would move under a
+topology change exactly where the index moves."* Each is answered, not overruled: an ordinal is appended where a
+pair repeats; the key is decided **when the pick is built** and kept on the step, so the writer never needs a value;
+and the positional parts of the structural names are replaced by what generated them. A **key**
+(`geom/Provenance.kt`) is a pure function of the feature:
+
+| what | key | e.g. |
+|---|---|---|
+| a side face swept from a profile piece | the **identity of the curve** the piece is a trim of, carried on the loop (`Loop.tags`) | `e11` |
+| an extrusion's caps / a revolution's ends | `top` `bottom` / `start` `end` | `top` |
+| a rounding's band along an edge | `band(<edge key>)` (`.k` for a profile's k-th band) | `band(e11|top)` |
+| a corner patch / a band's flat end | `corner(<edge keys, sorted>)` / `cap(<edge key>,start|end)` | `corner(e11|e9,e11|top)` |
+| a shell's inner wall | `inner(<face key>)` | `inner(top)` |
+| a general boolean's face | `a(<operand face key>)` / `b(…)` (`.k` for a piece) — the operands' keys ride on `BoolProvenance.operandKeys` | `b(e7)` |
+| **an edge** | the unordered pair of its two faces' keys, `^k` where the pair meets more than once | `e11|top`, `band(e11|top)|top` |
+| a repeated face key | `~k` | `e3~1` |
+| no generator to name | the position, marked `#` — a loft's band, a skin's strip, a slab of the prismatic algebra, a loop no curve of the drawing made | `loft#0.2`, `side#3` |
+
+The marks are distinct (`#` position, `~` face ordinal, `^` edge ordinal) so `Provenance.canonical` can take any key
+apart and put its unordered parts in order: a key stated in another spelling — identities renamed, a hand edit —
+resolves as the same edge. **Where the tags come from**: `Construction.loop` asks the editor for the identity of
+each part when it evaluates (an identity is handed out when the step is written); the ortho path's published loop,
+the boundary of a closed chain and the Outline tracer (each piece by the curve picked for it) state them; a
+reversal and an affine map carry them; anything that makes new pieces (a region boolean, a polygon ring) drops
+them, and its faces are positional — **the stated limit**, never a silent fallback.
+
+GitHub #36's first script in format 13:
+
+```json
+{
+  "format": "constructit",
+  "version": 13,
+  "nextId": {"e":17,"f":13},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"4 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},{"id":"f3","at":[61.875,15.375],"creates":["e4","e5"]},{"id":"f4","at":[61.875,0.375],"creates":["e6","e7"]},{"id":"f5","at":[-5.521648428788623,0.375],"creates":["e8","e9"]},{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"params":["f8"],"after":["f7"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"params":["f10"],"edge":"e11|top","signs":[-1,1,0,1],"slots":[{"entry":1,"kind":"rail","edges":["e11|e9","e11|top"],"piece":0},{"entry":1,"kind":"patch","edges":["e11|e9","e11|top"],"piece":0}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"params":["f10"],"edge":"e11|e9","signs":[-1,1,0,-1],"creates":["e16"]}
+  ]
+}
+```
+
+**Resolved where values are** (OP-3). The dressing's pass (`Construction.blendAll`, `BlendRun.keys`,
+`keyedCorners`), the mesh tier's blend (`addressKey`, `runKeys`), the shell (`openFaceKeys`), the projection onto a
+face (`faceKey`) and a face space's plane (`sideFacePlane(…, key)`) each take the keys and resolve them **when they
+evaluate**, against the body as it stands. So a vertex inserted upstream in the session — a break of a leg, which
+re-points the path's published loop without rebuilding anything downstream — leaves every rounding on its edge on
+the very next pass, and the file the session writes states the same keys. A key the body no longer has makes the
+node invalid naming it (`refusal.op.edgeGone` / `faceGone`: *this solid has no edge e11|e9 any more: a face it lay
+between is no longer made by anything*), and it heals the pass it resolves again — after an undo, or when the face
+comes back. A dressing's shared-slot record (OP-31) is kept by key too (`KeyedCornerSlots`); a slot naming an edge
+that is gone drops out, and the layout appends what it finds, as an unrecorded slot always did.
+
+**A face pick's boundary is a decision, stated.** A whole-face rounding records the edges it rounds (`runs`, by key)
+exactly as an edge pick records its tangent run (slice 1's `decideRun`): a face that later gains an edge keeps
+rounding the edges it was picked with, in the session and after a reload alike — re-deriving the boundary on load
+would have made the two disagree.
+
+**Rides** (OP-23). A ride states its pick once, in the terms of its **all-zero copy**; each copy reads it in its own
+(`Document.shiftKey`: every identity in the key that is a member of the ride's pattern moves to the member at that
+copy's index). The novel probe found two engine defects on the way, both cured generally: a ride is one step for
+every copy, so the boundary of a closed chain one step built gathered **every copy's pieces into one loop**
+(`Document.copyPiecesOf` takes the copy's own, where they close), and a re-stamp of a ride's own count mapped
+identities by position across copy blocks, so copy 1's first side took copy 0's last identity
+(`DocumentFormat.Restamp.kinds`: a ride whose own count changed keeps each copy's identities by role — the first
+element of the same former kind in the same copy). A load now gives an element the file could not name its fresh
+identity the moment it is made rather than at the end (`GraphFormat.freshIdentities` — the same numbers, in the same
+order), because a face swept from that element is named by it.
+
+**The migration is the old load itself.** A version-12 file (and every older one) hands its indices to the very
+builds that resolved them, in dependency order; each build reads the keys off the body it just resolved them on and
+states them; the re-save is by key. `V12CorpusTest` holds **38 files written by the build before this slice**
+(`src/jvmTest/resources/v12/`: the v11 corpus and the four journal fixtures re-saved, and #36's second script),
+each beside the drawing that build loaded: each loads as that drawing, re-saves with every pick by key, reloads as
+the same drawing and is a fixed point.
+
+**What stays an index, and why it is a limit and not a gap**: a **section input**'s `edge`/`corner` and a space
+origin's `corner` address the *section's* own curves and corners — on a face, that face's outline in its canonical
+rotation; through a body, one entry per face and edge — a different address space whose entries carry no
+generator; making them provenance names is recorded as a future extension. A body with no named faces at all (an
+imported mesh, a mesh-only boolean) has no address to state, and refuses the pick by name as it always did.
+
+##### (3b) Replace an input · (3c) delete, keeping the dependents
+
+Both are **edits of the graph the file is, followed by its load** (`editor/Refactor.kt`), never a journal rewritten
+and never a document patched in place: the editor saves, re-points one or more identities in the JSON, loads the
+result, adopts it and checkpoints — one undo step. Because a reference is an identity the edit is a string, and
+because a pick is a key the rebuilt feature asks *its new input* for the edge it names; where that input has none,
+the feature is invalid naming it — never re-picked by position.
+
+- **Replace an input** (`Editor.replaceInput`, `Refactor.replaceInput`). The inputs of the feature that made the
+  selection are its tool's slot picks, in slot order (`Refactor.inputs` — the mapping a ride reads its picks by);
+  the panel offers one *replace* button per input, and pressing one **arms the next click in the drawing**
+  (`Editor.beginReplaceInput`): the click is picked by that slot's own predicate (`Editor.slotAccepts`, which the
+  slot collector's pick filters also state), Esc disarms it and says so. Refused by name, changing nothing: an
+  element the slot does not take (*e3 cannot be the solid of f11: that input takes a solid*), the input it already
+  is, and **a circle** — the new input made by the feature or by anything built from it (*e14 is built from what f11
+  makes, so it cannot be its input*).
+- **Delete, keeping the dependents** (`Editor.deleteSelectionRerouting`, Shift+Delete, *Delete, keep dependents*
+  beside the selection's Hide and Show in the panel — not in the top bar, whose width the status line needs: the
+  first place it went wrapped the bar under a long status and moved the canvas under the E2E's clicks). Every reference to what the feature made is re-pointed to the first of its inputs of the same kind
+  (and, for a tool's slot, one the slot takes); refused by name where a reader has nothing to take instead (*f9
+  cannot be deleted with its dependents rerouted: f11 reads e13 as a solid, and none of the inputs of f9 can take
+  its place*) or reads a value the feature computed. Offered **beside** the delete that cascades, never in its place.
+  Two shapes of OP-30 decide themselves: a **rounding** (a dressing's entry) is taken off its body as the ordinary
+  delete does — its slot stays, nothing read it to be rerouted; a **dressed body** goes with its roundings, which
+  are lines of it and not readers (rerouting each onto the base would fork one part into as many bodies as it had
+  roundings).
+- **The rebuild of what the edit touched** (`GraphFormat.Refactor`). A touched feature is built as a gesture would
+  build it now — whether a rounding joins the dressing of the body it now names or makes a body of its own — on the
+  very body the edit named (no chain tip is looked for: the user said which), so it may make more or fewer elements
+  than it declared: each declared identity stays with the element of its own former kind, the rest take fresh ones,
+  and an identity left over refuses the edit by name where anything still reads it (`refusal.refactor.lost`).
+
+GitHub #36, refactored three ways in a row (`RefactorTest`): a vertex inserted into the outline — both roundings
+stay on `e11|top` and `e11|e9`, taking exactly the material they took; the first fillet deleted keeping the second —
+the dressing rounds `e11|e9` alone; the second fillet's body input replaced by the extrusion — it makes its own body
+on `e13` and rounds the edge it named. Each builds manifold, round-trips, and one undo is the previous file to the
+byte.
+
+##### (3d) Order without accident
+
+Slice 1 recorded that *"where creation order is meaningful and no reference states it — a dressing's entries
+(OP-30) and the vertices of a path — it is exactly this identity order, and slice 3 will have to state each one
+explicitly before it can reorder anything."* The probe that proves it renames every identity of a file by a random
+bijection (`OrderWithoutAccidentTest`: 38 drawings × 3 renamings, keys and names and the view renamed with them) —
+and before this part **43 of the 114** renamed files did not load to the same drawing: most of them an extrusion (a
+revolve, a loft) built before its path was closed, the rest a dressing or a sketch space on a dressed body built
+before the roundings it was made after, and a key spelled in the renamed identities in another order (which
+`Provenance.canonical` answers). What it found is broader than the two the note named, and it is one thing: an
+**aggregate** that several features build and change in place.
+
+- **A path**: an extrusion over a closed path reads the path *as closed*, which no reference of it says (the
+  extrude names one leg); a weld onto an end vertex needs that vertex to be the end still; a 2D rounding of one of
+  its corners changes the loop every later reader sees.
+- **A dressed body**: its roundings join in the order that is its slot layout, and a reader of it (a sketch space on
+  one of its band faces) reads it with the entries made before it.
+
+So every feature that touches an aggregate states that it follows the one that touched it last (`"after": ["f7"]`),
+wherever nothing it reads says so already (`GraphFormat.orderEdges`) — exactly the session's interleaving, and no
+more: #36's extrusion follows its path's close, and nothing else in that file needs an edge. The reader treats
+`after` as a dependency (a dangling one is the load error a dangling reference is); a refactoring that drops a
+feature passes its `after` on to whoever followed it. After it, every renamed file loads to the same drawing.
+
+#### Implementation status (as built — slice 3, session 89)
+
+`DocumentFormat.VERSION = KEY_VERSION = 13`. **geom**: `Provenance` (`Names`, `faceKeys`, `edgeKeys`,
+`canonical`, `KeyedSlot`, `KeyedCornerSlots`), `Loop.tags` (carried by `reverseLoop` and `transform`),
+`BoolProvenance.operandKeys`. **dsl**: `loop(…, tags)`, `BlendRun.keys`, `blendAll(…, keyedCorners)`,
+`blend(…, addressKey, runKeys)`, `shell(…, openFaceKeys)`, `projectedOntoFace(…, faceKey)`,
+`sideFacePlane(…, key)` — each resolving at evaluation time. **editor**: `Document` — `Step.addressKey`/`runKeys`,
+`Tape` (keys, rides' `shift`, canonical spelling), `noteAddressKeys`, `shiftKey`, `DressEntry.keys`,
+`Dressing.cornerKeys`, `statedSlots`, `keyedSlots`, `refactoring`, `copyPiecesOf`, `tagsOf`; `GraphFormat` — keys
+written and read (`addressKeyOf`, `slotTable`), `orderEdges`/`after`, `Refactor` (the tolerant rebuild,
+`adoptIdentities`), `freshIdentities`, `adoptByRole`; `Refactor.kt` (new); `Editor` — `replaceableInputs`,
+`beginReplaceInput`, `replaceInput`, `deleteSelectionRerouting`, `slotAccepts`, the armed click and its Esc;
+`Main.kt`/`index.html` — the inspector's *replace* row, the panel's *Delete, keep dependents*, Shift+Delete.
+New keys: `refusal.op.edgeGone`, `refusal.op.faceGone`, `refusal.refactor.lost`, eleven `status.refactor.*`,
+`ui.deleteReroute(.title)`, `ui.inspector.replace(.title)` — **English only; German and French are owed to the next
+`translateArb`**.
+
+Tests: `ProvenanceAddressTest` (#36 verbatim: a vertex inserted upstream leaves both roundings on their edges in the
+session and in the file, removing exactly the material they removed; vertices taken out again and the path
+re-closed, likewise; a leg the rounding runs along broken, so its face is gone — invalid naming `e11|e9`, saved and
+reloaded the same, healed by undo; a face space on the face of leg `e11` stays on it), `ProvenanceAddressProbeTest`
+(the novel composition: a fillet riding a ring of three extruded squares, the polygon ride re-stamped from four
+sides to five — every copy rounds the rim over the same side of its own polygon, by name, in the session and the
+reload, one undo back), `RefactorTest` (#36 three ways; deleting a dressed body that a union reads; a circle and a
+wrong kind refused, changing nothing; the replacement picked by a click in the drawing, Esc disarming; a reroute
+with nothing to take refused by name), `V12CorpusTest`, `OrderWithoutAccidentTest`, and the browser
+(`BrowserE2ETest.refactoringInBrowser`: #36 opened, its dressed body deleted keeping the dependents from the
+panel, Ctrl+Z, the inspector's *replace* armed and Esc'd). Ten test files read the new spelling (`addressed(doc)`,
+`addressKey()`, `slotRecords(doc)` in `SavedFile.kt`: the index the build resolved, the key the file states).
+**3112 → 3125 tests** (13 new: `ProvenanceAddressTest` 4, `ProvenanceAddressProbeTest` 1, `RefactorTest` 5,
+`V12CorpusTest` 1, `OrderWithoutAccidentTest` 1, `BrowserE2ETest` 1; 3121 passed + 4 skipped with `-De2e=1`), all
+green, `ktlintCheck` and `jsBrowserDistribution` green; `assertManifold` on every solid the corpora and the probes
+build. The suite's wall time is unchanged within its noise (the keys are resolved once per pass of each addressed
+node, against lists the pass reads anyway).
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -15812,6 +16015,25 @@ the composition table is driven generically as well as by its own test.
   version-11 files from the build before this slice are now permanent cross-build fixtures, each beside the
   drawing that build loaded. 3099 → 3111 tests, all green.
 
+
+- **Turn 117 — the construction is refactored on its graph** (OP-32, slice 3; session 89). The user's goal, the
+  reason for the whole OP: *"Construction must be edited and refactored."* Three things were missing, and one of
+  them was a premise. **An address that survives a change of topology**: slice 2 kept the index and recorded a
+  stable name as future work; format **13** names a face by what generated it — the curve a side face is swept from
+  (`e11`), `top`, `band(e11|top)` — and an edge by the pair of faces it lies between (`e11|top`), resolved by the
+  node that consumes it **when it evaluates**, so a vertex inserted upstream in the session, which re-points a
+  path's loop without rebuilding anything, leaves #36's two roundings on their edges taking exactly what they took;
+  where a face is gone the rounding is invalid naming the edge, and undo heals it. **The operations**: replace an
+  input (the panel arms the next click, picked by the slot's own predicate; a circle and a wrong kind refused by
+  name) and delete-keeping-dependents (Shift+Delete), both as an edit of the graph followed by its load — one undo
+  step, a rounding moved onto another body asking it for the edge it names. **Order without accident**: renaming
+  every identity of a file by a random bijection broke 43 of 114 loads, nearly all of them an extrusion built before
+  its path was closed — no reference says an area needs the close. The cure is one rule for both aggregates (a
+  path, a dressed body): each touch states the one before it (`after`). A novel probe — a fillet riding a ring of
+  polygon prisms, the polygon ride re-stamped from four sides to five — found two engine defects on the way, cured
+  generally: the boundary of a ride's closed chain gathered every copy into one loop, and a ride's re-stamp moved
+  identities across copies. Section inputs stay positional, recorded as the next extension. 3112 → 3125 tests, all green.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -26222,10 +26444,15 @@ feature still stores its gesture's `clicks` (and `intersectnear`/`pointoncurve` 
 no click in any file, every row classified, the migration the old load itself; see OP-32's *Slice 2* and Turn 116.
 **Still open beside it, cut from (2) as not a pick: an import's payload typed as JSON arrays** (`mesh`, `path` of
 `import`/`importcurve`, today one Base64 string each — a separable format change with its own version bump).
-**(3) Graph refactoring in the editor**: replace an input of a feature, reroute a dependent onto
+~~**(3) Graph refactoring in the editor**: replace an input of a feature, reroute a dependent onto
 another element, delete-with-reroute instead of delete-with-cascade — on the graph rather than on the in-memory
 journal, which this slice makes possible and does not yet do. Its precondition: every place creation order is
-meaningful without a reference (a dressing's entry order, a path's vertices) stated as an explicit edge, so that reordering is a graph edit and not an accident of identity.
+meaningful without a reference (a dressing's entry order, a path's vertices) stated as an explicit edge, so that reordering is a graph edit and not an accident of identity.~~ — **delivered in session 89** as format 13: picks
+by provenance key (an edge as the pair of faces it lies between, each face by the curve it is swept from), resolved
+at evaluation time; replace an input and delete-keeping-dependents as edits of the graph followed by its load, one
+undo each; and `after` stating the order of every aggregate's touches. See OP-32's *Slice 3* and Turn 117.
+**Left as a future extension by it**: a section input's `edge`/`corner` and a space origin's `corner` still address
+the section's own curves by position (a different address space, whose entries carry no generator).
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
 refused by name, 117 in a residue of four named classes, which is now the specification items (2) and (3) are

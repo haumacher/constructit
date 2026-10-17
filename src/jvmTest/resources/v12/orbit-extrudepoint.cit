@@ -1,0 +1,16 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":18,"f":8},
+  "parameters": [
+    {"id":"f4","name":"radius","value":"10 mm"},
+    {"id":"f6","name":"height","value":"30 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[60,0],"creates":["e2"]},
+    {"id":"f3","kind":"pattern","name":"P1","shape":"circular","ref":"e2","centre":"e1","count":4,"creates":["e3","e4","e5"]},
+    {"id":"f5","kind":"orbit","pattern":"f3","tool":"circleR","pts":[{"el":"e2","at":[0]}],"params":["f4"],"creates":["e6","e7","e8","e9"]},
+    {"id":"f7","kind":"orbit","pattern":"f3","tool":"extrudepoint","pts":[{"el":"e2","at":[0]}],"els":[{"el":"e6","at":[0]}],"params":["f6"],"signs":[0,0],"creates":["e10","e11","e12","e13","e14","e15","e16","e17"]}
+  ]
+}

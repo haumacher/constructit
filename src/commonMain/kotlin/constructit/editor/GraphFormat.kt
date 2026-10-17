@@ -6,6 +6,8 @@ import constructit.expr.refNames
 import constructit.geom.CornerSlot
 import constructit.geom.CornerSlotKind
 import constructit.geom.CornerSlots
+import constructit.geom.KeyedCornerSlots
+import constructit.geom.KeyedSlot
 import constructit.l10n.Messages
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -158,6 +160,9 @@ internal object GraphFormat {
             "wall" to listOf(p("thickness", T.SC), p("justify", T.TEXT)),
         )
 
+    /** The steps that are parts of a path: its start, its vertices, its close or discard (OP-32). */
+    private val PATH_PARTS = setOf("orthostart", "orthovertex", "orthoprepend", "orthoclose", "orthodiscard")
+
     // ---- writing ----
 
     fun write(doc: Document): String = layout(Writer(doc).root())
@@ -173,6 +178,58 @@ internal object GraphFormat {
         val spaceIds = HashMap<String, Int>()
         val patternIds = HashMap<String, Int>()
         val macroIds = HashMap<String, Int>()
+
+        /**
+         * **Order that no reference states, stated** (OP-32, slice 3): the features each step must follow although
+         * it names nothing of theirs — written as `after`, so the order a load builds in is decided by the file and
+         * never by the identities' own order. See [orderEdges].
+         */
+        val after: Map<Step, Set<Int>> by lazy { orderEdges() }
+
+        /**
+         * The two places creation order means something without a reference (OP-32, slice 3d) — both of them an
+         * **aggregate** that several features build and change in place:
+         *
+         * - **a path**: an area over a closed path needs the close, a weld onto an end vertex needs that vertex
+         *   to be the end still, a rounding of one of its corners changes the loop every later reader of it sees;
+         * - **a dressed body** (OP-30): its roundings are entries in the order they were made, and that order is
+         *   its slot layout — and a reader of the body (a sketch space on one of its faces) reads it with the
+         *   entries made before it.
+         *
+         * So every feature that touches an aggregate states that it follows the feature that touched it last, where
+         * nothing it reads says so already: exactly the interleaving the session had, and no more.
+         */
+        fun orderEdges(): Map<Step, Set<Int>> {
+            val out = HashMap<Step, MutableSet<Int>>()
+            // an aggregate is built and changed by several features: a path (its start, vertices and close, and
+            // whatever rounds a corner of it, breaks or joins a leg of it), or a dressed body (the rounding that
+            // made it, and every rounding that joined it). Every feature that touches one follows the one that
+            // touched it before — where nothing it reads says so already
+            val lastTouch = HashMap<Any, Step>()
+            for (step in doc.journal) {
+                if (step.fid == 0 || step.kind in DocumentFormat.UNNUMBERED) continue
+                val reads = doc.referencedElements(step)
+                val touched = LinkedHashSet<Any>()
+                step.path?.let { touched.add(it) }
+                step.creates.firstOrNull { doc.dressingOf(it) != null }?.let { touched.add(it) }
+                for (e in reads) {
+                    doc.creatingStep(e)?.path?.let { touched.add(it) }
+                    if (doc.dressingOf(e) != null) touched.add(e)
+                }
+                for (a in touched) {
+                    val prev = lastTouch[a]
+                    val implied =
+                        prev == null || prev === step || reads.any { r -> prev.creates.any { it === r } } ||
+                            // a path's own parts follow one another in the file's own list
+                            (step.kind in PATH_PARTS && prev.kind in PATH_PARTS && step.path === prev.path)
+                    if (!implied) out.getOrPut(step) { LinkedHashSet() }.add(prev!!.fid)
+                    lastTouch[a] = step
+                }
+            }
+            return out
+        }
+
+        fun afterOf(step: Step): JsonArray? = after[step]?.filter { it != step.fid }?.sorted()?.takeIf { it.isNotEmpty() }?.let { JsonArray(it.map { f -> fid(f) }) }
 
         init {
             for (s in doc.journal) {
@@ -278,6 +335,7 @@ internal object GraphFormat {
                         if (here != (paths[path]?.get("space"))) v["space"] = here ?: JsonNull
                         v["at"] = pos((args[0] as Arg.Pos).p)
                         if (step.kind == "orthoprepend") v["prepend"] = JsonPrimitive(true)
+                        afterOf(step)?.let { v["after"] = it }
                         v["creates"] = JsonArray(step.creates.map { el(it) })
                         (pathVertices[path] ?: error("a vertex of a path no step started")).add(JsonObject(v))
                     }
@@ -285,6 +343,7 @@ internal object GraphFormat {
                         val path = step.path ?: error("an ortho close with no path")
                         val m = paths[path] ?: error("a close of a path no step started")
                         val c = linkedMapOf<String, JsonElement>("id" to fid(step.fid))
+                        afterOf(step)?.let { c["after"] = it }
                         if (step.creates.isNotEmpty()) c["creates"] = JsonArray(step.creates.map { el(it) })
                         m[if (step.kind == "orthoclose") "close" else "discard"] = JsonObject(c)
                     }
@@ -383,10 +442,20 @@ internal object GraphFormat {
             // fields that carried the gesture's positions are read from an older file and never written again
             for (f in schema) if (!f.legacy) values[f]?.let { put(m, f, it) }
             addressed(m, step)
+            // a face space's face **by name** (OP-32, slice 3), where the build stated one
+            if (step.kind == "sketchspace" && m.containsKey("piece")) step.addressKey?.let { m["piece"] = JsonPrimitive(it) }
             // the decisions its build took from what the user sees, in the order taken (OP-32): `null` where the
             // decision was the picked body itself, or the picked edge alone — and nothing at all where every one was
             if (step.tips.any { it != null }) m["tips"] = JsonArray(step.tips.map { t -> t?.let { el(it) } ?: JsonNull })
-            if (step.runs.any { it != null }) m["runs"] = JsonArray(step.runs.map { r -> r?.let { JsonArray(it.map { i -> JsonPrimitive(i) }) } ?: JsonNull })
+            // …by name where the build stated one (OP-32, slice 3): the edges a run rounds, as their provenance keys
+            if (step.runKeys.any { it != null }) {
+                m["runs"] = JsonArray(step.runKeys.map { r -> r?.let { JsonArray(it.map { k -> JsonPrimitive(k) }) } ?: JsonNull })
+            } else if (step.runs.any { it != null }) {
+                m["runs"] = JsonArray(step.runs.map { r -> r?.let { JsonArray(it.map { i -> JsonPrimitive(i) }) } ?: JsonNull })
+            }
+            // …and the shared-slot record by name too, where the dressing states it so
+            doc.dressingKeyedSlotsOf(step)?.let { if (m.containsKey("slots")) m["slots"] = keyedSlots(it) }
+            afterOf(step)?.let { m["after"] = it }
             if (step.creates.isNotEmpty()) m["creates"] = JsonArray(step.creates.map { el(it) })
             if (step.createsScalars.isNotEmpty()) m["scalars"] = JsonArray(step.createsScalars.map { sc(it) })
             return m
@@ -409,7 +478,9 @@ internal object GraphFormat {
             val out = LinkedHashMap<String, JsonElement>()
             for ((k, v) in m) {
                 if (k == "signs") {
-                    out[address.name.lowercase()] = signs[0]
+                    // the pick **by name** where the build stated one (OP-32, slice 3) — a string, told from an index
+                    // by its JSON type, so a file can hold both and a reader never guesses which it is reading
+                    out[address.name.lowercase()] = step.addressKey?.let { JsonPrimitive(it) } ?: signs[0]
                     if (signs.size > 1) out[k] = JsonArray(signs.drop(1))
                 } else {
                     out[k] = v
@@ -418,6 +489,26 @@ internal object GraphFormat {
             check(step.kind == "tool" || step.kind == "orbit") { "an address on a '${step.kind}' feature" }
             m.clear()
             m.putAll(out)
+        }
+
+        /** A keyed slot record as the file states it — the index form's layout, every edge by its key. */
+        fun keyedSlots(k: KeyedCornerSlots): JsonArray {
+            val out = ArrayList<JsonElement>()
+
+            fun one(
+                entry: Int,
+                s: KeyedSlot,
+            ) = JsonObject(
+                linkedMapOf(
+                    "entry" to JsonPrimitive(entry),
+                    "kind" to JsonPrimitive(s.kind.name.lowercase()),
+                    "edges" to JsonArray(s.edges.map { JsonPrimitive(it) }),
+                    "piece" to JsonPrimitive(s.piece),
+                ),
+            )
+            for ((entry, block) in k.edges.withIndex()) for (s in block) out.add(one(entry, s))
+            for ((entry, block) in k.faces.withIndex()) for (s in block) out.add(one(entry, s))
+            return JsonArray(out)
         }
 
         fun put(
@@ -588,6 +679,7 @@ internal object GraphFormat {
     fun read(
         text: String,
         restamp: DocumentFormat.Restamp?,
+        refactor: Refactor? = null,
     ): Pair<Document, List<String>> {
         val root =
             try {
@@ -601,8 +693,23 @@ internal object GraphFormat {
             throw DocumentFormat.LoadError(Messages.refusalFileNewer(version = version, max = DocumentFormat.VERSION))
         }
         if (version < DocumentFormat.GRAPH_VERSION) throw DocumentFormat.LoadError(Messages.refusalFileNotDrawing())
-        return Reader(root, version, restamp).run()
+        return Reader(root, version, restamp, refactor).run()
     }
+
+    /**
+     * **The reload of a graph edit** (OP-32, slice 3): the features an edit of the graph [touched] — an input
+     * replaced, a dependent rerouted — are built **as a gesture would build them now**, deciding afresh what
+     * their inputs make of them (whether a rounding joins a dressing or makes a body) and working on the very
+     * body the edit named (no chain tip is looked for — the user said which), so they may create a different
+     * number of elements than the file declares. Each identity a touched
+     * feature declared stays with the element of the same kind it made ([kinds], the identities' kinds before
+     * the edit); an element no declared identity matches takes a fresh one, and an identity left over is gone —
+     * which refuses the edit by name where anything still reads it.
+     */
+    class Refactor(
+        val touched: Set<Int>,
+        val kinds: Map<String, ElementKind>,
+    )
 
     /** One replay part — a feature, or one part of a folded one that keeps an identity of its own. */
     private class Part(
@@ -630,12 +737,16 @@ internal object GraphFormat {
         /** The decisions the feature states (OP-32): tips by identity, runs by edge address. */
         val tips: List<String?> = emptyList(),
         val runs: List<List<Int>?> = emptyList(),
+        /** What the feature's pick names **by key** (OP-32, slice 3): its address, its runs, its slot record's key table. */
+        val addressKey: String? = null,
+        val runKeys: List<List<String>?> = emptyList(),
+        val slotKeys: List<String>? = null,
     ) {
         /** Further parts to follow, found once every part is known — a wall's last vertex. */
         val later = ArrayList<Int>()
     }
 
-    private class Reader(val root: JsonObject, val version: Int, val restamp: DocumentFormat.Restamp?) {
+    private class Reader(val root: JsonObject, val version: Int, val restamp: DocumentFormat.Restamp?, val refactor: Refactor? = null) {
         val doc = Document()
         val parts = ArrayList<Part>()
 
@@ -795,21 +906,74 @@ internal object GraphFormat {
                     val schema = SCHEMA[kind] ?: malformed(label, "'$kind' is no kind of feature this build knows")
                     val names = schema.filter { it.expr }.flatMap { f -> exprTexts(f, o[f.json]) }.flatMap { exprNames(it) }
                     val tips = (o["tips"] as? JsonArray)?.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content } ?: emptyList()
+                    // a run states its edges by key from [DocumentFormat.KEY_VERSION] on, and by index before it — the
+                    // JSON type says which, and one run may not mix them (OP-32, slice 3)
+                    val runArrays = (o["runs"] as? JsonArray)?.map { it as? JsonArray } ?: emptyList()
+                    val keyedRuns = version >= DocumentFormat.KEY_VERSION && runArrays.any { r -> r?.any { (it as? JsonPrimitive)?.isString == true } == true }
                     val runs =
-                        (o["runs"] as? JsonArray)?.map { r ->
-                            (r as? JsonArray)?.map { (it as? JsonPrimitive)?.intOrNull ?: malformed(label, "a run is a list of edge addresses") }
-                        } ?: emptyList()
+                        if (keyedRuns) {
+                            emptyList()
+                        } else {
+                            runArrays.map { r -> r?.map { (it as? JsonPrimitive)?.intOrNull ?: malformed(label, "a run is a list of edge addresses") } }
+                        }
+                    val runKeys =
+                        if (!keyedRuns) {
+                            emptyList()
+                        } else {
+                            runArrays.map { r -> r?.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content ?: malformed(label, "a run is a list of edge keys") } }
+                        }
                     parts.add(
                         Part(
                             id, label, o, true, space, strings(o["creates"]), strings(o["scalars"]).map { idOf(JsonPrimitive(it), label) },
-                            refsOf(o, schema, label) + tips.filterNotNull(), names, emptyList(),
+                            refsOf(o, schema, label) + tips.filterNotNull(), names, afterOf(o, label),
                             words = { r -> r.wordsOf(kind, o, schema) },
                             tips = tips,
                             runs = runs,
+                            addressKey = addressKeyOf(kind, o, label),
+                            runKeys = runKeys,
+                            slotKeys = (o["slots"] as? JsonArray)?.let { slotTable(it) },
                         ),
                     )
                 }
             }
+        }
+
+        /** The features [o] states it follows although it reads nothing of theirs (`after`, OP-32 slice 3). */
+        fun afterOf(
+            o: JsonObject,
+            label: String,
+        ): List<Int> = (o["after"] as? JsonArray)?.map { idOf(it, label) } ?: emptyList()
+
+        /** The address a feature states **by key** — a string `edge`/`face` (OP-32, slice 3) — or null. */
+        fun addressKeyOf(
+            kind: String,
+            o: JsonObject,
+            label: String,
+        ): String? {
+            if (kind != "tool" && kind != "orbit" && kind != "sketchspace") return null
+            val v =
+                (if (kind == "sketchspace") o["piece"] as? JsonPrimitive else PickAddress.entries.firstNotNullOfOrNull { o[it.name.lowercase()] as? JsonPrimitive })
+                    ?: return null
+            if (!v.isString) return null
+            if (version < DocumentFormat.KEY_VERSION) malformed(label, "an address by key needs version ${DocumentFormat.KEY_VERSION}")
+            return v.content
+        }
+
+        /**
+         * A slot record's **key table** (OP-32, slice 3): every edge key it states, once, in order of appearance —
+         * null where it states indices. The words hand the replay engine indices into this table, and the build
+         * resolves them against the body as it stands ([Document.Tape.slotKeys]).
+         */
+        fun slotTable(v: JsonArray): List<String>? {
+            val out = LinkedHashSet<String>()
+            for (item in v) {
+                for (e in (item as? JsonObject)?.get("edges") as? JsonArray ?: continue) {
+                    val p = e as? JsonPrimitive ?: continue
+                    if (!p.isString) return null
+                    out.add(p.content)
+                }
+            }
+            return out.toList().takeIf { it.isNotEmpty() && version >= DocumentFormat.KEY_VERSION }
         }
 
         /**
@@ -836,7 +1000,7 @@ internal object GraphFormat {
                 parts.add(
                     Part(
                         vid, "f$vid ($label)", o, true, if (vo.containsKey("space")) spaceOf(vo, label) else space, strings(vo["creates"]),
-                        emptyList(), emptyList(), emptyList(), listOf(prev),
+                        emptyList(), emptyList(), emptyList(), listOf(prev) + afterOf(vo, label),
                         words = { r -> listOf(word, r.posWord(vat)) },
                         before = { r -> r.doc.currentOrthoPath = r.pathById[id] },
                     ),
@@ -850,7 +1014,7 @@ internal object GraphFormat {
                 val word = if (end == "close") "orthoclose" else "orthodiscard"
                 parts.add(
                     Part(
-                        eid, "f$eid ($label $end)", o, true, space, strings(eo["creates"]), emptyList(), emptyList(), emptyList(), listOf(prev),
+                        eid, "f$eid ($label $end)", o, true, space, strings(eo["creates"]), emptyList(), emptyList(), emptyList(), listOf(prev) + afterOf(eo, label),
                         words = { listOf(word) },
                         before = { r -> r.doc.currentOrthoPath = r.pathById[id] },
                     ),
@@ -976,13 +1140,15 @@ internal object GraphFormat {
             }
 
         fun slotsWord(v: JsonElement): String {
+            val table = slotTable(v as JsonArray)
             val edges = HashMap<Int, MutableList<CornerSlot>>()
             val faces = HashMap<Int, MutableList<CornerSlot>>()
             for (item in v as JsonArray) {
                 val o = item as JsonObject
                 val k = content(o["entry"]!!).toInt()
                 val kind = CornerSlotKind.valueOf(content(o["kind"]!!).uppercase())
-                val slot = CornerSlot(kind, strings(o["edges"]).map { it.toInt() }, content(o["piece"]!!).toInt())
+                // an edge by key stands for its place in the record's key table (OP-32, slice 3)
+                val slot = CornerSlot(kind, strings(o["edges"]).map { e -> e.toIntOrNull() ?: table?.indexOf(e) ?: -1 }, content(o["piece"]!!).toInt())
                 (if (kind == CornerSlotKind.PATCH) faces else edges).getOrPut(k) { ArrayList() }.add(slot)
             }
             val n = ((edges.keys + faces.keys).maxOrNull() ?: -1) + 1
@@ -1004,6 +1170,8 @@ internal object GraphFormat {
                     continue
                 }
                 var v = o[f.json] ?: continue
+                // a face space's face by key travels on the tape; its word holds a 0 the build does not read
+                if (kind == "sketchspace" && f.json == "piece" && (v as? JsonPrimitive)?.isString == true) v = JsonPrimitive(0)
                 // a field that carried the gesture's **position** is read from a file that still states it and
                 // from no other: a file of this version states what the click meant instead, and one that states
                 // a click as well is not one this build wrote (OP-18 — a load may not guess which of the two wins)
@@ -1039,6 +1207,9 @@ internal object GraphFormat {
                 throw DocumentFormat.LoadError(Messages.refusalFileAddress(field = one.name.lowercase(), tool = id ?: "?"))
             }
             val v = o[one.name.lowercase()] as? JsonPrimitive
+            // an address by key travels on the tape ([Part.addressKey]); its place among the choices holds a 0 the
+            // build does not read (OP-32, slice 3)
+            if (v != null && v.isString && version >= DocumentFormat.KEY_VERSION) return "0"
             return v?.intOrNull?.toString() ?: throw DocumentFormat.LoadError(Messages.refusalFileAddress(field = one.name.lowercase(), tool = id ?: "?"))
         }
 
@@ -1096,6 +1267,7 @@ internal object GraphFormat {
                     if (c != u.id) d.add(c)
                 }
                 for (n in u.names) nameGiver[n.substringBefore('.')]?.let { if (it != u.id) d.add(it) }
+                for (a in u.after) if (a !in byId) throw DocumentFormat.LoadError(Messages.refusalFileDangling(feature = u.label, ref = "f$a"))
                 d.addAll(u.after)
                 d.addAll(u.later)
                 if (u.placed && u.space != null) creator["f${u.space}"]?.let { if (it != u.id) d.add(it) }
@@ -1159,7 +1331,7 @@ internal object GraphFormat {
             }
             u.before(this)
             // the decisions the feature states, read back by its build instead of being taken again (OP-32)
-            doc.tape = Document.Tape(u.tips.map { t -> t?.let { byName[it] } }, u.runs)
+            doc.tape = Document.Tape(u.tips.map { t -> t?.let { byName[it] } }, u.runs, u.addressKey, u.runKeys, u.slotKeys)
             val words =
                 try {
                     u.words(this)
@@ -1173,33 +1345,136 @@ internal object GraphFormat {
             doc.featureCounter = u.id - 1
             u.declared.firstOrNull()?.removePrefix("e")?.toIntOrNull()?.let { doc.elementCounter = it - 1 }
             val journalBefore = doc.journal.size
+            // a feature a graph edit touched decides its structure as a gesture does (OP-32, slice 3)
+            val touched = refactor?.touched?.contains(u.id) == true
+            doc.refactoring = touched
             val created =
-                DocumentFormat.runRow(
-                    doc,
-                    words,
-                    u.declared.size,
-                    byName,
-                    restamp,
-                    where = { why -> Messages.refusalFileInFeature(feature = u.label, why = why) },
-                    countError = { n -> Messages.refusalFileCount(feature = u.label, created = n, declared = u.declared.size) },
-                ).also { doc.tape = null } ?: return
+                try {
+                    DocumentFormat.runRow(
+                        doc,
+                        words,
+                        u.declared.size,
+                        byName,
+                        restamp,
+                        where = { why -> Messages.refusalFileInFeature(feature = u.label, why = why) },
+                        countError = { n -> Messages.refusalFileCount(feature = u.label, created = n, declared = u.declared.size) },
+                        elastic = touched,
+                    ).also { doc.tape = null } ?: return
+                } finally {
+                    doc.refactoring = false
+                }
             val step = doc.journal.drop(journalBefore).lastOrNull { it.kind !in DocumentFormat.UNNUMBERED }
             step?.fid = u.id
             if (step?.kind == "orthostart") step.path?.let { pathById[u.id] = it }
+            if (touched) {
+                adoptIdentities(u, created)
+                freshIdentities(created)
+                return
+            }
             // positional, so an identity keeps meaning the same *copy*: what a bigger count adds takes a fresh
             // identity at the end, and what a smaller one removes leaves its identity unmapped for the drop rule
             val elastic = restamp?.resized == true
             val shift = if (elastic && restamp?.alignFromEnd == true) created.size - u.declared.size else 0
             created.forEach { it.serial = 0 }
-            u.declared.forEachIndexed { i, n ->
-                created.getOrNull(i + shift)?.let { el ->
-                    el.serial = n.removePrefix("e").toIntOrNull() ?: 0
-                    byName[n] = el
-                    if (n in hidden) el.visible = false
-                    userNames[n]?.let { doc.nameElement(el, it) }
-                    materials[n]?.let { m -> doc.setMaterial(el, appearance(m)) }
+
+            fun adopt(
+                n: String,
+                el: Element,
+            ) {
+                el.serial = n.removePrefix("e").toIntOrNull() ?: 0
+                byName[n] = el
+                if (n in hidden) el.visible = false
+                userNames[n]?.let { doc.nameElement(el, it) }
+                materials[n]?.let { m -> doc.setMaterial(el, appearance(m)) }
+            }
+            // …except a ride whose **own** count the re-stamp changed: its copies keep their number and each
+            // grows or shrinks, so an identity keeps meaning the same copy *and the same role in it* — copy k's
+            // first side stays its first side (OP-32 slice 3: a face named by the side it was swept from)
+            val byRole = elastic && restamp?.step == u.id && restamp.kinds != null && adoptByRole(u, created, step) { n, el -> adopt(n, el) }
+            if (!byRole) u.declared.forEachIndexed { i, n -> created.getOrNull(i + shift)?.let { el -> adopt(n, el) } }
+            freshIdentities(created)
+            val scalars = step?.createsScalars.orEmpty()
+            scalars.forEach { it.serial = 0 }
+            u.declaredScalars.forEachIndexed { i, sid ->
+                scalars.getOrNull(i)?.let {
+                    it.serial = sid
+                    scalarById[sid] = it
                 }
             }
+        }
+
+        /** The next identity no element of the file has — handed out the moment an element without one is made. */
+        var fresh: Int = ((root["nextId"] as? JsonObject)?.get("e") as? JsonPrimitive)?.intOrNull?.minus(1) ?: 0
+
+        /**
+         * An identity for every element [created] made that the file could not name, **now** rather than at the
+         * end of the load (OP-32, slice 3): a later feature may already read it by name — a face swept from a curve
+         * a re-stamp added is named by that curve — and an element with no identity yet has no name to be read by.
+         * The same numbers the end of the load would give, in the same order.
+         */
+        fun freshIdentities(created: List<Element>) {
+            fresh = maxOf(fresh, doc.journal.maxOfOrNull { s -> s.creates.maxOfOrNull { it.serial } ?: 0 } ?: 0)
+            for (el in created) if (el.serial == 0) el.serial = ++fresh
+        }
+
+        /**
+         * A re-stamped ride's identities **by role** (see [DocumentFormat.Restamp.kinds]): copy by copy, each
+         * identity to the first element of its own former kind that copy made. False where the copies cannot be
+         * told apart — the fan is unknown or does not divide what was made.
+         */
+        fun adoptByRole(
+            u: Part,
+            created: List<Element>,
+            step: Step?,
+            adopt: (String, Element) -> Unit,
+        ): Boolean {
+            val kinds = restamp?.kinds ?: return false
+            val fan = doc.allPatterns().flatMap { it.gestures }.firstOrNull { it.step === step }?.fanTotal ?: return false
+            if (fan <= 0 || u.declared.size % fan != 0 || created.size % fan != 0) return false
+            val was = u.declared.size / fan
+            val now = created.size / fan
+            for (k in 0 until fan) {
+                val free = created.subList(k * now, (k + 1) * now).toMutableList()
+                for (n in u.declared.subList(k * was, (k + 1) * was)) {
+                    val el = free.firstOrNull { it.kind == kinds[n] } ?: continue
+                    free.remove(el)
+                    adopt(n, el)
+                }
+            }
+            return true
+        }
+
+        /**
+         * A touched feature's identities, by kind rather than by position (OP-32, slice 3 — see [Refactor]): each
+         * declared identity goes to the first element of its own former kind the feature made, the rest take
+         * fresh ones, and an identity left over is gone — refused by name where a later feature still reads it.
+         */
+        fun adoptIdentities(
+            u: Part,
+            created: List<Element>,
+        ) {
+            val kinds = refactor?.kinds ?: emptyMap()
+            val free = created.toMutableList()
+            created.forEach { it.serial = 0 }
+            val lost = ArrayList<String>()
+            for (n in u.declared) {
+                val el = free.firstOrNull { it.kind == kinds[n] } ?: free.firstOrNull { kinds[n] == null }
+                if (el == null) {
+                    lost.add(n)
+                    continue
+                }
+                free.remove(el)
+                el.serial = n.removePrefix("e").toIntOrNull() ?: 0
+                byName[n] = el
+                if (n in hidden) el.visible = false
+                userNames[n]?.let { doc.nameElement(el, it) }
+                materials[n]?.let { m -> doc.setMaterial(el, appearance(m)) }
+            }
+            for (n in lost) {
+                val reader = parts.firstOrNull { p -> n in p.refs } ?: continue
+                throw DocumentFormat.LoadError(Messages.refusalRefactorLost(feature = u.label, element = n, reader = reader.label))
+            }
+            val step = doc.journal.lastOrNull { it.kind !in DocumentFormat.UNNUMBERED }
             val scalars = step?.createsScalars.orEmpty()
             scalars.forEach { it.serial = 0 }
             u.declaredScalars.forEachIndexed { i, sid ->

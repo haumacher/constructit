@@ -1,0 +1,18 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":14,"f":14},
+  "parameters": [
+    {"id":"f6","name":"pr","value":"12 mm"},
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"c","value":"3 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[60,0],"creates":["e2","e3"]},{"id":"f3","at":[60,40],"creates":["e4","e5"]},{"id":"f4","at":[0,40],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"fillet","els":["e5","e7"],"params":["f6"],"signs":[-1,1,1,2],"creates":["e9"]},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e3"],"params":["f8"],"creates":["e10"]},
+    {"id":"f11","kind":"tool","tool":"chamferedge","els":["e10"],"params":["f10"],"edge":10,"signs":[-1,1,0,1],"slots":[{"entry":3,"kind":"mitre","edges":[10,11],"piece":0}],"creates":["e11","e12"]},
+    {"id":"f12","kind":"tool","tool":"chamferedge","els":["e11"],"params":["f10"],"edge":12,"signs":[-1,1,0,1,-1,-1,0,1,-1,1,0,1],"runs":[[11,12,13]],"creates":["e13"]},
+    {"id":"f13","kind":"sketchspace","name":"oncap","el":"e11","piece":14}
+  ]
+}

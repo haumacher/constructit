@@ -1,0 +1,21 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":22,"f":21},
+  "parameters": [
+    {"id":"f6","name":"angle","value":"0 deg"},
+    {"id":"f7","name":"offset","value":"100 mm"},
+    {"id":"f14","name":"angle2","value":"90 deg"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[100,0],"creates":["e2","e3"]},{"id":"f3","at":[100,100],"creates":["e4","e5"]},{"id":"f4","at":[0,100],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f8","kind":"sketchspace","name":"plane1","line":"e3","angle":"f6","offset":"f7"},
+    {"id":"f9","kind":"path","space":"f8","at":[0,0],"creates":["e9"],"vertices":[{"id":"f10","at":[100,0],"creates":["e10","e11"]},{"id":"f11","at":[100,100],"creates":["e12","e13"]},{"id":"f12","at":[0,100],"creates":["e14","e15"]}],"close":{"id":"f13","creates":["e16"]}},
+    {"id":"f15","kind":"sketchspace","name":"plane2","line":"e3","angle":"f14"},
+    {"id":"f16","kind":"point","space":"f15","at":[0,0],"creates":["e17"]},
+    {"id":"f17","kind":"point","space":"f15","at":[-40,50],"creates":["e18"]},
+    {"id":"f18","kind":"point","space":"f15","at":[0,100],"creates":["e19"]},
+    {"id":"f19","kind":"tool","space":"f15","tool":"arc3","pts":["e17","e18","e19"],"creates":["e20"]},
+    {"id":"f20","kind":"tool","space":"f15","tool":"loft","els":["e3","e11","e20"],"signs":[0,0],"creates":["e21"]}
+  ]
+}

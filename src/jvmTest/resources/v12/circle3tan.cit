@@ -1,0 +1,18 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":11,"f":11},
+  "parameters": [],
+  "features": [
+    {"id":"f1","kind":"point","at":[-10,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[50,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"segment","pts":["e1","e2"],"creates":["e3"]},
+    {"id":"f4","kind":"point","at":[0,-10],"creates":["e4"]},
+    {"id":"f5","kind":"point","at":[0,60],"creates":["e5"]},
+    {"id":"f6","kind":"tool","tool":"segment","pts":["e4","e5"],"creates":["e6"]},
+    {"id":"f7","kind":"pointoncurve","curve":"e3","dofs":[{"mm":30}],"creates":["e7"]},
+    {"id":"f8","kind":"pointoncurve","curve":"e6","dofs":[{"mm":40}],"creates":["e8"]},
+    {"id":"f9","kind":"tool","tool":"segment","pts":["e7","e8"],"creates":["e9"]},
+    {"id":"f10","kind":"tool","tool":"circle3tan","els":["e3","e6","e9"],"signs":[1,1],"creates":["e10"]}
+  ]
+}

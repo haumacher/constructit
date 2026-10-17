@@ -1,6 +1,8 @@
 package constructit
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.SolidValue
 import constructit.dsl.SolidRef
 import constructit.dsl.solid
 import constructit.editor.Camera3
@@ -173,7 +175,8 @@ class Face3DPickTest {
         // the file: the very step the 2D gesture writes, and a byte-equal replay of the whole story
         val text = DocumentFormat.save(ed.doc)
         val step = assertNotNull(saved(text).kind("sketchspace").firstOrNull(), text)
-        assertEquals(4, step.int("piece"), "the address is the piece index, recorded: $step")
+        // since OP-32's slice 3 the face is stated by what made it: a partial revolution's cap at its start
+        assertEquals("start", step.str("piece"), "the address is the face, recorded by name: $step")
         assertTrue(step.containsKey("el"), "…of a named element: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "the 3D face pick replays byte-equal")
     }
@@ -239,7 +242,7 @@ class Face3DPickTest {
         assertClose(plane.normal.z, 1.0, tol = 1e-9, msg = "the normal points out of the material")
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(5, saved(text).kind("sketchspace").single().int("piece"), "the cap's address is recorded like any other: $text")
+        assertEquals("top", saved(text).kind("sketchspace").single().str("piece"), "the cap's address is recorded like any other, by name: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "…and it reloads byte-equal")
     }
 
@@ -488,7 +491,12 @@ class Face3DPickTest {
 
         val text = DocumentFormat.save(ed.doc)
         val step = assertNotNull(saved(text).kind("sketchspace").firstOrNull(), text)
-        assertTrue(step.str("el") == ed.doc.nameOf(far) && step.int("piece") == 0, "the far body's own face, recorded: $step")
+        // the face by what made it (OP-32 slice 3): the flank over the far body's first leg, which is its face 0
+        val farFeature = (Evaluator().eval(far.ref.node) as EvalResult.Ok).value.let { (it as SolidValue).solid.feature }
+        assertTrue(
+            step.str("el") == ed.doc.nameOf(far) && constructit.geom.Provenance.faceIndex(farFeature, step.str("piece")!!) == 0,
+            "the far body's own face, recorded: $step",
+        )
 
         // the reload takes it verbatim
         val again = DocumentFormat.load(text)

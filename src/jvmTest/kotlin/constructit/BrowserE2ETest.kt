@@ -3159,4 +3159,71 @@ class BrowserE2ETest {
             server.stop(0)
         }
     }
+
+    /**
+     * **Refactoring the construction, in the real browser** (OP-32, slice 3): GitHub #36's L with its two fillets,
+     * opened through the file input; the dressed body selected in the element list and deleted **keeping what was
+     * built on it**, from the panel's own button beside the selection's actions — the roundings go with their body, the extrusion stays, nothing
+     * is invalid — and one press of Ctrl+Z puts it back. Then the panel's *replace* button for the second
+     * rounding's input arms the click in the drawing, and Esc disarms it, saying so.
+     */
+    @Test
+    fun refactoringInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+        val server = serve(dist)
+        val url = "http://127.0.0.1:${server.address.port}/index.html"
+        try {
+            Playwright.create().use { pw ->
+                val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+                val page = browser.newPage()
+                val errors = ArrayList<String>()
+                page.onPageError { errors.add(it) }
+                val meshBoolLines = ArrayList<String>()
+                page.onConsoleMessage { if (it.text().startsWith("[MeshBool]")) meshBoolLines.add(it.text()) }
+                page.setViewportSize(1000, 700)
+                page.navigate(url)
+                page.waitForSelector("#canvas")
+                page.waitForCondition { meshBoolLines.isNotEmpty() }
+
+                fun tree() = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+                fun status() = page.querySelector("#status").textContent()
+
+                fun row(name: String) = page.querySelectorAll("#tree .item").first { it.textContent().endsWith(name) }
+
+                val fixture = File("build/e2e/issue36-refactor.cit")
+                fixture.writeText(ProvenanceAddressTest.ISSUE36)
+                page.setInputFiles("#f-file", fixture.toPath())
+                page.waitForCondition { tree().any { it.endsWith("e16") } }
+                assertTrue(page.querySelectorAll("#tree .item.invalid").isEmpty(), "the L loads whole: ${tree()}")
+
+                // ---- delete the dressed body, keeping what was built on it ----
+                row("e14").click()
+                page.click("#e-delete-reroute")
+                page.waitForCondition { tree().none { it.endsWith("e14") } }
+                assertTrue(tree().any { it.endsWith("e13") }, "the extrusion stays: ${tree()}")
+                assertTrue(tree().none { it.endsWith("e15") || it.endsWith("e16") }, "the roundings went with their body: ${tree()}")
+                assertTrue(page.querySelectorAll("#tree .item.invalid").isEmpty(), "nothing is invalid: ${tree()}")
+                assertTrue(status().contains("f11"), "the status line names what went: ${status()}")
+                page.keyboard().press("Control+z")
+                page.waitForCondition { tree().any { it.endsWith("e16") } }
+
+                // ---- arm the replacement of the second rounding's input from the panel, and cancel it ----
+                row("e16").click()
+                page.waitForSelector("#inspector .repl")
+                page.click("#inspector .repl")
+                page.waitForCondition { status().contains("e14") && status().contains("f12") }
+                page.keyboard().press("Escape")
+                page.waitForCondition { status() == Messages.statusRefactorCancelled() }
+
+                assertTrue(errors.isEmpty(), "the shell threw: $errors")
+                browser.close()
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
 }

@@ -1,0 +1,20 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":23,"f":18},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"5 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},{"id":"f3","at":[41.999800864975384,15.375],"creates":["e4","e5"]},{"id":"f4","at":[41.999800864975384,-11.775083491926196],"creates":["e6","e7"]},{"id":"f5","at":[-5.521648428788623,-11.775083491926196],"creates":["e8","e9"]},{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"params":["f8"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"params":["f10"],"edge":12,"signs":[-1,1,0,1],"slots":[{"entry":2,"kind":"patch","edges":[1,12,13],"piece":0}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"params":["f10"],"edge":13,"signs":[-1,1,0,1],"creates":["e16"]},
+    {"id":"f13","kind":"tool","tool":"filletedge","els":["e14"],"params":["f10"],"edge":1,"signs":[-1,1,0,1],"creates":["e17"]},
+    {"id":"f14","kind":"tool","tool":"filletedge","els":["e14"],"params":["f10"],"edge":14,"signs":[-1,1,0,1],"slots":[{"entry":3,"kind":"rail","edges":[2,13,14],"piece":0},{"entry":3,"kind":"patch","edges":[2,13,14],"piece":0},{"entry":3,"kind":"patch","edges":[3,14,15],"piece":0}],"creates":["e18","e19"]},
+    {"id":"f15","kind":"tool","tool":"filletedge","els":["e18"],"params":["f10"],"edge":2,"signs":[-1,1,0,-1],"creates":["e20"]},
+    {"id":"f16","kind":"tool","tool":"filletedge","els":["e18"],"params":["f10"],"edge":3,"signs":[-1,1,0,1],"creates":["e21"]},
+    {"id":"f17","kind":"tool","tool":"filletedge","els":["e18"],"params":["f10"],"edge":15,"signs":[-1,1,0,1],"creates":["e22"]}
+  ]
+}

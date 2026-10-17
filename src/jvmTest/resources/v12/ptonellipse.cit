@@ -1,0 +1,14 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":5,"f":6},
+  "parameters": [
+    {"id":"f1","name":"semi-axis","value":"30 mm"}
+  ],
+  "features": [
+    {"id":"f2","kind":"point","at":[50,50],"creates":["e1"]},
+    {"id":"f3","kind":"point","at":[110,50],"creates":["e2"]},
+    {"id":"f4","kind":"tool","tool":"ellipseab","pts":["e1","e2"],"params":["f1"],"creates":["e3"]},
+    {"id":"f5","kind":"tool","tool":"ptonellipse","els":["e3"],"dofs":[{"deg":60.00000000000001}],"creates":["e4"]}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":20,"f":16},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"4 mm"},
+    {"id":"f14","name":"r2","value":"4 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},{"id":"f3","at":[61.875,15.375],"creates":["e4","e5"]},{"id":"f4","at":[61.875,0.375],"creates":["e6","e7"]},{"id":"f5","at":[-5.521648428788623,0.375],"creates":["e8","e9"]},{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"params":["f8"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"chamferedge","els":["e13"],"params":["f10"],"edge":2,"signs":[-1,1,0,-1],"slots":[{"entry":2,"kind":"rail","edges":[2,13,14],"piece":0},{"entry":2,"kind":"rail","edges":[2,13,14],"piece":1},{"entry":2,"kind":"rail","edges":[2,13,14],"piece":2},{"entry":2,"kind":"patch","edges":[2,13,14],"piece":0},{"entry":2,"kind":"patch","edges":[2,13,14],"piece":1},{"entry":2,"kind":"patch","edges":[2,13,14],"piece":2}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"chamferedge","els":["e14"],"params":["f10"],"edge":13,"signs":[-1,1,0,1],"creates":["e16"]},
+    {"id":"f13","kind":"tool","tool":"chamferedge","els":["e14"],"params":["f10"],"edge":14,"signs":[-1,1,0,1],"creates":["e17"]},
+    {"id":"f15","kind":"tool","tool":"filletedge","els":["e14"],"params":["f14"],"edge":22,"signs":[-1,1,0,1,-1,1,0,1,-1,-1,0,1,1,-1,0,1,-1,-1,0,1],"runs":[[22,26,30,31,32]],"creates":["e18","e19"]}
+  ]
+}

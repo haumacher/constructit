@@ -219,7 +219,8 @@ class PicksAsMeaningsTest {
         val doc = DocumentFormat.load(fixture("issue36-fillets"))
         val json = DocumentFormat.save(doc)
         val f11 = saved(json).features.first { it.str("id") == "f11" }
-        assertEquals(13, f11.int("edge"), "the first fillet states its edge: $f11")
+        assertEquals("e11|top", f11.addressKey(), "the first fillet states its edge, by what made it (slice 3): $f11")
+        assertEquals(13, f11.addressed(doc).first(), "…which is edge 13 of the body")
         val extrusion = doc.el("e13")
         val named = edgeName(doc, extrusion, 13)
         val moved =
@@ -235,7 +236,7 @@ class PicksAsMeaningsTest {
         val v = Evaluator().valueOf(body.ref) as? SolidValue
         assertNotNull(v, "the twice-filleted L still builds: ${(Evaluator().eval(body.ref.node) as? EvalResult.Invalid)?.reason}")
         assertManifold(v.solid.mesh, "the moved L")
-        assertEquals(13, saved(DocumentFormat.save(back)).features.first { it.str("id") == "f11" }.int("edge"), "and it is saved on edge 13 again")
+        assertEquals("e11|top", saved(DocumentFormat.save(back)).features.first { it.str("id") == "f11" }.addressKey(), "and it is saved on that edge again")
 
         // the counterfactual: the old click, on the moved L, names a different edge
         val ed = Editor()
@@ -244,7 +245,7 @@ class PicksAsMeaningsTest {
         ed.setTool(Tools.BLEND_EDGE)
         ed.click(Vec2(-31.252365457721638, 11.31587462139538))
         val picked = saved(DocumentFormat.save(ed.doc)).tools(Tools.BLEND_EDGE).last()
-        assertNotEquals(13, picked.int("edge"), "a click at the old position now names another edge: ${ed.statusHint}")
+        assertNotEquals("e11|top", picked.addressKey(), "a click at the old position now names another edge: ${ed.statusHint}")
     }
 
     // ---- a face of a solid ----
@@ -268,13 +269,14 @@ class PicksAsMeaningsTest {
         ed.setTool(Tools.BLEND_FACE)
         ed.click(Vec2(30.0, 25.0))
         val json = DocumentFormat.save(ed.doc)
-        val face = assertNotNull(saved(json).tool(Tools.BLEND_FACE).int("face"), "the face is stated: $json")
+        val key = assertNotNull(saved(json).tool(Tools.BLEND_FACE).addressKey(), "the face is stated: $json")
+        val face = saved(json).tool(Tools.BLEND_FACE).addressed(ed.doc).first()
         val revolved = ed.doc.elements.first { it.kind == ElementKind.SOLID }
         val named = faceName(ed.doc, revolved, face)
 
         val turned = mapFeatures(json) { f -> if (f.str("tool") == Tools.REVOLVE) f.with("dofs", """[{"deg":-90}]""") else f }
         val back = DocumentFormat.load(turned)
-        assertEquals(face, saved(DocumentFormat.save(back)).tool(Tools.BLEND_FACE).int("face"), "the rounding stays on its face")
+        assertEquals(key, saved(DocumentFormat.save(back)).tool(Tools.BLEND_FACE).addressKey(), "the rounding stays on its face")
         assertEquals(named, faceName(back, back.elements.first { it.kind == ElementKind.SOLID }, face), "the same named face")
 
         val again = Editor()
@@ -283,7 +285,7 @@ class PicksAsMeaningsTest {
         again.setTool(Tools.BLEND_FACE)
         again.click(Vec2(30.0, 25.0))
         val picked = saved(DocumentFormat.save(again.doc)).tools(Tools.BLEND_FACE).last()
-        assertNotEquals(face, picked.int("face"), "a click at the old position now names another face: ${again.statusHint}")
+        assertNotEquals(key, picked.addressKey(), "a click at the old position now names another face: ${again.statusHint}")
     }
 
     // ---- a meaning that no longer resolves ----
@@ -314,17 +316,19 @@ class PicksAsMeaningsTest {
         ed.setTool(Tools.BLEND_EDGE)
         ed.click(Vec2(-75.0, -43.30127018922191))
         val fillet = saved(DocumentFormat.save(ed.doc)).tools(Tools.BLEND_EDGE).single()
-        val edge = assertNotNull(fillet.int("edge"), "the rounding states its edge: $fillet")
+        val key = assertNotNull(fillet.addressKey(), "the rounding states its edge: $fillet")
+        val edge = fillet.addressed(ed.doc).first()
         assertTrue(edge >= 24, "a rim of the top cap: edge $edge of 36")
         val body = { ed.doc.elements.last { it.kind == ElementKind.SOLID } }
         assertTrue(Evaluator().eval(body().ref.node) is EvalResult.Ok, "the rounded prism builds")
 
         assertTrue(ed.setPatternCount(assertNotNull(ed.doc.patternNamed("P1")), 3), "re-stamped to three: ${ed.statusHint}")
-        assertEquals(edge, saved(DocumentFormat.save(ed.doc)).tools(Tools.BLEND_EDGE).single().int("edge"), "the rounding keeps its address — never a re-pick")
+        assertEquals(key, saved(DocumentFormat.save(ed.doc)).tools(Tools.BLEND_EDGE).single().addressKey(), "the rounding keeps its address — never a re-pick")
         val why = (Evaluator().eval(body().ref.node) as? EvalResult.Invalid)?.reason
         assertNotNull(why, "the rounding cannot be built on a prism of eighteen edges")
-        assertTrue(why.contains("edge #") && why.contains("(it has 18)"), "and it says which edge is missing: $why")
-        assertTrue(ed.doc.invalidElements().any { it.element === body() && "edge #" in it.reason }, "the panel lists the rounded body as invalid, with that reason")
+        // since slice 3 an edge is named by what made it, so the reason names the edge that went with its sides
+        assertTrue(why.contains("has no edge") && why.contains("|top"), "and it says which edge is missing: $why")
+        assertTrue(ed.doc.invalidElements().any { it.element === body() && "has no edge" in it.reason }, "the panel lists the rounded body as invalid, with that reason")
         // the invalid drawing is a drawing: it saves, and its save loads to the same invalid rounding
         val text = DocumentFormat.save(ed.doc)
         val again = DocumentFormat.load(text)

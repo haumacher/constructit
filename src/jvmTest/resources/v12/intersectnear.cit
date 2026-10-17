@@ -1,0 +1,15 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":8,"f":8},
+  "parameters": [],
+  "features": [
+    {"id":"f1","kind":"point","at":[-40,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[40,0],"creates":["e2"]},
+    {"id":"f3","kind":"point","at":[0,-40],"creates":["e3"]},
+    {"id":"f4","kind":"point","at":[0,40],"creates":["e4"]},
+    {"id":"f5","kind":"tool","tool":"line","pts":["e1","e2"],"creates":["e5"]},
+    {"id":"f6","kind":"tool","tool":"line","pts":["e3","e4"],"creates":["e6"]},
+    {"id":"f7","kind":"intersectnear","a":"e5","b":"e6","signs":[1],"creates":["e7"]}
+  ]
+}

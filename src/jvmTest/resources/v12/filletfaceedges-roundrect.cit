@@ -1,0 +1,17 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":14,"f":9},
+  "parameters": [
+    {"id":"f1","name":"corner","value":"10 mm"},
+    {"id":"f5","name":"depth","value":"20 mm"},
+    {"id":"f7","name":"r","value":"3 mm"}
+  ],
+  "features": [
+    {"id":"f2","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f3","kind":"point","at":[60,40],"creates":["e2"]},
+    {"id":"f4","kind":"tool","tool":"roundrect","pts":["e1","e2"],"params":["f1"],"creates":["e3","e4","e5","e6","e7","e8","e9","e10"]},
+    {"id":"f6","kind":"tool","tool":"extrude","els":["e7"],"params":["f5"],"creates":["e11"]},
+    {"id":"f8","kind":"tool","tool":"filletfaceedges","els":["e11"],"params":["f7"],"face":9,"signs":[-1,-1,0,1,-1,1,0,1,-1,-1,0,1,-1,1,0,1,-1,-1,0,1,-1,1,0,1,-1,-1,0,1,-1,1,0,1],"creates":["e12","e13"]}
+  ]
+}

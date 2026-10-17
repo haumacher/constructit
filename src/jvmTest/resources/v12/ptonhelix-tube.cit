@@ -1,0 +1,19 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":9,"f":11},
+  "parameters": [
+    {"id":"f2","name":"radius","value":"20 mm"},
+    {"id":"f3","name":"pitch","value":"12 mm"},
+    {"id":"f4","name":"turns","value":"3"},
+    {"id":"f8","name":"radius2","value":"3 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f5","kind":"tool","tool":"helix","els":["e1"],"params":["f2","f3","f4"],"creates":["e2"]},
+    {"id":"f6","kind":"tool","tool":"keypoints","els":["e2"],"creates":["e3","e4","e5"]},
+    {"id":"f7","kind":"tool","tool":"curve3","els":["e4","e5"],"creates":["e6"]},
+    {"id":"f9","kind":"tool","tool":"tube","els":["e2"],"params":["f8"],"dofs":[{"deg":0},{"deg":0}],"creates":["e7"]},
+    {"id":"f10","kind":"tool","tool":"ptonhelix","els":["e2"],"dofs":[{"deg":90}],"creates":["e8"]}
+  ]
+}

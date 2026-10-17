@@ -1,0 +1,20 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":16,"f":16},
+  "parameters": [
+    {"id":"f6","name":"height","value":"90 mm"},
+    {"id":"f9","name":"angle","value":"90 deg"},
+    {"id":"f11","name":"radius","value":"8 mm"},
+    {"id":"f14","name":"depth","value":"120 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[100,0],"creates":["e2","e3"]},{"id":"f3","at":[100,100],"creates":["e4","e5"]},{"id":"f4","at":[0,100],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"point","at":[50,50],"creates":["e9"]},
+    {"id":"f8","kind":"tool","tool":"extrudepoint","pts":["e9"],"els":["e3"],"params":["f6"],"signs":[0,0],"creates":["e10","e11"]},
+    {"id":"f10","kind":"sketchspace","name":"plane1","line":"e3","angle":"f9","part":"e11"},
+    {"id":"f12","kind":"point","space":"f10","at":[50,12],"creates":["e12"]},
+    {"id":"f13","kind":"tool","space":"f10","tool":"circleR","pts":["e12"],"params":["f11"],"creates":["e13"]},
+    {"id":"f15","kind":"tool","space":"f10","tool":"cut","els":["e11","e13"],"params":["f14"],"creates":["e14","e15"]}
+  ]
+}

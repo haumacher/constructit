@@ -1,0 +1,13 @@
+e1 ON_CURVE true PointValue(p=Vec2(x=0.0, y=0.0))
+e10 SOLID true INVALID
+e11 DRESSING true ScalarValue(q=Quantity(base=10.0, dim=L))
+e2 ON_CURVE true PointValue(p=Vec2(x=40.0, y=0.0))
+e3 SEGMENT true SegmentValue(seg=Segment(a=Vec2(x=0.0, y=0.0), b=Vec2(x=40.0, y=0.0)))
+e4 ON_CURVE true PointValue(p=Vec2(x=40.0, y=30.0))
+e5 SEGMENT true SegmentValue(seg=Segment(a=Vec2(x=40.0, y=0.0), b=Vec2(x=40.0, y=30.0)))
+e6 ON_CURVE true PointValue(p=Vec2(x=0.0, y=30.0))
+e7 SEGMENT true SegmentValue(seg=Segment(a=Vec2(x=40.0, y=30.0), b=Vec2(x=0.0, y=30.0)))
+e8 SEGMENT true SegmentValue(seg=Segment(a=Vec2(x=0.0, y=30.0), b=Vec2(x=0.0, y=0.0)))
+e9 SOLID true solid volume=7200.0 bounds=Vec3(x=0.0, y=0.0, z=0.0) Vec3(x=40.0, y=30.0, z=6.0)
+scalar depth ScalarValue(q=Quantity(base=6.0, dim=L))
+scalar r ScalarValue(q=Quantity(base=10.0, dim=L))

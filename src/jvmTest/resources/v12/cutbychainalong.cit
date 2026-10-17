@@ -1,0 +1,25 @@
+{
+  "format": "constructit",
+  "version": 12,
+  "nextId": {"e":19,"f":21},
+  "parameters": [
+    {"id":"f6","name":"depth","value":"40 mm"},
+    {"id":"f8","name":"height","value":"10 mm"},
+    {"id":"f11","name":"height2","value":"30 mm"},
+    {"id":"f13","name":"height3","value":"70 mm"},
+    {"id":"f17","name":"r","value":"8 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[40,0],"creates":["e1"],"vertices":[{"id":"f2","at":[100,0],"creates":["e2","e3"]},{"id":"f3","at":[100,40],"creates":["e4","e5"]},{"id":"f4","at":[40,40],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"extrude","els":["e3"],"params":["f6"],"creates":["e9"]},
+    {"id":"f9","kind":"point","at":[70,20],"creates":["e10"]},
+    {"id":"f10","kind":"tool","tool":"heightpoint","pts":["e10"],"params":["f8"],"creates":["e11"]},
+    {"id":"f12","kind":"tool","tool":"heightpoint","pts":["e10"],"params":["f11"],"creates":["e12"]},
+    {"id":"f14","kind":"point","at":[105,20],"creates":["e13"]},
+    {"id":"f15","kind":"tool","tool":"heightpoint","pts":["e13"],"params":["f13"],"creates":["e14"]},
+    {"id":"f16","kind":"tool","tool":"curve3","els":["e11","e12","e14"],"creates":["e15"]},
+    {"id":"f18","kind":"point","at":[0,0],"creates":["e16"]},
+    {"id":"f19","kind":"tool","tool":"circleR","pts":["e16"],"params":["f17"],"creates":["e17"]},
+    {"id":"f20","kind":"tool","tool":"cutbychainalong","els":["e9","e17","e15"],"signs":[-1],"creates":["e18"]}
+  ]
+}

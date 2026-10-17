@@ -191,6 +191,7 @@ class Editor(
         clearSelection()
         // it names elements of the document being replaced (and a tool of it), so it cannot survive
         createDialog = null
+        replacing = null
         activeScalar = null
         scalarPicks.clear() // they name entries of the document being replaced
         resetPicks()
@@ -535,7 +536,7 @@ class Editor(
         val at = g.step?.fid ?: -1
         val result =
             try {
-                DocumentFormat.restampRide(DocumentFormat.save(doc), at, g.pattern.name, n)
+                DocumentFormat.restampRide(DocumentFormat.save(doc), at, g.pattern.name, n, doc.elements.filter { it.serial > 0 }.associate { "e${it.serial}" to it.kind })
             } catch (e: Exception) {
                 statusMsg = Msgs.statusUndoRedoReStampFailed(message = e.message ?: "")
                 changed()
@@ -1419,6 +1420,8 @@ class Editor(
     val toolPicks: List<Element> get() = pickedElements
 
     fun setTool(id: String) {
+        // an armed replacement is a pending gesture of its own, and arming a tool abandons it (OP-32, slice 3)
+        replacing = null
         // an active path is a pending operation: switching tools finishes it (its thickness included)
         // rather than silently abandoning half-drawn state that no gesture ever committed
         finishPath()
@@ -1905,6 +1908,137 @@ class Editor(
 
     /** The elements built on the selection — the inspector's *used by* row. */
     fun selectionDependents(): List<Element> = dependencySubject()?.let { Dependencies.dependentsOf(doc, it) } ?: emptyList()
+
+    // ---- refactoring on the graph (OP-32, slice 3) ----
+
+    /**
+     * The inputs of the feature that made the selection **that can be replaced** — one per pick its tool's slots
+     * took, in slot order ([Refactor.inputs]); the panel offers each one, and arming it ([beginReplaceInput])
+     * makes the next click in the drawing the element that takes its place.
+     */
+    fun replaceableInputs(): List<Refactor.Input> = dependencySubject()?.let { Refactor.inputsOf(doc, it) } ?: emptyList()
+
+    /** The input a click in the drawing will replace — the element whose feature it is, and which input. */
+    private var replacing: Pair<Element, Int>? = null
+
+    /** Whether a click in the drawing now picks the element that replaces an input ([beginReplaceInput]). */
+    val replacingInput: Boolean get() = replacing != null
+
+    /**
+     * **Arm the replacement of input [index]** of the feature that made the selection (OP-32, slice 3): the next
+     * click in the drawing picks the element that takes its place, by the very predicate its slot picked with
+     * ([slotAccepts]) — the data-driven click cycle, with one slot. Esc, arming a tool or another document disarms it.
+     */
+    fun beginReplaceInput(index: Int): Boolean {
+        val el = dependencySubject()
+        val input = el?.let { Refactor.inputsOf(doc, it).getOrNull(index) }
+        if (el == null || input == null) {
+            statusMsg = Msgs.statusRefactorNoInputs(name = el?.let { doc.nameOf(it) } ?: "")
+            changed()
+            return false
+        }
+        replacing = el to index
+        statusMsg = Msgs.statusRefactorArm(old = input.element, role = input.role, feature = "f${doc.creatingStep(el)?.fid ?: 0}")
+        changed()
+        return true
+    }
+
+    /**
+     * **Replace input [index] of the feature that made [made] by [by]** — one undo step, refused by name where the
+     * slot does not take [by] or the construction would close a circle ([Refactor.replaceInput]).
+     */
+    fun replaceInput(
+        made: Element,
+        index: Int,
+        by: Element,
+    ): Boolean {
+        replacing = null
+        return applyRefactor(Refactor.replaceInput(doc, made, index, by, ::slotAccepts))
+    }
+
+    /**
+     * **Delete the selection's feature and reroute what read it onto its input** (OP-32, slice 3) — offered beside
+     * [deleteSelection], which takes the dependents with it, never in its place. One undo step. A rounding of a
+     * dressed body is taken off its dressing exactly as the ordinary delete does: its slot stays (OP-30), so
+     * nothing that read the body has anything to be rerouted from.
+     */
+    fun deleteSelectionRerouting(): Boolean {
+        val targets = selectedElements
+        if (targets.isEmpty()) return false
+        if (targets.all { it.kind == ElementKind.DRESSING }) return deleteDressingEntries(targets)
+        if (targets.size != 1) {
+            statusMsg = Msgs.statusRefactorRerouteOne(count = targets.size)
+            changed()
+            return false
+        }
+        return applyRefactor(Refactor.deleteRerouting(doc, targets[0], ::slotAccepts))
+    }
+
+    /** Adopt what a refactoring made — one checkpoint, so one undo — or say why it refused, changing nothing. */
+    private fun applyRefactor(o: Refactor.Outcome): Boolean {
+        val fresh = o.doc
+        if (fresh == null) {
+            statusMsg = o.note
+            changed()
+            return false
+        }
+        adopt(fresh)
+        checkpoint()
+        statusMsg = o.note
+        changed()
+        return true
+    }
+
+    /** The click that picks the replacement for the armed input — by its slot's own predicate. */
+    private fun replaceClick(world: Vec2) {
+        val (made, index) = replacing ?: return
+        val input = Refactor.inputsOf(doc, made).getOrNull(index)
+        if (input == null) {
+            replacing = null
+            return
+        }
+        val hit = HitTest.nearest(doc, ev(), world, tolWorld(), proj()) { slotAccepts(input.slot, it) }
+        if (hit == null) {
+            statusMsg = Msgs.statusRefactorMissed(role = input.role, slot = Tools.roleOfKind(input.slot))
+            changed()
+            return
+        }
+        replaceInput(made, index, hit)
+    }
+
+    /**
+     * Whether an element **may fill a slot of [slot]'s kind** — the one predicate the pick of an element-valued slot
+     * is, stated where a graph edit can ask it too ([Refactor]). A point slot takes a point; a side slot takes no
+     * element at all.
+     */
+    fun slotAccepts(
+        slot: SlotKind,
+        el: Element,
+    ): Boolean =
+        when (slot) {
+            SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.OPTIONAL_POINT, SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT, SlotKind.POINT3 -> el.isPoint
+            SlotKind.CURVE -> el.isCurve
+            SlotKind.EXTRACTABLE -> el.isCurve || el.isArea || el.kind == ElementKind.SPACE_CURVE
+            SlotKind.LINE -> el.isLinear
+            SlotKind.CIRCLE, SlotKind.CENTRIC -> el.isCentric
+            SlotKind.CONIC -> el.isElliptic
+            SlotKind.CENTERED -> el.hasCentre
+            SlotKind.MEASURABLE ->
+                el.kind == ElementKind.SEGMENT || el.kind == ElementKind.ARC || el.isElliptic || el.kind == ElementKind.FUNC_CURVE
+            SlotKind.SEGMENT -> el.kind == ElementKind.SEGMENT
+            SlotKind.GEOMETRY -> true
+            SlotKind.ON_CIRCLE_POINT -> doc.circlesThrough(el).isNotEmpty()
+            SlotKind.CARRIER -> el.isLinear || el.isCentric
+            SlotKind.AREA -> doc.areaPickFilter(ev())(el)
+            SlotKind.SOLID, SlotKind.SECTION_CURVE -> el.kind == ElementKind.SOLID
+            SlotKind.CHAIN -> doc.isChainCandidate(el, ev())
+            SlotKind.BLEND_PROFILE -> doc.isBlendProfile(el)
+            SlotKind.LOFT_PART -> doc.loftRoleOf(el) != null
+            SlotKind.PATH3 -> el.kind == ElementKind.SPACE_CURVE || doc.isLiftable(el)
+            SlotKind.DRAWN_RUN -> doc.isLiftable(el)
+            SlotKind.SPHERE -> el.kind == ElementKind.SPHERE_LOCUS
+            SlotKind.SIDE -> false
+        }
 
     /**
      * Name the selected element, or clear the name with a blank string (OP-7 one level up). One user-level
@@ -3150,6 +3284,12 @@ class Editor(
             return
         }
         val world = enter(screen) ?: return
+        // an armed replacement takes this click, whatever the tool (OP-32, slice 3)
+        if (replacing != null && button == PointerButton.PRIMARY) {
+            downScreen = null
+            replaceClick(world)
+            return
+        }
         // **A click takes the digits that are already typed** (OP-13, amended — see [commitTypedScalar]).
         //
         // Reported as *"type 20, click — and nothing happens at all"*: the press published its pick, the tool
@@ -3525,6 +3665,13 @@ class Editor(
         val digit = key.length == 1 && (key[0].isDigit() || key == ".")
         val sign = key == "-"
         return when {
+            // an armed replacement is abandoned first, and says so (OP-32, slice 3)
+            key == "Escape" && replacing != null -> {
+                replacing = null
+                statusMsg = Msgs.statusRefactorCancelled()
+                changed()
+                true
+            }
             pathActive && digit -> {
                 numericEntry += key
                 refreshPreview()

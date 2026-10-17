@@ -171,6 +171,8 @@
             padding: 0 4px; cursor: pointer; }
         .drow .dep:hover { background: #e2f3e2; }
         .drow.used .dep { border-color: #e4e5c2; background: #fbfbef; color: #7c7d17; }
+        /* an input the next click in the drawing replaces (OP-32, slice 3) */
+        .drow .repl { border: 1px solid #cdd8e6; background: #f4f8fd; color: #1f4f7a; border-radius: 4px; font-size: 11px; padding: 0 4px; margin: 1px; cursor: pointer; }
         .drow.used .dep:hover { background: #f4f4dc; }
         #sel-actions, #groups-form { display: flex; gap: 4px; margin: 4px 0 6px; }
         #sel-actions button, #groups-form button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff;
@@ -297,6 +299,8 @@
             <div id="sel-actions">
                 <button id="s-hide" data-i18n-title="ui.hide.title" data-i18n="ui.hide"></button>
                 <button id="s-show" data-i18n-title="ui.show.title" data-i18n="ui.show"></button>
+                <!-- beside the selection's other actions rather than in the top bar, whose width the status line needs -->
+                <button id="e-delete-reroute" data-i18n-title="ui.deleteReroute.title" data-i18n="ui.deleteReroute"></button>
             </div>
             <h3 data-i18n="ui.panel.groups"></h3>
             <div id="groups-form">
