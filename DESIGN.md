@@ -1897,6 +1897,12 @@ letters included, because the shell's keydown seam skips fields and modifiers.
 
 ### Document format — the file is a construction script (OP-18 — RESOLVED)
 
+> **Amended by OP-32 (session 89): the file is a graph of features, not this sequence.** Everything below about
+> *what* is stored — no nodes, no handles, current values restated, choices verbatim, the canonical number, frozen
+> literals — stands, and the journal described here is still read for ever as an import. What changed is the shape
+> around it: JSON, an identity for every element and feature, references instead of order, and edit steps folded
+> into what they edit. See *The document is a graph of features, not a journal (OP-32)* below.
+
 A drawing is saved as **the sequence of steps that built it** (`DocumentFormat`), and loading replays
 them. Not a node dump: because a step re-runs the code that created it, everything derived comes back
 for free, and nothing synthetic is stored —
@@ -2076,6 +2082,10 @@ circle branch by nearness. Both are re-derived from geometry the same replay reb
 under reload — but they are the same *shape* of risk, and they are the next things to move into `signs=`.
 
 #### The name the file gives an element is the only name (as built, on a user report)
+
+> **Re-decided by OP-32 (session 89):** the name is still the only one, but it is now the element's **identity**
+> (`Element.serial`), given once and stored in the file — not its position among the journal's declarations. A
+> delete renames nothing; see *The naming authority, re-decided* under OP-32.
 
 There were **two** numbering schemes for one thing. The file names elements script-locally (`e1`, `e2`, … per
 the journal, from 1, gapless — the whole point being that the format does not depend on runtime id generation),
@@ -2274,6 +2284,10 @@ name rather than hanging on a native dialog.
 
 ### Why the format records operations, and the invariant that carries (OP-27 — RESOLVED)
 
+> **Amended by OP-32 (session 89):** the unit is still the operation, for every reason below; what OP-32 corrects is
+> *"A construction system's sequence *is* its model"* — the model is the dependency graph of operations, and the
+> sequence was one linearization of it. The invariant (no element without a step) carries over unchanged.
+
 The user asked it directly, after a defect: *"It would be better that such an error cannot occur by design.
 Why does the file format record operations instead of model elements and their linkage?"* The rationale was
 never written down — OP-18 records *what* the format is and what that buys, never *why an operation is the
@@ -2398,6 +2412,218 @@ mismatch is a *value* being wrong, which OP-7 says the node reports and OP-3 say
 formats one must therefore be dimension-safe, and `Document.evalMm`/`scalarMm` now are. The second of those is
 read at *draw* time, where the same fault would have thrown out of the renderer — which is what the user's own
 file, whose wall thickness is a dimensionless parameter, would eventually have done.
+
+### The document is a graph of features, not a journal (OP-32 — RESOLVED, slice 1 of 3 delivered session 89)
+
+**The user's decision, verbatim:** *"It started with a simple 'recording of what has been done'. But this is not a
+valid solution for a construction tool. Construction must be edited and refactored. Doing this on a journal of
+actions is error prone. The file format should better describe what exists. It should materialize in a
+well-supported container format such as json."* Ruled by the user in the same session: **JSON**; **generated
+identities solely for integrity — user-entered names only where an expression reads them**; **undo stays
+snapshots**. Adopted from the design proposal without objection: **the file is the dependency graph, and its order
+carries no meaning.**
+
+**What this reverses.** OP-18 said: *"A drawing is saved as **the sequence of steps that built it**
+(`DocumentFormat`), and loading replays them"*, and *"Elements are named script-locally (`e1`, `e2`, …) by the
+step that creates them"*. OP-27 put the rationale under it: *"A construction system's sequence *is* its model."*
+The second half of that sentence is what OP-32 corrects. The model is the **graph** of operations and what each
+reads; a sequence is one linearization of it, and a linearization is exactly what an editor cannot refactor —
+re-routing one input moves a feature against everything the journal's order silently encoded (the current path,
+the current space, which elements a positional name meant at that line). So the file no longer *is* a sequence:
+every reference names an identity, and the order a load builds in is derived from the references.
+
+**What this keeps, unchanged, and why** — every one of OP-18's and OP-27's reasons still holds, because the unit is
+still an operation:
+- *"no node kinds. A step rebuilds its own sub-graph, so no op needs a serialized name or a rebuild path (~50 ops
+  in `Construction` would otherwise each need both)."* A feature is one application of a `ToolDef` (or one of the
+  other things that exist — a parameter, a point, a path, a group, a weld), rebuilt by running the same
+  `ToolDef.build`, through the journal reader's own replay engine (`DocumentFormat.runRow`): the JSON reader hands
+  it one feature at a time, so a graph feature and a journal line that say the same thing build the same thing.
+- *"no handles, styles, or path/wall structure."* Nothing derived is stored.
+- *"A step's positional literals are written as the *current* value of what that step introduced … Literals that
+  encode a *choice* … are kept verbatim, since replay must make the same choice."* Values restated, choices
+  (`signs`, a branch, a side, a slot record) verbatim, never re-scored (OP-1).
+- *"One canonical number format, and it is never scientific."* Every number is `DocumentFormat.trim`'s spelling,
+  emitted as a JSON literal (`JsonUnquotedLiteral`) so the library writes it without reformatting.
+- *"a stored literal's semantics are frozen the moment a build that might have written it could have shipped."*
+  The graph is **version 11**; every journal version 1–10 stays readable for ever through the importer, with all
+  of its migrations, and is saved as the graph.
+
+#### The layout (as built)
+
+GitHub #36's first script, imported and saved:
+
+```json
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":17,"f":13},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"4 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},…,{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"clicks":[[-48.125,37.875]],"params":["f8"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"clicks":[[-31.252365457721638,11.31587462139538]],"params":["f10"],"signs":[13,-1,1,0,1],"slots":[{"entry":1,"kind":"rail","edges":[2,13],"piece":0},{"entry":1,"kind":"patch","edges":[2,13],"piece":0}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[-15.659687663642714,14.554138077719443]],"params":["f10"],"signs":[2,-1,1,0,-1],"creates":["e16"]}
+  ]
+}
+```
+
+The script's `hide` of thirteen elements and the `show` of the same thirteen leave **nothing**: the file states what
+is, and nothing is hidden. A drawing with hidden elements states them once, as a set — `"view": {"hidden":
+["e3","e7"]}` — however many times they were toggled.
+
+- **Container**: kotlinx-serialization-json in `commonMain`, its element API only (no compiler plugin). Every value
+  is encoded by the library; the writer chooses only where the lines break — the top level one key to a line, and
+  **one line per parameter and feature** (the view, a set, is one line), so a diff of two saves shows exactly the features
+  that changed. Fixed key order everywhere (`id`, `kind`, `space`, the kind's fields in schema order, `creates`,
+  `scalars`). A file is told from a journal by its first non-blank character (`{`).
+- **Identities.** An element is `e<n>`; everything else the file states — a feature, a parameter, a scalar a
+  feature made, a sketch space, a pattern, a group, a binding — is `f<n>`. Each is given
+  once, when the operation is recorded, and never again in this document: a deleted element's number stays
+  retired. Both high-water marks are stored (`nextId`), so they survive save, load and undo.
+  **Two counters, not one** — a deviation from the brief's single `nextId`, argued: element numbers are what a user
+  reads and says (`e7`, the naming authority below), so they stay the dense sequence they always were (the first
+  point of a fresh drawing is `e1` whatever parameters were typed before it, and a file written by an older build
+  keeps every name it had on import); the feature numbers are the file's own bookkeeping, and nobody reads them.
+  The one exception to *never twice*: a typed value **retracted** before its gesture committed
+  (`Document.retractParameter`) hands its number back while it is still the newest — it never reached a snapshot or
+  a file, and the drawing saves to the bytes it had before the gesture began.
+- **References.** A feature states the elements it `creates` and the `scalars` it makes (positionally — a count
+  mismatch is the load error it always was); every reference is an identity: `pts`/`els`/`match` name elements,
+  `params` names scalars (formerly `scalar="name"`), a feature's `space` names its sketch space, an `orbit` its
+  `pattern`, a macro instance its `macro`, a wall its `path`. A pattern member is `{"el":"e2","at":[1]}` (OP-23's
+  `e2@1`, one offset per nesting level). **User names appear only where an expression reads them**: a parameter's
+  `name`, and the `names` map of elements a user named — `P.x` resolves through it (OP-7). A group's, a pattern's
+  and a sketch space's names are labels; nothing refers to them.
+- **Order.** The writer emits every list by identity, so the bytes are canonical. The reader builds in the order the
+  references decide — a feature after everything that creates something it names, an expression after the
+  parameters and named elements its text reads (`ExprParser.refNames`) — and, where nothing decides, by identity,
+  which is the order the features were made in. That tie-break is not file order: it is carried by the identities
+  themselves, so **shuffling a file is the same drawing and saves to the same bytes** (asserted over six
+  shuffles of two drawings). Where creation order is *meaningful* and no reference states it — a dressing's
+  entries (OP-30) and the vertices of a path — it is exactly this identity order, and slice 3 will have to state
+  each one explicitly before it can reorder anything. **Visibility is no longer one of them**: it is not in the
+  build order at all (see *Decisions taken from what the user sees are recorded*, below).
+  A reference nothing creates (`refusal.file.dangling`), an identity created twice (`refusal.file.duplicate`) and a
+  reference cycle (`refusal.file.cycle`, naming the circle) are load errors that **name the feature**, in the
+  reader's language (OP-29); so are a newer version, a file that is not JSON and one that is not a drawing.
+- **Typed fields.** A parameter's value is the expression a user would type (`"20 mm"`, `"-90 deg"`, `"3"`), its
+  formula `{"id","text"}` or its wire `{"id","to"}`; a position is `[x, y]`; a quantity is `{"mm": 12.5}` /
+  `{"deg": 30}` / a bare number, so a `dofs` list that mixes lengths and angles reads on its own; choices are
+  integer arrays (`signs`); counts integers; a dressing's corner record (OP-31's `slots=1:m8.9-0;…`) is an array of
+  `{"entry","kind","edges","piece"}`; a funccurve end is a number or a formula string (the JSON type tells them
+  apart, as the quote did). Texts the user typed stay verbatim strings: a formula, a curve's `x`/`y`, a sweep's
+  `law`, a family's `laws` — the expression language is the user's chosen form for those (OP-7, OP-26).
+
+#### Edit actions folded into what they edit — every journal step kind, and its home
+
+| journal step | graph home | why there |
+|---|---|---|
+| `param` | `parameters[]` `{id, name, value}` | a parameter is a name and an expression |
+| `bind` / `wire` / `unbind` | the parameter's `formula` / `wire` (a binding of a scalar some other feature made — an opening's position, an ortho offset — is a `bind`/`wire` feature naming it); an `unbind` leaves the literal | a binding is the **state** of the scalar: only the last one counts, under the identity of the step that stated it, replayed where it was stated. **A change**: a re-bound parameter no longer keeps both texts (OP-7's session-71 *"each keeps the text it stated"*) — the superseded one is history, not drawing |
+| `orthostart` / `orthovertex` / `orthoprepend` / `orthoclose` / `orthodiscard` | one `path` feature: `at`, `vertices[]` (`prepend` where it was), `close`, `discard` | the path and its vertex list. **Each vertex keeps its own identity** and is rebuilt where it was added, because a weld or a snap made while a vertex was the path's end (`weldortho` requires an end) must still be made while it is; folding the vertices into one replay would refuse such a file |
+| `orthoresume` | nothing | implied by the path a vertex is added to; the reader makes that path current itself, and `Step.path` (stated on every ortho step) replaces "the current path" in the delete cascade too |
+| `space` | each feature's `space` (absent = the plan; a path vertex states it only where it differs, `null` for the plan) | the space a feature was built in is a fact of the feature, not of the line before it |
+| `name` | `names` `{e7: "bore-axis"}`, applied as the element is created | an attribute of the element, and what an expression reads |
+| `material` | `materials` `{e9: {color, rough, metal}}`, applied as the element is created | an attribute of the solid |
+| `hide` / `show` | `view` `{hidden: [e3, e7]}` — the elements hidden **now**, each once, by identity; what a construction hides by itself (a welded alias, a boundary's duplicate marker) is not stated, because the replay hides it again | visibility is state, not history: toggling leaves only the outcome, and a hide undone by a show leaves nothing. Applied as each element is created, so the view a load ends in is the view the user left |
+| `group` + `place` | one `group` feature with `members` and `place` `{id, at, angle}` | the frame is part of the group; it keeps the placement's identity, because members created between grouping and placing must still be built before the retrofit |
+| `attach` / `attachortho` / `weld` / `weldortho` / `unweld` | **features of their own** (`{kind:"attach", point, curve, dofs}` …) | **decided**: a relation between two existing elements is not an attribute of either. As a field of the point it would make the point depend on the curve, and a curve built on that point — or on the path that vertex belongs to — then forms a *feature-level* cycle where no value cycle exists (an ortho run whose end lands on a circle drawn through its own start) |
+| `orthobreak` / `orthojoin` | features naming the leg (`leg`, `at`, `open`) | a modification of a leg: it names the leg, and a break creates geometry |
+| `relative` / `absolute` / `projectplane` / `intersectnear` / `pointoncurve` / `breakarc` / `breakellipse` / `wiresketch` / `funccurve` / `import` / `importcurve` / `sketchspace` / `sectioninput` / `spaceorigin` / `opening` / `wall` / `pattern` / `orbit` / `macrodef` / `point` / `tool` | features field by field, through one schema per kind (`GraphFormat.SCHEMA`) read in both directions | each already was one operation with named inputs |
+
+#### Decisions taken from what the user sees are recorded (as built, on the review's finding)
+
+Three builds took a decision from **visibility** while they built, and re-took it on every load — so a model that is
+supposed to be a pure function of what the file states depended on view state, and hiding a body could change
+what a later feature was built on. *Recorded, never discovered* says such a decision is taken once and written down.
+Now it is:
+
+- **The tip of a chain** (OP-17's sequential-feature rule, `Document.tipOfChain`: the newest *visible* solid made of
+  the picked one) — read by an edge or face **blend** and by a **shell** for the body they work on, and by a
+  face-part **ride** for the part its first copy cuts. Each such build calls `Document.decideTip`: a gesture (and the
+  journal importer, at the very line where the old replay took it) decides from what is visible and records the
+  answer on the feature as `tips` — one per decision in the order taken, `null` where it was the picked body itself,
+  omitted when every one was; a graph load reads it back and asks nothing of visibility. A ride's copies after the
+  first chain onto **what the copy before them made** — a fact of the construction, carried by the ride itself — so
+  there is nothing for them to decide.
+- **The run an edge blend runs along** (`tangentRun`: a hidden piece lends no tangency) — `Document.decideRun` records
+  the run's edge addresses on the feature as `runs` (`null` where the run is the picked edge alone), in the same
+  address space the pick's own `signs` already uses, so it is no less stable than the address it extends.
+- **The part a datum, height plane or station cuts** was already recorded at creation (`part=` since GitHub #6) and
+  never re-derived; nothing changed there. A sketch space's section inputs read visibility only to *draw and offer*
+  them; an input taken is recorded by its solid (`sectioninput el=`), so nothing a build reads depends on it.
+
+So `view` carries no ordering constraint and is applied as elements are created. A recorded tip is a reference like
+any other: the feature is built on that body, so deleting the body takes the feature with it — where the journal
+re-derived the tip on the replay after a delete and silently moved the feature onto the body under it.
+
+#### The naming authority, re-decided
+
+*The name the file gives an element is the only name* stands, and the name changes meaning: it is `e` and the
+element's **identity**, given once by the step that created it (`Element.serial`) and stored in the file — no longer
+its *position* among the journal's declarations, derived afresh whenever the journal changed. So **a delete renames
+nothing** (deleting `e3` used to rename every element after it, and a refusal quoted in a bug report then named a
+different element), a wall extension that moves its step renames nothing (the *"its step moved after …, so the wall
+is … from here on"* note is gone with its two keys), and a new element takes a number nothing in the document ever
+had. A drawing built without deletes is named exactly as before, and an imported file keeps every name it had —
+which is what kept the suite's hundreds of name-addressed fixtures valid unchanged.
+
+#### What is not done, by design of the slicing
+
+- **Picks still stored as clicks** — `clicks` on every `tool` feature, `click` on `intersectnear`/`pointoncurve`,
+  `cells` on an `orbit`. They are the gesture's clicks, verbatim, inside clearly named fields; turning each slot
+  kind's click into the *meaning* it encodes (an edge as the pair of named faces it lies between, a side as a
+  sign) is **slice 2**. By a scan of the tool table, these rows' builds read a click directly: `ptoncircle`,
+  `ptonellipse`, `ptonline`, `ptatdist`, `ptonhelix`, `circle3tan`, `intersectioncurve`, `trilaterate`,
+  `sphereonrun`, `connect`, `connectg2`, `outline`, `concentric`, `rectpath`, `extrudepoint`, `loft`, `filletedge`,
+  `filletfaceedges`, `chamferedge`, `chamferfaceedges`, `blendedge`, `blendfaceedges`, `shell`, `shellclosed`,
+  `cutbychain`, `cutbychainalong`, `cutbychainalongflat`, `parallelat`, `fillet`, `chamfer`, `dimlinear`,
+  `dimradial`, `dimangular` (33); the rest write their clicks but delegate the pick to `Document` helpers, and
+  which of those read them is slice 2's first inventory.
+- **The editor still edits through its in-memory journal**: the graph is the file, the snapshot and the load order;
+  replacing an input, re-routing a dependent and delete-with-reroute are **slice 3**.
+- **An import's payload** (`mesh`, `path` of `import`/`importcurve`) stays its existing encoded text inside one JSON
+  string: it is the geometry of a body that has no construction, not a construction, and typing it as JSON arrays
+  is a separable change queued with slice 2.
+
+#### Implementation status (as built — slice 1, session 89)
+
+`GraphFormat` (the writer: the journal read as the graph, restated through the existing `DocumentFormat.restate`;
+the reader: parts → dependencies → Kahn's walk lowest identity first → one `runRow` per part). `DocumentFormat`
+keeps the public seam (`save` is the graph; `load` sniffs; `restamp`/`restampRide` rewrite a pattern's or an
+orbit's `count` in the graph — the ride is now named by its feature's identity, not its line index), the journal
+**importer** (`replay`, unchanged in meaning, every migration intact) and the shared row runner; the journal
+**writer is removed** — undo, the tests and the browser all moved to the graph. `Document` gives every recorded
+step, element and scalar its identity (`Step.fid`, `Element.serial`, `ScalarEntry.serial`; `UNNUMBERED` for the
+folded kinds) and states `Step.path`. The browser keeps `.cit`, saves `application/json`, and *Copy* counts
+features. Load errors are nine new `refusal.file.*` keys (English only; German and French are owed to the next
+`translateArb`).
+
+The bundle: `constructit.js` **715,415 bytes gzipped against 663,329** before — kotlinx-serialization-json costs
+the browser **+52.1 kB (+7.9 %)**, the price of the reference implementation in both binaries rather than a
+hand-rolled reader for one of them.
+
+Tests: `GraphFormatTest` (#36 imported, saved, reloaded byte-equal and the same body to the bit; the layout; two
+drawings × six shuffles, same bytes and same drawing; a dangling reference, a cycle and a newer version refused by
+name; an identity never given twice across a delete and a reload; undo snapshots are graphs). `JournalCorpusTest`
+— **ordered last** (`junit-platform.properties`) and fed by an autodetected extension that taps every successful
+journal import of the whole run — round-trips **every** journal the suite loads (186 distinct scripts, the four
+`.cit` resources among them; 272 solids, 33 s; 9 of them record a decision their import took from what was
+visible, and every one reloads to the same drawing) through the graph: byte-equal on the second save, the same drawing
+element for element and value for value, every solid manifold. `GraphFormatProbeTest` (a feature renumbered past what reads it still builds first;
+a re-stamp keeps every identity it can and spends new ones for the rest, never a retired one). About 140 test files
+changed: those that read the file's *text* now read its fields (`SavedFile.kt`: `saved(text).tool("fillet").ints("signs")`,
+never a regex over a line), those that built a journal at `DocumentFormat.VERSION` build it at `JOURNAL_VERSION`,
+those that appended a journal line to a save add a feature to the graph (`withEntries`), and the two that fabricated
+an older file from this build's save now carry that file verbatim as the last journal-writing build wrote it.
+**3069 → 3088 tests** (17 new: `GraphFormatTest` 10, `GraphFormatProbeTest` 2, `JournalCorpusTest` 1, the
+review's `GraphFormatOrchestratorProbeTest` 3 and `EdgeBlendToolTest.theTipABlendLandsOnIsRecordedAndHidingMovesNothing`;
+gradle's count, 3044 passed + 25 skipped before without `-De2e`, 3083 passed + 5 skipped after with it), all green,
+`ktlintCheck` and `jsBrowserDistribution` green; `assertManifold` on every solid the corpus builds.
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -6902,6 +7128,42 @@ knows which is running.
   alone: asserted directly, by relabelling and duplicating a mesh's vertices and getting the identical value
   back. Because vertices come out shared, `assertManifold` applies **unchanged** — the same
   every-edge-used-once-each-way check as the exact path, no adapted weaker check.
+
+- **Determinism, per engine** (session 89; closes the session-83 queue entry *"deterministic only to an
+  ULP"*). Canonical order makes a mesh a function of the engine's *answer*; it cannot make the answer a
+  function of the operands, and on one engine it is not. Measured on the keyhole corner (OP-31 slice 5e),
+  whose two operands the construction hands over identical to the bit every time:
+  - **Browser, `manifold-3d` 3.5.1 WebAssembly** — the engine the app ships, single-threaded: one mesh in
+    **120 / 120** calls over three Node processes.
+  - **From-source shim** (`native/`, 3.5.1 serial, opt-in): one mesh in **80 / 80**, and one in 12 / 12 on
+    the tight-ring pivot.
+  - **Clojars JVM binding** (the suite's default engine): **two** meshes, 1007 or 1010 vertices, volumes
+    `15000.062802156805` / `15000.06280217351` mm³ (1.1e-12 apart), in roughly one call in four — **also with
+    the process pinned to one CPU**, so no thread count pins it. One `MeshGL` imported afresh each time still
+    lands both ways; one *imported* pair subtracted forty times lands one way. The coin is that binding's
+    mesh import, and its Java surface has no `ExecutionParams`/`ManifoldParams`/thread control to reach it
+    (supplying `faceID`, or `MeshGL.Merge()` first, changes nothing — measured).
+
+  So the contract `MeshBool` states is **bit-for-bit where the engine is serial, and the same body where it
+  is not** — which is every engine a user runs, and the one only the suite runs. The suite says which through
+  one place in `TestSupport`: `engineIsBitDeterministic`, `reevaluationTol` (0 on a bit-deterministic engine,
+  `REEVALUATION_REL = 1e-9` of the figure on the default binding — three orders above the largest measured
+  difference), `assertSameBody` / `assertSameMesh` for one construction evaluated again (twice, undo, redo,
+  reload), `assertSameFile` for save∘load, and `sameBodyTol` for two *routes*, which now never asserts a bit
+  the default binding does not promise. `BooleanDeterminismTest` carries the two questions: the keyhole corner
+  evaluated afresh 24 times (bytes on the shim, the same body on the default binding, which prints its two
+  vertex counts), and a file stating a boolean-derived value.
+
+  **What a file can carry, read from the format rather than hoped.** A step records gestures, and a gesture's
+  literals are the user's — but a **bound** source node is restated with what drives it (`DocumentFormat`'s
+  `restate`, *"its literal, or whatever drives it"*). That is the one road a boolean-derived float has into a
+  file, and it has two lanes: a parameter wired to a solid's `mvolume` / `mextent*` measurement writes the
+  measured value in its own `param` step (shown: the tight-ring drawing writes `param "v" = 8351.749804716846`),
+  and a point welded to a corner of a bored body's section writes the corner. Everything else is an index, a
+  sign, a slot record or a user literal. Under a bit-deterministic engine such a file is byte-equal through
+  any number of reloads (asserted under the shim); under the default binding the stated number is exactly as
+  stable as the body it measures, which is why the fixed-point assertion of such a file is `assertSameFile`.
+  OP-4 in the app is therefore kept by the engine, not by a tolerance.
 - **The precision cost, stated.** This Manifold generation carries `MeshGL` positions as **float32** (the
   double-precision form is `MeshGL64` on the JVM and `Mesh64` in the browser — *corrected in session 86: it is
   **not** a one-line change in each actual. It arrived with Manifold **3**, and the JVM binding pinned here,
@@ -15195,6 +15457,42 @@ the composition table is driven generically as well as by its own test.
   ring's hand-over; the cap carried other than the step was a misreading of the flap). Every pivot takes
   0.005–0.009 % more — the sliver the old leg left inside the wall's chord sag — and nothing else moves.
   3069 → 3074 tests.
+- **Turn 114 — whose coin, measured to the call** (OP-4, OP-9; the session-83 queue entry; session 89). The
+  queue said Manifold's parallel reductions round differently run to run and offered two cures, pin the
+  engine or restate the contract. Measured first: the keyhole corner's bit-identical operands come back from
+  the clojars binding as **two triangulations** (1007 / 1010 vertices, 1.1e-12 apart in volume), not two
+  roundings, in about one call in four; pinned to one CPU they still do; one `MeshGL` imported afresh still
+  does; one imported pair subtracted forty times does not. So it is the binding's mesh import, which no
+  policy on its Java surface reaches, while the app's WebAssembly engine (120 / 120 over three processes) and
+  the serial shim (80 / 80) are bit-deterministic on the same operands. Cure (a) is therefore what already
+  holds where it is attainable, and is now stated and asserted there; cure (b) is the contract on the one
+  engine where (a) is not attainable, and pinning that engine by making the shim the default was rejected —
+  it reverses the user's recorded decision that the shim stays opt-in (session 86) for a test-only engine and changes 17
+  verdicts. The suite now says it through one helper: 29 same-body assertions in 23 classes moved onto `assertSameBody` /
+  `assertSameMesh` / `sameBodyTol` (five of them had asserted the last bit of an engine that does not keep
+  it), and `BooleanDeterminismTest` gains the keyhole corner evaluated 24 times and a file that states a
+  boolean-derived volume. Reading the format for OP-4 found the one road such a float has into a file — a
+  bound parameter or welded point restated with what drives it — stated in the as-built note rather than
+  closed, because in the app the engine keeps it byte-equal. 3044 → **3046** tests (+2), green on the default
+  path and on the new tests under the shim; with the bit contract forced on the default binding the two
+  determinism tests fail, as the old contract did.
+- **Turn 115 — the file says what exists** (OP-32, slice 1; session 89). The user: *"Construction must be edited and
+  refactored. Doing this on a journal of actions is error prone. The file format should better describe what
+  exists."* The file is now a JSON graph: an identity for every element (`e7`) and feature (`f12`), never given
+  twice, both high-water marks stored; references by identity, user names only where an expression reads them; the
+  order a load builds in derived from the references (shuffled files load to the same bytes); the journal's edit
+  steps folded into what they edit — a path with its vertex list, a parameter with its formula, a group with its
+  frame, names and materials as attributes, the hidden elements as a set in `view`. Three findings shaped it. **Folding a
+  path into one replay is wrong**: a `weldortho` made while a vertex was the path's end refuses once later vertices
+  exist, so every vertex keeps its own identity and is rebuilt where it was added. **Visibility was read by builds**:
+  a blend's, a shell's and a ride's chain tip and an edge blend's tangent run were re-decided from what was visible on
+  every load; each is now decided once and recorded on its feature (`tips`, `runs`) — the review's catch, after a
+  first cut that had kept twenty-one toggles in the file. **An attach is a feature,
+  not a field**: as a field it makes feature-level cycles where no value cycle exists. The journal is now an
+  importer (versions 1–10, every migration intact) and its writer is gone; the corpus test round-trips every one of
+  the 186 journals the suite loads through the graph as the same drawing. Names became identities — a delete renames
+  nothing — and `kotlinx-serialization-json` costs the bundle 52.1 kB gzipped. Slices 2 (picks as meanings) and 3
+  (refactoring on the graph) are queued.
 
 
 ## Domain layer: architectural drawing (draft — no new solver)
@@ -25598,7 +25896,19 @@ plane-against-cylinder band in it by a micron's worth, which is a change that wa
 re-pinning. Found by slice 5e (session 83), where it is the one thing that keeps two of the sector fixture's
 nine edges out of the matrix's own class.
 
-**Queued in session 83 — the general boolean is deterministic only to an ULP.** Two evaluations of one construction give volumes that differ by a part in 10¹² (slice 5g measured it under a re-stamp; slice 5e's gate met it between two fresh evaluations of the keyhole corner, `15000.06280217351` against `15000.062802156805`). `MeshBool`'s stated contract is bit-for-bit determinism after canonicalisation; the canonical form sorts triangles but cannot repair coordinates that Manifold's own parallel reductions round differently from run to run. Either the engine is pinned to a deterministic execution policy (and the contract is asserted by a test that evaluates one boolean twice and compares bytes), or the contract is restated as *deterministic to the engine's ULP* and every same-body assertion in the suite says so, as `BlendCurvedCornerTest` now does. Undo/reload equality (OP-4) is the reason it matters.
+~~**Queued in session 83 — the general boolean is deterministic only to an ULP.** Two evaluations of one construction give volumes that differ by a part in 10¹² (slice 5g measured it under a re-stamp; slice 5e's gate met it between two fresh evaluations of the keyhole corner, `15000.06280217351` against `15000.062802156805`). `MeshBool`'s stated contract is bit-for-bit determinism after canonicalisation; the canonical form sorts triangles but cannot repair coordinates that Manifold's own parallel reductions round differently from run to run. Either the engine is pinned to a deterministic execution policy (and the contract is asserted by a test that evaluates one boolean twice and compares bytes), or the contract is restated as *deterministic to the engine's ULP* and every same-body assertion in the suite says so, as `BlendCurvedCornerTest` now does. Undo/reload equality (OP-4) is the reason it matters.~~ — **closed in session 89, and the premise was wrong twice.** It is not an ULP — the two volumes are two *triangulations* (1007 and 1010 vertices) of one surface — and it is not the boolean's parallel reductions: pinned to one CPU the coin still lands both ways, one `MeshGL` imported afresh lands both ways, and one *imported* pair subtracted forty times lands one way, so it is the clojars binding's **mesh import**. The engine the app ships (WebAssembly, serial) and the from-source shim answer one way every time. So the cure is both halves, each where it is true: the contract is **bytes** on those two engines and **the same body** on the default JVM binding, which no shipped build uses and which exposes no execution policy to pin; the suite asserts it through one helper. See the OP-9 as-built note *"Determinism, per engine"* and Turn 113.
+
+**Queued in session 89 — OP-32, the document as a graph of features: slices 2 and 3** (slice 1, the format, is
+delivered — see OP-32). **(2) Picks as meanings, slot kind by slot kind.** Every `tool` feature still stores its
+gesture's `clicks` (and `intersectnear`/`pointoncurve` their `click`, an `orbit` its `cells`); each slot kind's click
+is to become the *meaning* it encodes — an edge as the pair of named faces it lies between, a face by its name, a
+side or a branch as the sign it already is — one slot kind at a time, each a version bump with a migration that
+reads the click once and writes the meaning (OP-18). First task: the exact inventory of which rows' builds read a
+click (33 read one directly; the delegating rest are to be classified), and the import payloads typed as JSON
+arrays beside it. **(3) Graph refactoring in the editor**: replace an input of a feature, reroute a dependent onto
+another element, delete-with-reroute instead of delete-with-cascade — on the graph rather than on the in-memory
+journal, which this slice makes possible and does not yet do. Its precondition: every place creation order is
+meaningful without a reference (a dressing's entry order, a path's vertices) stated as an explicit edge, so that reordering is a graph edit and not an accident of identity.
 
 **(1) is delivered (session 83)**: `BlendMatrixTest` — 1300 cells, 1142 built inside a derived bracket, 41
 refused by name, 117 in a residue of four named classes, which is now the specification items (2) and (3) are

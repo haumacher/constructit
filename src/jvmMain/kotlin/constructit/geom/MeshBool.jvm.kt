@@ -49,7 +49,7 @@ import java.io.File
  * not a flag: Manifold 3 *removed* `ExecutionParams::deterministic`, and `MANIFOLD_PAR=OFF` — a serial
  * engine with nothing left to race — is what replaces it.
  *
- * **Determinism, measured where the coin is** (OP-4; session 88, closing the session-83 queue entry). The
+ * **Determinism, measured where the coin is** (OP-4; session 89, closing the session-83 queue entry). The
  * keyhole corner's two operands, identical to the bit, come back from the clojars engine as one of two meshes
  * — 1007 or 1010 vertices, `15000.062802156805` or `15000.06280217351` mm³ — in about one call in four, and
  * three experiments say where the coin is: it still lands both ways with the process pinned to **one CPU**

@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertFails
 
 /**
- * The orchestrator's probe of session 88's restated contract (OP-4): the helpers that forgive the default
+ * The orchestrator's probe of session 89's restated contract (OP-4): the helpers that forgive the default
  * binding's import noise must still see every change that is a change of the construction — a choice, a
  * reference, a count, or a micron of geometry.
  */

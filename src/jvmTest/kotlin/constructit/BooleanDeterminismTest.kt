@@ -179,7 +179,7 @@ class BooleanDeterminismTest {
         assertTrue(bands.all { identical(it, bands[0]) }, "a single band at the ring is one mesh on every evaluation (${bands.map { it.vertices.size }})")
     }
 
-    // ---- session 88: the keyhole corner, and the file (the session-83 queue entry) ----
+    // ---- session 89: the keyhole corner, and the file (the session-83 queue entry) ----
 
     /** `BlendCurvedCornerTest`'s keyhole: a 15 mm disc about `(0, 20)` on a 10 mm stem, 20 mm deep. */
     private fun keyhole(cx: Construction): SolidRef {
@@ -253,7 +253,7 @@ class BooleanDeterminismTest {
     private fun measuredRingScript(): String {
         val inner = ring / 2.0
         val prof = listOf(Vec2(0.0, inner), Vec2(0.0, ring + 10.0), Vec2(10.0, ring + 10.0), Vec2(10.0, ring), Vec2(20.0, ring), Vec2(20.0, inner))
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart ${prof[0].x},${prof[0].y} -> e1\n")
         var n = 2
         for (i in 1 until prof.size) {
@@ -296,7 +296,7 @@ class BooleanDeterminismTest {
      *
      * The format records gestures, and a gesture's literals are the user's; but a source node that is
      * **bound** is restated with what drives it ([DocumentFormat]'s `restate`), so a parameter wired to a
-     * rounded body's measured volume writes that volume into its own `param` step, and a point welded to a
+     * rounded body's measured volume writes that volume into its own `parameters` entry (OP-32), and a point welded to a
      * corner of a bored body's section writes the corner. Those two are the only roads a boolean-derived
      * float has into a file. On the shipped engine the boolean is bit-deterministic and the file is
      * byte-equal through any number of reloads; on the default JVM binding the stated number may come back
@@ -305,8 +305,10 @@ class BooleanDeterminismTest {
     @Test
     fun aFileThatStatesABooleanDerivedVolumeIsAFixedPointOfSaveAndLoad() {
         val once = measuredRingScript()
-        val stated = once.lines().single { it.startsWith("param \"v\"") }
-        assertTrue(stated.substringAfter("= ").toDouble() > 1000.0, "the file states the measured volume itself: $stated")
+        val stated = once.lines().single { it.contains("\"name\":\"v\"") }
+        println("== the wired parameter as the file states it: $stated")
+        val volume = Regex("[0-9]+\\.[0-9]+").findAll(stated).map { it.value.toDouble() }.maxOrNull() ?: 0.0
+        assertTrue(volume > 1000.0, "the file states the measured volume itself: $stated")
         for (k in 0 until 6) assertSameFile(DocumentFormat.save(DocumentFormat.load(once)), once, "reload $k of a file stating a measured volume")
     }
 }

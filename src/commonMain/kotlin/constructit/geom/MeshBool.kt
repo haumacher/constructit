@@ -20,7 +20,7 @@ import kotlin.math.floor
  *   model is a pure function of its parameters (OP-4), and a mesh that reshuffled itself between two
  *   recomputes would break undo/reload equality. Manifold's own output ordering is not part of its API, so
  *   the result is put into a canonical form here rather than trusted: see [MeshCanon.canonical]. Canonical
- *   order cannot repair an engine whose *answer* varies, though, and session 88 measured which engines'
+ *   order cannot repair an engine whose *answer* varies, though, and session 89 measured which engines'
  *   do not: the browser's WebAssembly build — the engine the app ships — and the from-source JVM shim are
  *   serial and give the same two meshes one canonical answer every time, so there the contract is bytes.
  *   The clojars JVM binding, which the test suite runs on by default and which no shipped build uses,

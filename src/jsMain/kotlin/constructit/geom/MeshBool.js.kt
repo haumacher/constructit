@@ -33,7 +33,7 @@ import kotlin.js.Promise
  *
  * ### Bit for bit
  * The published module is built single-threaded, so it keeps [MeshBool]'s contract in its strong form: the
- * same two meshes give the same answer every time. Measured in session 88 under Node on the very operands the
+ * same two meshes give the same answer every time. Measured in session 89 under Node on the very operands the
  * JVM's default binding answers two ways (the keyhole corner, OP-31 slice 5e): 120 calls over three processes,
  * one mesh. That is what makes undo, recompute and reload agree to the last bit in the app (OP-4).
  */

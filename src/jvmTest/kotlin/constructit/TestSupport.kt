@@ -56,7 +56,7 @@ fun assertClose(
  * the exactness it has where it has it, and states [REL] of the figure where the engine computes in
  * doubles.
  *
- * *And never less than [reevaluationTol]* (session 88): "came back to the last bit" under float32 was true of
+ * *And never less than [reevaluationTol]* (session 89): "came back to the last bit" under float32 was true of
  * the grid and not of the default binding, whose import retriangulates the same operands now and then — so a
  * route assertion is held to the construction's own agreement plus that engine's measured noise, never to a
  * bit the engine does not promise.
@@ -75,7 +75,7 @@ const val REL = 2e-8
 
 /**
  * **Whether the general boolean running this suite is bit-deterministic** (OP-4, OP-9; the session-83 queue
- * entry *"deterministic only to an ULP"*, closed in session 88) — the one place the suite asks which half of
+ * entry *"deterministic only to an ULP"*, closed in session 89) — the one place the suite asks which half of
  * [constructit.geom.MeshBool]'s contract it may assert.
  *
  * Measured, not assumed: the browser's `manifold-3d` 3.5.1 (single-threaded WebAssembly, the engine the app
