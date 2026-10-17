@@ -1,0 +1,20 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":27,"f":16},
+  "parameters": [
+    {"id":"f6","name":"t","value":"30 mm"},
+    {"id":"f12","name":"radius","value":"3 mm"},
+    {"id":"f14","name":"depth","value":"8 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[120,0],"creates":["e2","e3"]},{"id":"f3","at":[120,80],"creates":["e4","e5"]},{"id":"f4","at":[0,80],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"extrude","els":["e3"],"clicks":[[60,0]],"params":["f6"],"creates":["e9"]},
+    {"id":"f8","kind":"sketchspace","name":"face1","el":"e9","piece":0},
+    {"id":"f9","kind":"point","space":"f8","at":[0,14.999999999999998],"creates":["e10"]},
+    {"id":"f10","kind":"point","space":"f8","at":[10.000000000000004,14.999999999999998],"creates":["e11"]},
+    {"id":"f11","kind":"pattern","space":"f8","name":"P1","shape":"circular","ref":"e11","centre":"e10","count":4,"creates":["e12","e13","e14"]},
+    {"id":"f13","kind":"orbit","space":"f8","pattern":"f11","tool":"circleR","pts":[{"el":"e11","at":[0]}],"cells":[[10.000000000000004,14.999999999999998]],"params":["f12"],"creates":["e15","e16","e17","e18"]},
+    {"id":"f15","kind":"orbit","space":"f8","pattern":"f11","tool":"cut","els":[{"el":"e15","at":[0]}],"part":"tip","cells":[[13.000000000000004,14.999999999999998]],"params":["f14"],"creates":["e19","e20","e21","e22","e23","e24","e25","e26"]}
+  ]
+}

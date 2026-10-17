@@ -118,7 +118,7 @@ class SweepLawToolTest {
         val step = saved(once).tools("tube").first()
         assertFalse(step.containsKey("law"), "a section of one size states none: $step")
         assertEquals(
-            """{"id":"${step.str("id")}","kind":"tool","tool":"tube","els":["e3"],"clicks":[[60,0]],"params":["${saved(once).paramIds("radius").single()}"],""" +
+            """{"id":"${step.str("id")}","kind":"tool","tool":"tube","els":["e3"],"params":["${saved(once).paramIds("radius").single()}"],""" +
                 """"dofs":[{"deg":0},{"deg":0}],"creates":["e4"]}""",
             step.toString(),
             "and the step is the one it always was",

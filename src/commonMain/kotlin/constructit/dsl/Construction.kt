@@ -3640,6 +3640,14 @@ class Construction {
          * retyped. What it keeps is its slots, so nothing after it renumbers.
          */
         val absentBands: Int = -1,
+        /**
+         * Why this rounding's pick **could not be resolved when the drawing was loaded**, or null where it was
+         * (OP-32 slice 2, OP-3): the face a file names is one the body does not have, or has no sharp edge left.
+         * The run then contributes nothing but its reason — the pass is invalid in its words, naming the face —
+         * and the rounding heals when the drawing is rebuilt with the face back. An *edge* needs none of this: an
+         * edge address that does not resolve is stated as the run itself, and the pass refuses it by name.
+         */
+        val refusal: Msg? = null,
     ) {
         val absent: Boolean get() = absentBands >= 0
     }
@@ -3691,6 +3699,8 @@ class Construction {
             op(*operands.toTypedArray()) {
                 val body = (it[0] as SolidValue).solid
                 openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
+                // a rounding whose pick no longer resolves says so, in its own words (OP-32 slice 2)
+                runs.firstNotNullOfOrNull { r -> r.refusal.takeIf { !r.absent } }?.let { why -> return@op EvalResult.Invalid(why) }
                 val targets = ArrayList<Int>()
                 val sections = ArrayList<BlendSection>()
                 val choices = ArrayList<BlendChoice>()
@@ -3734,6 +3744,16 @@ class Construction {
             op(size) { EvalResult.Ok(it[0]) }
         }
 
+    /**
+     * A solid that **cannot be built because what its feature names is not there** (OP-32 slice 2, OP-3): the face
+     * or edge a file states, on a body that no longer has it. It reads [from] — so it follows that body, goes when
+     * it goes, and is rebuilt with it — and is invalid with [why], which names what is missing.
+     */
+    fun unresolved(
+        from: SolidRef,
+        why: Msg,
+    ): SolidRef = op<SolidValue>(from) { EvalResult.Invalid(why) }
+
     // ---- shelling: a wall of a stated thickness, hollowed out by construction (session 75) ----
 
     /**
@@ -3770,6 +3790,9 @@ class Construction {
             val body = (it[0] as SolidValue).solid
             openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
             val t = sc(it[1]).requireDim(Dimension.LENGTH, Msgs.refusalOpWallThickness()).mm
+            // the open face is an address the file states (OP-32 slice 2): one the body does not have is the
+            // shell's reason to be invalid, in the words the gesture would have refused it with (OP-3)
+            for (f in openFaces) Shell3.openFaceRefusal(body.feature, f)?.let { why -> return@op EvalResult.Invalid(why) }
             val (out, why) = Shell3.shelled(body, t, openFaces)
             if (out == null) return@op EvalResult.Invalid(why ?: Msgs.refusalOpCannotHollowThisBody())
             // **The dress-up feature**: the triangles are the boolean's, restated under the analytic shell and

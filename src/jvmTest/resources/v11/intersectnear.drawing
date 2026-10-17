@@ -1,0 +1,7 @@
+e1 POINT true PointValue(p=Vec2(x=-40.0, y=0.0))
+e2 POINT true PointValue(p=Vec2(x=40.0, y=0.0))
+e3 POINT true PointValue(p=Vec2(x=0.0, y=-40.0))
+e4 POINT true PointValue(p=Vec2(x=0.0, y=40.0))
+e5 LINE true LineValue(line=Line(origin=Vec2(x=-40.0, y=0.0), dir=Vec2(x=1.0, y=0.0)))
+e6 LINE true LineValue(line=Line(origin=Vec2(x=0.0, y=-40.0), dir=Vec2(x=0.0, y=1.0)))
+e7 DERIVED_POINT true PointValue(p=Vec2(x=0.0, y=0.0))

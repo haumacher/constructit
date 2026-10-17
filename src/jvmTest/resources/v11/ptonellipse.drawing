@@ -1,0 +1,5 @@
+e1 POINT true PointValue(p=Vec2(x=50.0, y=50.0))
+e2 POINT true PointValue(p=Vec2(x=110.0, y=50.0))
+e3 ELLIPSE true EllipseValue(ellipse=Ellipse(center=Vec2(x=50.0, y=50.0), a=60.0, b=30.0, rotation=0.0))
+e4 ON_CURVE true PointValue(p=Vec2(x=80.0, y=75.98076211353316))
+scalar semi-axis ScalarValue(q=Quantity(base=30.0, dim=L))

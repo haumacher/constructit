@@ -1,0 +1,20 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":23,"f":18},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"5 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},{"id":"f3","at":[41.999800864975384,15.375],"creates":["e4","e5"]},{"id":"f4","at":[41.999800864975384,-11.775083491926196],"creates":["e6","e7"]},{"id":"f5","at":[-5.521648428788623,-11.775083491926196],"creates":["e8","e9"]},{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"clicks":[[-48.125,37.875]],"params":["f8"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"clicks":[[-42.670739764447546,-4.867038301721209]],"params":["f10"],"signs":[12,-1,1,0,1],"slots":[{"entry":2,"kind":"patch","edges":[1,12,13],"piece":0}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[-31.533048614089623,14.504582242265968]],"params":["f10"],"signs":[13,-1,1,0,1],"creates":["e16"]},
+    {"id":"f13","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[-15.209120508301623,-22.09480593584297]],"params":["f10"],"signs":[1,-1,1,0,1],"creates":["e17"]},
+    {"id":"f14","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[-1.6336097588108203,35.97358839564461]],"params":["f10"],"signs":[14,-1,1,0,1],"slots":[{"entry":3,"kind":"rail","edges":[2,13,14],"piece":0},{"entry":3,"kind":"patch","edges":[2,13,14],"piece":0},{"entry":3,"kind":"patch","edges":[3,14,15],"piece":0}],"creates":["e18","e19"]},
+    {"id":"f15","kind":"tool","tool":"filletedge","els":["e18"],"clicks":[[-11.301657028615722,8.858099327956722]],"params":["f10"],"signs":[2,-1,1,0,-1],"creates":["e20"]},
+    {"id":"f16","kind":"tool","tool":"filletedge","els":["e18"],"clicks":[[56.88568755568988,21.122250050431774]],"params":["f10"],"signs":[3,-1,1,0,1],"creates":["e21"]},
+    {"id":"f17","kind":"tool","tool":"filletedge","els":["e18"],"clicks":[[52.78762484641989,32.49678119098172]],"params":["f10"],"signs":[15,-1,1,0,1],"creates":["e22"]}
+  ]
+}

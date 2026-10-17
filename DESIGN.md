@@ -2413,7 +2413,7 @@ formats one must therefore be dimension-safe, and `Document.evalMm`/`scalarMm` n
 read at *draw* time, where the same fault would have thrown out of the renderer — which is what the user's own
 file, whose wall thickness is a dimensionless parameter, would eventually have done.
 
-### The document is a graph of features, not a journal (OP-32 — RESOLVED, slice 1 of 3 delivered session 89)
+### The document is a graph of features, not a journal (OP-32 — RESOLVED, slices 1 and 2 of 3 delivered session 89)
 
 **The user's decision, verbatim:** *"It started with a simple 'recording of what has been done'. But this is not a
 valid solution for a construction tool. Construction must be edited and refactored. Doing this on a journal of
@@ -2451,7 +2451,8 @@ still an operation:
 
 #### The layout (as built)
 
-GitHub #36's first script, imported and saved:
+GitHub #36's first script, imported and saved (version 11, as slice 1 wrote it — slice 2's version 12 states the
+fillets' picks as their edges, see *Slice 2* below):
 
 ```json
 {
@@ -2574,21 +2575,14 @@ which is what kept the suite's hundreds of name-addressed fixtures valid unchang
 
 #### What is not done, by design of the slicing
 
-- **Picks still stored as clicks** — `clicks` on every `tool` feature, `click` on `intersectnear`/`pointoncurve`,
-  `cells` on an `orbit`. They are the gesture's clicks, verbatim, inside clearly named fields; turning each slot
-  kind's click into the *meaning* it encodes (an edge as the pair of named faces it lies between, a side as a
-  sign) is **slice 2**. By a scan of the tool table, these rows' builds read a click directly: `ptoncircle`,
-  `ptonellipse`, `ptonline`, `ptatdist`, `ptonhelix`, `circle3tan`, `intersectioncurve`, `trilaterate`,
-  `sphereonrun`, `connect`, `connectg2`, `outline`, `concentric`, `rectpath`, `extrudepoint`, `loft`, `filletedge`,
-  `filletfaceedges`, `chamferedge`, `chamferfaceedges`, `blendedge`, `blendfaceedges`, `shell`, `shellclosed`,
-  `cutbychain`, `cutbychainalong`, `cutbychainalongflat`, `parallelat`, `fillet`, `chamfer`, `dimlinear`,
-  `dimradial`, `dimangular` (33); the rest write their clicks but delegate the pick to `Document` helpers, and
-  which of those read them is slice 2's first inventory.
+- ~~**Picks still stored as clicks** — `clicks` on every `tool` feature, `click` on `intersectnear`/`pointoncurve`,
+  `cells` on an `orbit`.~~ — **slice 2, delivered in session 89**: see *Slice 2 — picks as meanings* below, whose
+  inventory classifies every row (the 33 this scan named, and that the delegating rest read nothing).
 - **The editor still edits through its in-memory journal**: the graph is the file, the snapshot and the load order;
   replacing an input, re-routing a dependent and delete-with-reroute are **slice 3**.
 - **An import's payload** (`mesh`, `path` of `import`/`importcurve`) stays its existing encoded text inside one JSON
   string: it is the geometry of a body that has no construction, not a construction, and typing it as JSON arrays
-  is a separable change queued with slice 2.
+  is a separable change — queued with slice 2, and left out of it as not a pick (it keeps its own queue entry).
 
 #### Implementation status (as built — slice 1, session 89)
 
@@ -2624,6 +2618,310 @@ an older file from this build's save now carry that file verbatim as the last jo
 review's `GraphFormatOrchestratorProbeTest` 3 and `EdgeBlendToolTest.theTipABlendLandsOnIsRecordedAndHidingMovesNothing`;
 gradle's count, 3044 passed + 25 skipped before without `-De2e`, 3083 passed + 5 skipped after with it), all green,
 `ktlintCheck` and `jsBrowserDistribution` green; `assertManifold` on every solid the corpus builds.
+
+#### Slice 2 — picks as meanings (as built, session 89)
+
+**What it closes.** Slice 1 made the file a graph and left one thing in it that still recorded *what was done*:
+every `tool` feature carried its gesture's `clicks`, an `orbit` its `cells`, an `intersectnear` and a
+`pointoncurve` their `click`. A click is a position, and a position means a different thing as soon as the geometry
+under it changes — which is exactly what refactoring (slice 3) does. Since **version 12** the file states what each
+click *meant*, read once when the tool runs (and once by the migration for an older file), never again:
+
+| the click meant | the file states | e.g. |
+|---|---|---|
+| an **element** | its identity (`pts`, `els`) — a miss on a placing slot states a new `point` (its `at`, a free DOF) | `"els":["e13"]` |
+| an **edge** of a solid | its **address** under its own name, `edge` | `"edge":13` |
+| a **face** of a solid | its address, `face` | `"face":4` |
+| a **point on a curve** | the curve and the rider's own **parameter** (`dofs`) — an angle, a world coordinate, a distance along | `"dofs":[{"deg":118.46}]` |
+| a **side, branch, sector, seam, end, variant, way round** | the **sign** it already was (`signs`) | `"signs":[-1]` |
+| a **placement** (where a dimension line sits) | the free value it is — the offset, angle, reach, radius (`dofs`) | `"dofs":[{"mm":20}]` |
+| a **corner of a path** (the rectangle) | the path's own vertices (`at`), as any path | |
+
+GitHub #36's two fillets, version 12 (compare the version-11 line under *The layout* above):
+
+```json
+{"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"params":["f10"],"edge":13,"signs":[-1,1,0,1],"slots":[…],"creates":["e14","e15"]},
+{"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"params":["f10"],"edge":2,"signs":[-1,1,0,-1],"creates":["e16"]}
+```
+
+**The address is the naming authority's own, decided, not invented.** An edge's or a face's address is its index
+in the solid's structurally named, index-stable list (`Section3.edges` / `Section3.faces`): the very number a
+dressing's `runs` and `slots`, a `sketchspace … piece=` and a `sectioninput edge=` already state, and the number
+every migration of those lists maps (OP-31's regrouping, the cap slots). The brief offered *the pair of named faces
+it lies between* as the alternative, and it was not taken, for three reasons: the pair does not name an edge
+uniquely (a cylinder's seam is face #1 against face #1; two creases of a general boolean can lie between the same
+two faces — `BoolCrease.run` exists for that); writing a name needs the body's **value** at save time, which an
+invalid body has not got, so the writer would fall back to the index exactly where a stable name matters most; and
+`FaceName`/`EdgeName` are themselves positional (`Side(piece)`, `Upright(piece)`, `CapPiece(which, piece)`), so a
+name would move under a topology change exactly where the index moves. What would really be more stable is a
+naming authority whose names survive a vertex inserted upstream; that is a property of the names, not of the file,
+and it is recorded below as a future extension rather than half-done here.
+
+**Generic, per meaning kind — no case per tool.** The machinery that turns a pick into its meaning already existed
+and is now the only one: a build scores its choice from the click *once* and states it through the document's one
+seam (`registerSigns` for a choice, the rider's or the annotation's restated `dofs` for a value), the writer writes
+what the build stated, and a replay hands it back to the same build, which then reads no click. The one new piece
+of declaration is `ToolDef.address` (`PickAddress.EDGE` / `FACE`): a tool whose first scored choice is an address
+says so in the tool table, and `GraphFormat` writes that choice under its own name (`edge`/`face`) and hands it back
+first on a load — for a `tool` and for an `orbit` riding one alike. Adding a tool needs no format case (OP-18's *new
+tools round-trip for free* stays true): it scores through the seam, and declares an address if it picks one.
+
+**What had to change, because it was not true before** — six decisions were taken again on **every load** rather
+than stated once: five builds re-read their click, and one re-read the geometry. So a drawing edited after the click
+loaded differently from the way it was left (the probes below show each of the first four move in a version-11
+file):
+
+- *Point at distance* — which way along the line, from the anchor: `signs [±1]`.
+- *Concentric circle* — inside or outside: `signs [±1]`.
+- *Parallel at distance* — which side: `signs [±1]`.
+- *Angular dimension* — the sector (its own KDoc claimed it was stored; the node had it, the file did not):
+  `signs [s₁, s₂]`, its radius `dofs` as before.
+- *Outline* — each joint (the branch of a crossing, or which end of a spline or a function curve the neighbour
+  meets; `0` where nothing was chosen: a joint the construction states, or two pieces sharing an end) and each
+  piece's trim (which way round a circle, an arc or an ellipse): `signs`, one per joint then one per piece. A
+  re-stamp that re-traces the boundary (OP-23) scores them afresh from the clicks the trace places, because its
+  pieces are new.
+
+- *Fillet* and *Chamfer* between two curves — **which legs the rounding trims and which end of each it keeps**
+  (GitHub #25's supersession). Not a click at all but a decision the build took from the geometry, and re-took on
+  every load: a leg pulled off its rounding in the session was invalid there and came back untrimmed and valid from
+  the file. Found by the generic edit probe below, not by the inventory — it is the same class as slice 1's
+  visibility decisions, and stated the same way: two numbers after the variant (`0` untrimmed, `1` the start kept,
+  `2` the end kept), decided once, and a file without them decides on its load exactly as before.
+
+and an orbit's copies take the choices of the **first copy that built anything** (it used to be strictly copy 0,
+and a copy 0 that built nothing left the rest to score from `cells`, which the file no longer has).
+
+**The migration is the old load itself** (`DocumentFormat.MEANING_VERSION = 12`). A version-11 file, and every
+journal 1–10, hands its clicks to the very builds that scored them when it was written, in the order its
+references decide — exactly what its own load did — and each build states the meaning it reached; the re-save has
+no click. `clicks`, `cells` and `click` are read only below version 12; a version-12 file that states one is
+refused by name (`refusal.file.clickField`), as is an `edge`/`face` on a tool that declares none
+(`refusal.file.address`).
+
+**A meaning that no longer resolves is an invalid feature, not a load error** (OP-3). A rounding whose edge the body
+does not have — a hand edit, an upstream change that took it away — is built as what the file states: its edge (or
+the run the file recorded) goes into the pass and the pass refuses it **by name** when it evaluates (*this solid
+has no edge #24 (it has 18)*), so it heals on the very pass the edge is back; a face, which names edges only the
+face can say, rides the entry as its refusal (`BlendRun.refusal`) until the drawing is rebuilt with the face there.
+The same holds for a rounding chained onto a body that has **no value** while the file is read — which before this
+slice failed to load (*"'tool' created 0 element(s) but the script declares 1"*): the file says which dressing it
+joins and which edge it rounds, and that is built. A shell open at a face the body does not have is invalid in the
+shell's own words (the node checks the face now; the gesture already did). Never a re-pick.
+
+**What still states a position, and why each is a free DOF** — a `point`'s `at`, a path's start and vertices, an
+`orthobreak`'s `at`/`open`, a group's `place.at`, a wireframe sketch's `pts`: each is where something **is**, dragged
+and typed and restated on every save; none of them is a click read again to decide anything. A dimension's
+placement and a rider's position are not positions at all in the file: they are the dimension's own offsets and the
+rider's own parameter (`dofs`).
+
+**The classification of every tool row** (the slot kinds as `Tools.kt` declares them; *new* marks a meaning this
+slice made a build state):
+
+**Per slot kind — what a pick on it is, and the meanings tools read off the same click** (the resolver is the
+slot kind's for the element and the build's for the rest; there is no third place):
+
+| slot kind | the pick is (`pts`/`els`) | what a click on it can further mean, and who reads it |
+|---|---|---|
+| PLACE\_POINT, POINT, INPUT\_POINT, POINT3 | an existing point, or a new free `point` (its `at`) where the click hit nothing | nothing |
+| EXISTING\_POINT, OPTIONAL\_POINT, ON\_CIRCLE\_POINT | an existing point (the optional one may be absent) | nothing |
+| CURVE | the curve | *Outline*: each joint's branch or end, each piece's way round (`signs`) |
+| LINE | the carrier line | *Point on line*: the parameter (`dofs`); *Point at distance*: which way (`signs`) |
+| CIRCLE | the carrier circle (a circle or an arc) | *Point on circle*: the angle (`dofs`) |
+| CONIC | the carrier ellipse | *Point on ellipse*: the parametric angle (`dofs`) |
+| CARRIER | a fillet's or chamfer's leg | the variant and each leg's trim (`signs`) |
+| AREA | what bounds the area | *Extrude to point*: the seam (`signs`) |
+| LOFT\_PART | a section, an apex or a guide | *Loft*: each section's seam (`signs`) |
+| SOLID | the solid | the roundings: the edge or face (`edge`/`face`) and the sectors (`signs`); *Shell*: the open face (`face`) |
+| PATH3 | the curve in space | *Point on helix*: the angle (`dofs`); *Connect*: which end (`signs`); *Sphere on run*: which crossing (`signs`) |
+| SECTION\_CURVE | the solid whose section it is | which curve of the section (`signs`) |
+| SIDE | nothing — it picks no element | a choice (`signs`: side, sector, tangent circle, crossing, the side a cut keeps), a placement (`dofs`: a dimension's offset), or a path's corner (the rectangle's vertices) |
+| CENTERED, MEASURABLE, SEGMENT, GEOMETRY, EXTRACTABLE, CHAIN, DRAWN\_RUN, BLEND\_PROFILE, SPHERE | the element | nothing |
+
+**Per tool row** — every row of `Tools.all`, in table order:
+
+| tool | slots | what each pick means, and where the file states it |
+|---|---|---|
+| `point` | PLACE\_POINT | PLACE\_POINT → a `point` feature (`at`, a free DOF) |
+| `midpoint` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `intersect` | CURVE, CURVE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `project` | POINT, LINE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `ptoncircle` | CIRCLE | the circle (`els`) + **its angle** about the centre (`dofs`) |
+| `ptonellipse` | CONIC | the ellipse (`els`) + **its parametric angle** (`dofs`) |
+| `ptonline` | LINE | the line (`els`) + **its parameter** — the free world coordinate of an axis-aligned host, else the distance along the carrier (`dofs`) |
+| `ptatdist` | POINT, LINE | the anchor (`pts`), the line (`els`); the click on the line → **which way along it** (`signs` [±1]) — *new* |
+| `ptxy` | — | no picks: the two coordinates (`params`) |
+| `heightpoint` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `centre` | CENTERED | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `projectplane` | POINT3, SIDE | the point (`pts`); the SIDE click confirms in the target space and states nothing (`projectplane` feature: `source`) |
+| `ptonhelix` | PATH3 | the helix (`els`) + **its angle**, winding included (`dofs`) |
+| `keypoints` | EXTRACTABLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `join` | EXISTING\_POINT, EXISTING\_POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `makerel` | EXISTING\_POINT, INPUT\_POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `makeabs` | EXISTING\_POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `unlink` | EXISTING\_POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `line` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `segment` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `ray` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `orthopath` | — | driven by its own gesture, not by the slot collector: a `path` (vertex `at`s), `orthobreak` (`at`, `open`), `wall`, `opening` (`pos`), `sketchspace` (`el`, `piece` — the face by address) |
+| `breakleg` | — | driven by its own gesture, not by the slot collector: a `path` (vertex `at`s), `orthobreak` (`at`, `open`), `wall`, `opening` (`pos`), `sketchspace` (`el`, `piece` — the face by address) |
+| `wall` | — | driven by its own gesture, not by the slot collector: a `path` (vertex `at`s), `orthobreak` (`at`, `open`), `wall`, `opening` (`pos`), `sketchspace` (`el`, `piece` — the face by address) |
+| `opening` | — | driven by its own gesture, not by the slot collector: a `path` (vertex `at`s), `orthobreak` (`at`, `open`), `wall`, `opening` (`pos`), `sketchspace` (`el`, `piece` — the face by address) |
+| `circle` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `circleR` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `circle3` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `circle3tan` | LINE, LINE, LINE, SIDE | the three lines (`els`); SIDE → **which of the four tangent circles** (`signs` [s₁₂, s₁₃]) |
+| `arc3` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `arccs` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `ellipse` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `ellipseab` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `ellipticarc` | POINT, POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `bezier` | POINT, POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `curve3` | POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `curve3smooth` | POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `helixpt` | POINT3, POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `helixptleft` | POINT3, POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `helix` | POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `helixleft` | POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `combineviews` | CURVE, CURVE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `intersectioncurve` | SECTION\_CURVE | the solid (`els`); the click → **which curve of the section** (`signs` [index]) |
+| `spherelocus` | POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `spherelocuspt` | POINT3, POINT3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `spherecircle` | SPHERE, SPHERE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `trilaterate` | SPHERE, SPHERE, SPHERE, SIDE | the three spheres (`els`); SIDE → **which of the two crossings** (`signs` [±1]) |
+| `sphereonrun` | SPHERE, PATH3 | the sphere and the run (`els`); the click on the run → **which crossing** (`signs`) |
+| `lift` | DRAWN\_RUN | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `connect` | PATH3, PATH3 | the two runs (`els`); each click → **which end** is joined (`signs` [end₁, end₂]) |
+| `projectface` | CURVE, SOLID | the curve and the solid (`els`); **the face** it lands on, scored from the geometry (`face`) |
+| `connectg2` | PATH3, PATH3 | as *connect*, plus the kept-in-space marker a pre-5 file earned (`signs`) |
+| `outline` | CURVE | the pieces, in order (`els`); each click → **how each joint is taken** — the branch of a crossing, the end of a piece built onto its neighbours, 0 where nothing was chosen — and **which way round** each circle, arc or ellipse is trimmed (`signs`, 2 per piece) — *new* |
+| `thicken` | CURVE | the curves (`els`) + **the side of each** (`signs`, one `Justification` per curve) |
+| `concentric` | CIRCLE, SIDE | the circle (`els`); SIDE → **inside or outside** (`signs` [±1]) — *new* |
+| `rectpath` | SIDE, SIDE | two SIDE clicks → **the path's own corners** (`path` feature: `at`, `vertices[].at` — free DOFs, restated) |
+| `roundrect` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `polygon` | POINT, POINT | centre and vertex (`pts`), the count; with a corner radius it records a `pattern` and two `orbit`s, whose fillet states its variant (`signs`) |
+| `extrude` | AREA | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `revolve` | AREA, LINE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `sphereR` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `sphere` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `extrudepoint` | AREA, POINT | the area (`els`), the apex (`pts`); the click on the area → **the seam** (`signs` [piece, 0]) |
+| `loft` | LOFT\_PART | the parts (`els`); each section's click → **its seam** (`signs`, one per part) |
+| `tube` | PATH3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `sweep` | PATH3, OPTIONAL\_POINT, AREA | the run, the optional anchor point and the section (`els`/`pts`); the crossing the section is placed at, scored from the geometry (`signs`) |
+| `extrudeface` | SOLID, AREA | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `section` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `cut` | AREA | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `union` | SOLID, SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `subtract` | SOLID, SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `intersectsolids` | SOLID, SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `filletedge` | SOLID | the solid (`els`); the click → **the edge** (`edge`) + the sector of each edge of its run (`signs`, 4 per edge); the run itself `runs`, the body `tips` |
+| `filletfaceedges` | SOLID | the solid (`els`); the click → **the face** (`face`) + the sector of each of its edges (`signs`, 4 per edge) |
+| `chamferedge` | SOLID | as *filletedge* |
+| `chamferfaceedges` | SOLID | as *filletfaceedges* |
+| `blendedge` | SOLID, BLEND\_PROFILE | as *filletedge*, + the profile (`els`); 5 signs per edge (the fifth: which end is which setback) |
+| `blendfaceedges` | SOLID, BLEND\_PROFILE | as *filletfaceedges*, + the profile (`els`); 5 signs per edge |
+| `loftruled` | AREA | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `loftfair` | AREA | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `loftmatch` | CURVE, CURVE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `shell` | SOLID | the solid (`els`); the click → **the open face** (`face`) |
+| `shellclosed` | SOLID | the solid (`els`) — its click reads nothing |
+| `placesolid` | SOLID, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `placecurve` | PATH3, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `cutopenings` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `chain` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `cutbychain` | SOLID, CHAIN, SIDE | the solid and the chain (`els`); SIDE → **which side is kept** (`signs` [±1]) |
+| `splitbychain` | SOLID, CHAIN | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `cutbychainalong` | SOLID, CHAIN, PATH3, SIDE | as *cutbychain*, + the run (`els`) |
+| `cutbychainalongflat` | SOLID, CHAIN, PATH3, SIDE | as *cutbychain*, + the run (`els`) |
+| `splitbychainalong` | SOLID, CHAIN, PATH3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `splitbychainalongflat` | SOLID, CHAIN, PATH3 | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `planeheight` | — | records a `sketchspace` (or `wiresketch`) feature: the picked element (`el`/`line`/`path`/`wire`) and its scalars — no position |
+| `sketchplane` | LINE | records a `sketchspace` (or `wiresketch`) feature: the picked element (`el`/`line`/`path`/`wire`) and its scalars — no position |
+| `station` | PATH3 | records a `sketchspace` (or `wiresketch`) feature: the picked element (`el`/`line`/`path`/`wire`) and its scalars — no position |
+| `wiresketch` | PATH3 | records a `sketchspace` (or `wiresketch`) feature: the picked element (`el`/`line`/`path`/`wire`) and its scalars — no position |
+| `sketchface` | — | driven by its own gesture, not by the slot collector: a `path` (vertex `at`s), `orthobreak` (`at`, `open`), `wall`, `opening` (`pos`), `sketchspace` (`el`, `piece` — the face by address) |
+| `spaceorigin` | EXISTING\_POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `perpbis` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `anglebis` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `perp` | LINE, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `parallel` | LINE, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `parallelat` | LINE, SIDE | the line (`els`); SIDE → **which side** (`signs` [±1]) — *new* |
+| `tangent` | POINT, CIRCLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `tangentat` | ON\_CIRCLE\_POINT, CIRCLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `fillet` | CARRIER, CARRIER | the two legs (`els`); the two clicks → **the variant** (`signs` [s₁, s₂] or [side₁, side₂, branch]), then **the end of each leg its trim kept** (two more, 0 untrimmed) — *new* |
+| `chamfer` | CARRIER, CARRIER | as *fillet*: the variant, then the trims — *new* |
+| `outertan` | CIRCLE, CIRCLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `innertan` | CIRCLE, CIRCLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mirror` | GEOMETRY, LINE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `pointreflect` | GEOMETRY, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `rotate` | GEOMETRY, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `scale` | GEOMETRY, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `translatev` | GEOMETRY, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `arraylinear` | GEOMETRY, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `arraycircular` | GEOMETRY, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `patterncircular` | POINT, POINT | records a `pattern` feature: `ref`, `centre`/`to`, `count` |
+| `patternlinear` | POINT, POINT | records a `pattern` feature: `ref`, `centre`/`to`, `count` |
+| `mdist` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mangle` | POINT, POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mlen` | MEASURABLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mradius` | CIRCLE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mx` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `my` | POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `manglelines` | LINE, LINE | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mvolume` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mextentx` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mextenty` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `mextentz` | SOLID | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+| `dimlinear` | INPUT\_POINT, INPUT\_POINT, SIDE | the two points (`els`); SIDE → **the placement**, the offset of the dimension line (`dofs` [mm]) |
+| `dimradial` | CENTERED, SIDE | the circle or arc (`els`); SIDE → **the placement**, the leader's angle and reach (`dofs` [deg, mm]) |
+| `dimangular` | LINE, LINE, SIDE | the two lines (`els`); SIDE → **the sector** (`signs` [s₁, s₂]) — *new* — and **the placement**, the arc's radius (`dofs` [mm]) |
+| `rect` | POINT, POINT | the picked elements alone (`pts` / `els`); the clicks state nothing more |
+
+The non-tool features that carried a click: `intersectnear` — the two curves and the branch (`signs`); `pointoncurve`
+— the curve and the rider's parameter (`dofs`); `orbit` — the pattern, the member picks (`{"el","at"}`) and the
+choices its first copy scored (`signs`, an address split out as above).
+
+**Cut, and why** — nothing of the slot kinds: every click of every row is a meaning or nothing. One item the queue
+line had put beside this slice is left for its own: **typing an import's payload as JSON arrays** (`mesh`, `path` of
+`import`/`importcurve`). It is not a pick — it is the geometry of a body that has no construction — and it is
+separable, so it keeps its own queue entry.
+
+**Future extension, recorded rather than claimed**: an address is index-stable under every *value* change and under
+every edit the dressing machinery already guards (OP-30's tombstones, OP-31's slots), but an upstream **topology**
+change — a vertex inserted into the profile an extrusion sweeps — renumbers the pieces, and with them the edges and
+faces. The file now says exactly what the pick was in the authority's own terms; making those terms survive an
+inserted vertex is the naming authority's next step, and slice 3's refactoring will meet it first.
+
+#### Implementation status (as built — slice 2, session 89)
+
+`DocumentFormat.VERSION = 12`, `MEANING_VERSION = 12`; `GraphFormat` marks the click fields `legacy` (read below 12,
+refused at 12, never written) and splits the address (`addressed` / `addressOf`); `ToolDef.address` + `PickAddress`
+in `Tools.kt`, declared by the six roundings, the open shell and the projection onto a face; `Picks.click(i)`
+for the two builds that indexed `clicks` directly. Builds: `pointAlongLine`, `concentricCircle`,
+`parallelAtDistance`, `angularDimension`, `buildOutline` (+ `jointBetween`, `bezierEndNear`, `funcEndNear`,
+`trimPiece`, `intersectNearNow`) state their choices; `blendEdges` → `unresolvedBlend`, `shellSolid` build what a
+file states when it does not resolve; `Construction.BlendRun.refusal`, `Construction.unresolved`, the shell node's
+face check. `intersectNear` and `pointOnCurve` take no click on a replay; `restatedRiderParam` falls back to the
+literal so a rider's parameter is always stated. Two new keys, `refusal.file.clickField` and
+`refusal.file.address` (English only; German and French are owed to the next `translateArb`).
+
+Tests: `V11CorpusTest` — **33 version-11 files written by the build before this slice** (`src/jvmTest/resources/v11/`,
+one per click-reading tool and #36), each with the drawing that build loaded beside it (`*.drawing`): each loads
+as that drawing, re-saves at 12 with no click anywhere, reloads as the same drawing and is a fixed point.
+`PicksAsMeaningsTest` — the probes: a point at a distance, a concentric circle, a parallel and an angular dimension
+each **move** when the version-11 file is edited under its click and **stay** through a version-12 round trip of the
+same edit made in the session; a rider stays at its parameter when its host turns; #36's fillet stays on edge 13
+when the L's wall moves so that a fresh click at the old position names another edge; a face rounding stays on its
+face when the sweep turns so that a fresh click names the other cap; a re-stamp that takes the rounded edge away
+leaves the rounding invalid naming it, saveable and loadable, and undo heals it; a hand-edited edge and face load as
+invalid features naming them. `V11CorpusTest`'s second test is the generic probe: every fixture with every free point moved by (400, −300) in the
+session reloads from version 12 as the session showed it — proved against seeded defects (a concentric circle and a
+parallel that ignore their stated side are both caught), and it is what found the trims. `JournalCorpusTest`
+round-trips every journal the suite loads through version 12, unchanged in its assertions. About twenty test files
+read the new spelling (`addressed()` in `SavedFile.kt`: the address and the signs as the build reads them; no
+`clicks` in a hand-built feature). **3099 → 3111 tests** (12 new: `V11CorpusTest` 2, `PicksAsMeaningsTest` 10;
+3107 passed + 4 skipped with `-De2e=1`), all green, `ktlintCheck` and `jsBrowserDistribution` green;
+`assertManifold` on every solid the corpus and the probes build.
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -15495,6 +15793,25 @@ the composition table is driven generically as well as by its own test.
   (refactoring on the graph) are queued.
 
 
+- **Turn 116 — a click is stated as what it meant** (OP-32, slice 2; session 89). The user's goal carried on from
+  Turn 115: refactoring must be safe, and a click in the file means a different edge as soon as the geometry under
+  it changes. Format **12** states no click at all: an element by identity, an edge or a face of a solid by its
+  address under its own name (`"edge": 13` — the naming authority's index-stable address, the very number `runs`
+  and `slots` already state; the face-pair alternative was weighed and refused because a pair names no edge
+  uniquely and a name needs the body's value at save time), a point on a curve by its parameter, a side, branch,
+  seam or sector by its sign, a placement by its value. The inventory classified every one of the 134 tool rows and
+  found **five builds that re-read their click on every load** — *Point at distance*, *Concentric circle*,
+  *Parallel at distance*, the angular dimension's sector and the Outline tracer's joints and trims — each of which
+  moved when a version-11 drawing was edited under its old click; each now states its choice. A generic probe —
+  every version-11 fixture, every free point moved in the session, saved at 12 and reloaded — found a sixth,
+  which was no click at all: a fillet's or chamfer's trim of its legs, re-decided from the geometry on every load;
+  it is stated now too. The migration is the old load itself: an older file hands its clicks to the builds that
+  scored them, in its dependency order, and the re-save carries the meaning. A meaning that no longer resolves is
+  an invalid feature naming what is missing, never a load error and never a re-pick — which also cured a rounding
+  chained onto a body that had no value while the file was read, a file that failed to load before. Thirty-three
+  version-11 files from the build before this slice are now permanent cross-build fixtures, each beside the
+  drawing that build loaded. 3099 → 3111 tests, all green.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -25898,14 +26215,14 @@ nine edges out of the matrix's own class.
 
 ~~**Queued in session 83 — the general boolean is deterministic only to an ULP.** Two evaluations of one construction give volumes that differ by a part in 10¹² (slice 5g measured it under a re-stamp; slice 5e's gate met it between two fresh evaluations of the keyhole corner, `15000.06280217351` against `15000.062802156805`). `MeshBool`'s stated contract is bit-for-bit determinism after canonicalisation; the canonical form sorts triangles but cannot repair coordinates that Manifold's own parallel reductions round differently from run to run. Either the engine is pinned to a deterministic execution policy (and the contract is asserted by a test that evaluates one boolean twice and compares bytes), or the contract is restated as *deterministic to the engine's ULP* and every same-body assertion in the suite says so, as `BlendCurvedCornerTest` now does. Undo/reload equality (OP-4) is the reason it matters.~~ — **closed in session 89, and the premise was wrong twice.** It is not an ULP — the two volumes are two *triangulations* (1007 and 1010 vertices) of one surface — and it is not the boolean's parallel reductions: pinned to one CPU the coin still lands both ways, one `MeshGL` imported afresh lands both ways, and one *imported* pair subtracted forty times lands one way, so it is the clojars binding's **mesh import**. The engine the app ships (WebAssembly, serial) and the from-source shim answer one way every time. So the cure is both halves, each where it is true: the contract is **bytes** on those two engines and **the same body** on the default JVM binding, which no shipped build uses and which exposes no execution policy to pin; the suite asserts it through one helper. See the OP-9 as-built note *"Determinism, per engine"* and Turn 113.
 
-**Queued in session 89 — OP-32, the document as a graph of features: slices 2 and 3** (slice 1, the format, is
-delivered — see OP-32). **(2) Picks as meanings, slot kind by slot kind.** Every `tool` feature still stores its
-gesture's `clicks` (and `intersectnear`/`pointoncurve` their `click`, an `orbit` its `cells`); each slot kind's click
-is to become the *meaning* it encodes — an edge as the pair of named faces it lies between, a face by its name, a
-side or a branch as the sign it already is — one slot kind at a time, each a version bump with a migration that
-reads the click once and writes the meaning (OP-18). First task: the exact inventory of which rows' builds read a
-click (33 read one directly; the delegating rest are to be classified), and the import payloads typed as JSON
-arrays beside it. **(3) Graph refactoring in the editor**: replace an input of a feature, reroute a dependent onto
+**Queued in session 89 — OP-32, the document as a graph of features: slice 3** (slice 1, the format, and slice 2,
+picks as meanings, are delivered — see OP-32). ~~**(2) Picks as meanings, slot kind by slot kind.** Every `tool`
+feature still stores its gesture's `clicks` (and `intersectnear`/`pointoncurve` their `click`, an `orbit` its
+`cells`); each slot kind's click is to become the *meaning* it encodes.~~ — **delivered in session 89** as format 12:
+no click in any file, every row classified, the migration the old load itself; see OP-32's *Slice 2* and Turn 116.
+**Still open beside it, cut from (2) as not a pick: an import's payload typed as JSON arrays** (`mesh`, `path` of
+`import`/`importcurve`, today one Base64 string each — a separable format change with its own version bump).
+**(3) Graph refactoring in the editor**: replace an input of a feature, reroute a dependent onto
 another element, delete-with-reroute instead of delete-with-cascade — on the graph rather than on the in-memory
 journal, which this slice makes possible and does not yet do. Its precondition: every place creation order is
 meaningful without a reference (a dressing's entry order, a path's vertices) stated as an explicit edge, so that reordering is a graph edit and not an accident of identity.

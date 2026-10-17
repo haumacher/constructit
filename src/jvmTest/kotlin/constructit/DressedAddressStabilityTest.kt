@@ -360,7 +360,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         // into a corner of three edges
         val now0 = DocumentFormat.save(ed.doc)
         val c = saved(now0).paramIds("c").single()
-        val third = """{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[0,0]],"params":["$c"],"signs":[2,-1,1,0,-1],"creates":["e17"]}"""
+        val third = """{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"params":["$c"],"edge":2,"signs":[-1,1,0,-1],"creates":["e17"]}"""
         val grown = load(withEntries(now0, features = listOf(third)))
         val now = appendedEdges(refOf(body(grown)), base)
         val nowF = appendedFaces(refOf(body(grown)), L.block.faces.size)
@@ -412,9 +412,9 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         val r = saved(three).paramIds("r").single()
         val r2 = """{"id":"f899","name":"r2","value":"1 mm"}"""
 
-        fun roundIt(id: Int) = """{"id":"f$id","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[0,0]],"params":["f899"],"signs":[$at],"creates":["e18","e19"]}"""
+        fun roundIt(id: Int) = """{"id":"f$id","kind":"tool","tool":"filletedge","els":["e14"],"params":["f899"],"edge":$at,"creates":["e18","e19"]}"""
 
-        fun fourth(id: Int) = """{"id":"f$id","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[0,0]],"params":["$r"],"signs":[4],"creates":["e20"]}"""
+        fun fourth(id: Int) = """{"id":"f$id","kind":"tool","tool":"chamferedge","els":["e14"],"params":["$r"],"edge":4,"creates":["e20"]}"""
 
         val plain = DocumentFormat.load(withEntries(three, listOf(r2), listOf(roundIt(900))))
         assertEquals(rail, edgesOf(refOf(dressed(plain))).getOrNull(at)?.name, "the step addresses the corner's own rail")

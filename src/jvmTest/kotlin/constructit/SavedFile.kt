@@ -64,6 +64,13 @@ fun JsonObject.ids(key: String): List<String> = (this[key] as? JsonArray)?.map {
 /** A list of integers: `"signs": [1,-1]`. */
 fun JsonObject.ints(key: String): List<Int> = (this[key] as? JsonArray)?.map { it.jsonPrimitive.content.toInt() } ?: emptyList()
 
+/**
+ * A pick's **address and the choices it was scored with**, as its build reads them: the `edge` or `face` it names on
+ * its solid first, then `signs` (OP-32 slice 2 — the file states the address under its own name, the build has
+ * always read it as the first of its choices).
+ */
+fun JsonObject.addressed(): List<Int> = listOfNotNull(int("edge") ?: int("face")) + ints("signs")
+
 /** A list of numbers or quantities, each as its plain number (`{"mm": 2}` -> 2.0). */
 fun JsonObject.nums(key: String): List<Double> = (this[key] as? JsonArray)?.map { numberOf(it) } ?: emptyList()
 

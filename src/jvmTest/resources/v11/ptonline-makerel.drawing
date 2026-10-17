@@ -1,0 +1,7 @@
+e1 POINT true PointValue(p=Vec2(x=0.0, y=0.0))
+e2 POINT true PointValue(p=Vec2(x=60.0, y=0.0))
+e3 CIRCLE true CircleValue(circle=Circle(center=Vec2(x=0.0, y=0.0), radius=20.0))
+e4 SEGMENT true SegmentValue(seg=Segment(a=Vec2(x=0.0, y=0.0), b=Vec2(x=60.0, y=0.0)))
+e5 ON_CURVE true PointValue(p=Vec2(x=30.0, y=0.0))
+scalar dist ScalarValue(q=Quantity(base=60.0, dim=L))
+scalar radius ScalarValue(q=Quantity(base=20.0, dim=L))

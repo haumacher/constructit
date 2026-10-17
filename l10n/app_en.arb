@@ -19811,6 +19811,30 @@
       }
     }
   },
+  "refusal.file.clickField": "it states ''{field}'', the position a click landed on, and a drawing of format {version} states what each click meant instead",
+  "@refusal.file.clickField": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why one feature of a drawing file could not be read; it follows the feature's identity and is shown under the file buttons. Since format 12 a file no longer records where the user clicked (a click position, a JSON field named for example clicks or cells); it records what the click meant: which edge, which side, which branch. {field} is the JSON field name, which stays exactly as written (for example clicks); {version} is the file format version number. The two single quotes around {field} are the ICU spelling of one apostrophe-quote mark and must be kept. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "version": {
+        "type": "int"
+      }
+    }
+  },
+  "refusal.file.address": "it states ''{field}'', and the tool {tool} picks no {field} of the solid it works on",
+  "@refusal.file.address": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why one feature of a drawing file could not be read; it follows the feature's identity and is shown under the file buttons. Some tools pick an edge or a face of a solid, and the file records which one as a number under the field edge or face. This feature records such a number although its tool does not pick that kind of thing (or records it in a form that is not a whole number). {field} is the JSON field name, either edge or face, which stays in English exactly as written; {tool} is the tool's internal identifier (for example filletedge), which stays as it is. The two single quotes around the first {field} are the ICU spelling of one apostrophe-quote mark and must be kept. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
   "refusal.file.cycle": "{feature} is built from its own result: {chain}; the features of a drawing cannot depend on one another in a circle",
   "@refusal.file.cycle": {
     "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)) and {chain} lists the features of the circle, joined by arrows, in the order each depends on the next. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",

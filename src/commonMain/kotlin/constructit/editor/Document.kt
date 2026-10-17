@@ -6031,7 +6031,10 @@ class Document {
             // registration for the gesture-time compensation a carrier-anchored parameter needs (OP-20); both
             // describe a bond that has just ended, and leaving them behind left a free point still claiming a
             // host — the same clean-up [detachRider] does for the other shape a rider can have.
-            riders.remove(alias.id)?.let { rec -> carrierRiders.removeAll { it.dof === rec.param } }
+            riders.remove(alias.id)?.let { rec ->
+                carrierRiders.removeAll { it.dof === rec.param }
+                formerRiderParams[alias.id] = rec.param
+            }
             // the position it now owns is state this step must restate (OP-18) — see [unweld], [relativeDofs]
             unwelded.add(alias.id)
             noteReparam(alias)
@@ -6611,6 +6614,7 @@ class Document {
         // compensation a carrier-anchored parameter needs (OP-20) — there is no longer anything to compensate
         riders.remove(pt.id)
         carrierRiders.removeAll { it.dof === rec.param }
+        formerRiderParams[pt.id] = rec.param
         detached[pt.id] = free
         pt.kind = ElementKind.POINT
         pt.style = Styles.FREE_POINT
@@ -6657,6 +6661,7 @@ class Document {
         view.boundTo = cx.heightPoint(planeRef, base, Ref<ScalarValue>(height)).node
         riders.remove(pt.id)
         carrierRiders.removeAll { it.dof === rec.param }
+        formerRiderParams[pt.id] = rec.param
         freedInSpace[pt.id] = FreedInSpace(base.node as SourceNode, height)
         pt.kind = ElementKind.HEIGHT_POINT
         pt.style = Styles.DERIVED_POINT
@@ -7006,8 +7011,10 @@ class Document {
         el: Element,
         ev: Evaluator,
     ): Quantity? {
-        val node = riderParam(el) ?: return null
-        val q = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: return null
+        val node = riderParam(el) ?: formerRiderParams[el.id] ?: return null
+        // …and where the parameter cannot be evaluated right now (a wire to something invalid), the literal it
+        // holds: since OP-32 slice 2 this is the only statement of where the rider sits, so it is never omitted
+        val q = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: (node.value as? ScalarValue)?.q ?: return null
         val rec = riderOf(el) ?: return q
         val g = allGroups.firstOrNull { grp -> grp.capturedRiders.any { it === rec } } ?: return q
         return unturned(q, g, rec.form, rec.axis, rec.line, rec.point.node, ev)
@@ -7300,6 +7307,20 @@ class Document {
      * creating step needs. One node, whichever form the rider is in.
      */
     fun riderParam(el: Element): SourceNode? = riders[el.id]?.param
+
+    /**
+     * The parameter a point **rode at** before it was freed from its host — by *Make absolute*, *Unlink* or a weld
+     * that took its position over — keyed by element id (OP-32 slice 2).
+     *
+     * The step that made the rider still has to say where on the curve it made it, because a file of version 12
+     * states no click to place it by: the replay builds the rider at that parameter and the step that freed it
+     * then hands the point the position it owns from there on. Kept rather than dropped with the rider's record,
+     * whose job — what the rider follows *now* — ended with the bond.
+     */
+    private val formerRiderParams = HashMap<String, SourceNode>()
+
+    /** Whether [el] was made as a rider — riding still, or freed since — so its creating step restates where. */
+    fun madeAsRider(el: Element): Boolean = riders.containsKey(el.id) || formerRiderParams.containsKey(el.id)
 
     private fun noteRider(
         el: Element,
@@ -8240,26 +8261,33 @@ class Document {
         return dof to Msgs.notePointsItHasBeenMovedSince(kept = kept)
     }
 
-    /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
+    /**
+     * Fully-determined point on a line at [distance] from [from]; which way along the line is the click side of
+     * [at] — **scored once and stated** (OP-1, OP-32 slice 2): [stored] is the direction a replay hands back, and
+     * the click is read only when there is none, which is a gesture or a file older than
+     * [DocumentFormat.MEANING_VERSION]. Before it the click was re-read on every load, so dragging [from] past
+     * the clicked spot flipped the point to the other side the next time the drawing was opened.
+     */
     fun pointAlongLine(
         line: Element,
         from: PointRef,
         distance: ScalarRef,
         at: Vec2,
+        stored: Int? = null,
     ): PointRef {
         val lineRef = carrierLine(line)
         val ev = Evaluator()
         val l = (ev.eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val fromP = (ev.eval(from.node) as? EvalResult.Ok)?.value as? PointValue
         val sign =
-            if (l != null && fromP != null) {
+            stored ?: if (l != null && fromP != null) {
                 val geom = l.line
                 val proj = geom.origin + geom.dir * (fromP.p - geom.origin).dot(geom.dir)
                 if ((at - proj).dot(geom.dir) >= 0) 1 else -1
             } else {
                 1
             }
-        return addDerived(cx.pointAlongLine(lineRef, from, distance, sign))
+        return addDerived(cx.pointAlongLine(lineRef, from, distance, sign)).also { elements.lastOrNull()?.let { el -> registerSigns(el, listOf(sign)) } }
     }
 
     /**
@@ -8512,11 +8540,13 @@ class Document {
     fun intersectNear(
         a: Element,
         b: Element,
-        near: Vec2,
+        near: Vec2?,
         sign: Int? = null,
     ): PointRef? =
-        recording("intersectnear", Arg.El(a), Arg.El(b), Arg.Pos(near)) {
-            intersectNearNow(a, b, near, sign, remember = true)
+        // the click is the gesture's, and an older file's (OP-32 slice 2): a file of version 12 states the branch
+        // it chose and nothing else, so a replay of one has no position to hand over and needs none
+        recording("intersectnear", *listOfNotNull(Arg.El(a), Arg.El(b), near?.let { Arg.Pos(it) }).toTypedArray()) {
+            if (near == null && sign == null) null else intersectNearNow(a, b, near ?: Vec2(0.0, 0.0), sign, remember = true)
         }
 
     private fun intersectNearNow(
@@ -8525,6 +8555,8 @@ class Document {
         near: Vec2,
         stored: Int? = null,
         remember: Boolean = false,
+        /** Told the branch taken — what the Outline tracer states for each joint it intersects (OP-32 slice 2). */
+        chosen: (Int) -> Unit = {},
     ): PointRef? {
         val crossing =
             intersectionSet(a, b) ?: run {
@@ -8545,6 +8577,7 @@ class Document {
             ref: PointRef,
         ): PointRef {
             val out = addDerived(ref)
+            chosen(sign)
             if (remember) elements.lastOrNull()?.let { registerSigns(it, listOf(sign)) }
             stateCrossingOnCircles(listOf(out), a, b)
             return out
@@ -8579,9 +8612,14 @@ class Document {
      */
     fun pointOnCurve(
         el: Element,
-        at: Vec2,
+        at: Vec2?,
         dof: Quantity? = null,
-    ): PointRef? = recording("pointoncurve", Arg.El(el), Arg.Pos(at)) { pointOnCurveNow(el, at, dof) }
+    ): PointRef? =
+        // where the rider sits is its parameter, restated by every save; the click that first placed it is the
+        // gesture's and an older file's only (OP-32 slice 2), and with a parameter in hand it places nothing
+        recording("pointoncurve", *listOfNotNull(Arg.El(el), at?.let { Arg.Pos(it) }).toTypedArray()) {
+            if (at == null && dof == null) null else pointOnCurveNow(el, at ?: Vec2(0.0, 0.0), dof)
+        }
 
     private fun pointOnCurveNow(
         el: Element,
@@ -9999,11 +10037,20 @@ class Document {
     fun buildOutline(
         picks: List<Element>,
         clicks: List<Vec2>,
+        signs: List<Int> = emptyList(),
     ): Element? {
         val n = picks.size
-        if (n < 2 || clicks.size < n) return null
+        // **what each click chose, stated** (OP-1, OP-32 slice 2): one number per joint — the branch of a crossing,
+        // or which end of a piece built onto its neighbours — then one per piece, which way round a circle, an arc
+        // or an ellipse is trimmed. A replay hands them back and reads no click at all; a gesture, and a file older
+        // than [DocumentFormat.MEANING_VERSION], scores them from the clicks exactly as every load used to.
+        val stated = signs.size == 2 * n
+        if (n < 2 || (!stated && clicks.size < n)) return null
         if (picks.any { !it.isCurve }) return null
         val ev = Evaluator()
+        val choices = IntArray(2 * n)
+
+        fun near(i: Int): Vec2 = clicks.getOrNull(i) ?: Vec2(0.0, 0.0)
 
         // joint[i] = where picks[i] hands over to picks[i+1]
         val joints =
@@ -10014,7 +10061,8 @@ class Document {
             } else {
                 val js = ArrayList<PointRef>(n)
                 for (i in 0 until n) {
-                    js.add(jointBetween(picks[i], picks[(i + 1) % n], clicks[i], clicks[(i + 1) % n], ev) ?: return null)
+                    val stored = if (stated) signs[i] else null
+                    js.add(jointBetween(picks[i], picks[(i + 1) % n], near(i), near((i + 1) % n), ev, stored) { choices[i] = it } ?: return null)
                 }
                 js
             }
@@ -10027,9 +10075,10 @@ class Document {
         for (i in 0 until n) {
             val from = joints[(i - 1 + n) % n]
             val to = joints[i]
-            pieces.add(trimPiece(picks[i], from, to, clicks[i], ev) ?: return null)
+            val stored = if (stated) signs[n + i] else null
+            pieces.add(trimPiece(picks[i], from, to, near(i), ev, stored) { choices[n + i] = it } ?: return null)
         }
-        return add(cx.loop(*pieces.toTypedArray()), ElementKind.OUTLINE, Styles.RESULT)
+        return add(cx.loop(*pieces.toTypedArray()), ElementKind.OUTLINE, Styles.RESULT).also { registerSigns(it, choices.toList()) }
     }
 
     /**
@@ -10090,13 +10139,20 @@ class Document {
         duplicateJointMarkers.add(el.id)
     }
 
-    /** Where two picks hand over, chosen as the meeting nearest to where *both* were clicked. */
+    /**
+     * Where two picks hand over, chosen as the meeting nearest to where *both* were clicked — or, where [stored]
+     * is given, as the choice a replay hands back (OP-32 slice 2). [chose] is told the choice either way: the
+     * branch of a crossing, `0`/`1` for the start or the end of a piece built onto its neighbours, and `0` where
+     * there was nothing to choose (a joint the construction states, or two pieces already sharing an end).
+     */
     private fun jointBetween(
         a: Element,
         b: Element,
         nearA: Vec2,
         nearB: Vec2,
         ev: Evaluator,
+        stored: Int? = null,
+        chose: (Int) -> Unit = {},
     ): PointRef? {
         // a joint the *construction* stated (a fillet's tangency, a chamfer's bevel end) is the handover,
         // before anything is re-derived: it is exact where an intersection does not even exist — which a
@@ -10104,13 +10160,15 @@ class Document {
         registeredJoint(a, b)?.let { return addDerived(it) }
         // then pieces that *already* meet: they hand over there instead of being re-intersected
         sharedEndBetween(a, b, ev)?.let { return it }
-        if (a.kind == ElementKind.BEZIER) return bezierEndNear(a, nearB, ev)
-        if (b.kind == ElementKind.BEZIER) return bezierEndNear(b, nearA, ev)
+        if (a.kind == ElementKind.BEZIER) return bezierEndNear(a, nearB, ev, stored, chose)
+        if (b.kind == ElementKind.BEZIER) return bezierEndNear(b, nearA, ev, stored, chose)
         // a function curve is joined exactly as a spline is: it is *built onto* its neighbours rather than
         // trimmed to them, so the handover is whichever of its own ends is nearer the other pick (OP-15)
-        if (a.kind == ElementKind.FUNC_CURVE) return funcEndNear(a, nearB, ev)
-        if (b.kind == ElementKind.FUNC_CURVE) return funcEndNear(b, nearA, ev)
-        return intersectNearNow(a, b, (nearA + nearB) * 0.5)
+        if (a.kind == ElementKind.FUNC_CURVE) return funcEndNear(a, nearB, ev, stored, chose)
+        if (b.kind == ElementKind.FUNC_CURVE) return funcEndNear(b, nearA, ev, stored, chose)
+        // a stated branch of 0 is a joint that had nothing to choose when it was made — two pieces meeting at an
+        // end — and has to be a crossing now: the first of the ordered set, never a guess from a position
+        return intersectNearNow(a, b, (nearA + nearB) * 0.5, stored?.let { if (it == 0 && !(intersectionSet(a, b)?.byIndex ?: false)) 1 else it }, chosen = chose)
     }
 
     // ---- the joint registry: where the construction says two pieces hand over (OP-14) ----
@@ -10555,30 +10613,51 @@ class Document {
         return listOf(addDerived(first), addDerived(second))
     }
 
-    /** Whichever end of a function curve is nearer [near] — the joint it offers a neighbouring piece. */
+    /**
+     * Whichever end of a function curve is nearer [near] — the joint it offers a neighbouring piece — or the end
+     * [stored] states (`0` the start, `1` the end; OP-32 slice 2), which a replay hands back without asking where
+     * the ends are now.
+     */
     private fun funcEndNear(
         el: Element,
         near: Vec2,
         ev: Evaluator,
+        stored: Int? = null,
+        chose: (Int) -> Unit = {},
     ): PointRef? {
         @Suppress("UNCHECKED_CAST")
         val ref = el.ref as FuncCurveRef
-        val c = (ev.valueOf(ref) as? FuncCurveValue)?.curve ?: return null
-        val s = FuncCurves.start(c) ?: return null
-        val e = FuncCurves.end(c) ?: return null
-        return addDerived(if ((s - near).length() <= (e - near).length()) cx.funcCurveStart(ref) else cx.funcCurveEnd(ref))
+        val start =
+            if (stored != null) {
+                stored == 0
+            } else {
+                val c = (ev.valueOf(ref) as? FuncCurveValue)?.curve ?: return null
+                val s = FuncCurves.start(c) ?: return null
+                val e = FuncCurves.end(c) ?: return null
+                (s - near).length() <= (e - near).length()
+            }
+        chose(if (start) 0 else 1)
+        return addDerived(if (start) cx.funcCurveStart(ref) else cx.funcCurveEnd(ref))
     }
 
-    /** Whichever end of a Bézier is nearer [near] — the joint it offers a neighbouring piece. */
+    /** Whichever end of a Bézier is nearer [near] — the joint it offers a neighbouring piece — or the one [stored] states. */
     private fun bezierEndNear(
         el: Element,
         near: Vec2,
         ev: Evaluator,
+        stored: Int? = null,
+        chose: (Int) -> Unit = {},
     ): PointRef? {
         @Suppress("UNCHECKED_CAST")
         val ref = el.ref as BezierRef
-        val b = (ev.valueOf(ref) as? BezierValue)?.bezier ?: return null
-        val start = (b.p0 - near).length() <= (b.p3 - near).length()
+        val start =
+            if (stored != null) {
+                stored == 0
+            } else {
+                val b = (ev.valueOf(ref) as? BezierValue)?.bezier ?: return null
+                (b.p0 - near).length() <= (b.p3 - near).length()
+            }
+        chose(if (start) 0 else 1)
         return addDerived(if (start) cx.bezierStart(ref) else cx.bezierEnd(ref))
     }
 
@@ -10593,6 +10672,9 @@ class Document {
         to: PointRef,
         near: Vec2,
         ev: Evaluator,
+        /** Which way round a replay hands back — `1` counter-clockwise, `0` clockwise (OP-32 slice 2). */
+        stored: Int? = null,
+        chose: (Int) -> Unit = {},
     ): Ref<*>? {
         if (el.isLinear) return cx.segmentBetween(el.ref, from, to)
         if (el.kind == ElementKind.BEZIER) return el.ref
@@ -10600,32 +10682,47 @@ class Document {
         // *domain* is the trim: change `from`/`to` and the piece moves with them
         if (el.kind == ElementKind.FUNC_CURVE) return el.ref
         if (el.isElliptic) {
+            if (el.kind != ElementKind.ELLIPSE && el.kind != ElementKind.ELLIPTIC_ARC) return null
             // the conic twin of the arc trim below: which way round is decided by where the user clicked,
             // in the ellipse's **own parameter**, and then stored (OP-1)
-            val e =
-                when (val v = ev.valueOf(el.ref)) {
-                    is EllipseValue -> v.ellipse
-                    is EllipticArcValue -> v.arc.ellipse
-                    else -> return null
+            val ccw =
+                if (stored != null) {
+                    stored == 1
+                } else {
+                    val e =
+                        when (val v = ev.valueOf(el.ref)) {
+                            is EllipseValue -> v.ellipse
+                            is EllipticArcValue -> v.arc.ellipse
+                            else -> return null
+                        }
+                    val t0 = Conics.paramOf(e, (ev.valueOf(from) as? PointValue)?.p ?: return null)
+                    val t1 = Conics.paramOf(e, (ev.valueOf(to) as? PointValue)?.p ?: return null)
+                    val ccwSweep = norm2pi(t1 - t0)
+                    val toClick = norm2pi(Conics.paramOf(e, near) - t0)
+                    toClick <= ccwSweep
                 }
-            val t0 = Conics.paramOf(e, (ev.valueOf(from) as? PointValue)?.p ?: return null)
-            val t1 = Conics.paramOf(e, (ev.valueOf(to) as? PointValue)?.p ?: return null)
-            val ccwSweep = norm2pi(t1 - t0)
-            val toClick = norm2pi(Conics.paramOf(e, near) - t0)
-            return cx.ellipticArcBetween(el.ref, from, to, ccw = toClick <= ccwSweep)
+            chose(if (ccw) 1 else 0)
+            return cx.ellipticArcBetween(el.ref, from, to, ccw = ccw)
         }
         if (el.kind != ElementKind.CIRCLE && el.kind != ElementKind.ARC) return null
-        val centre =
-            when (val v = ev.valueOf(el.ref)) {
-                is CircleValue -> v.circle.center
-                is ArcValue -> v.arc.center
-                else -> return null
+        val ccw =
+            if (stored != null) {
+                stored == 1
+            } else {
+                val centre =
+                    when (val v = ev.valueOf(el.ref)) {
+                        is CircleValue -> v.circle.center
+                        is ArcValue -> v.arc.center
+                        else -> return null
+                    }
+                val a0 = ((ev.valueOf(from) as? PointValue)?.p ?: return null) - centre
+                val a1 = ((ev.valueOf(to) as? PointValue)?.p ?: return null) - centre
+                val ccwSweep = norm2pi(a1.angle() - a0.angle())
+                val toClick = norm2pi((near - centre).angle() - a0.angle())
+                toClick <= ccwSweep
             }
-        val a0 = ((ev.valueOf(from) as? PointValue)?.p ?: return null) - centre
-        val a1 = ((ev.valueOf(to) as? PointValue)?.p ?: return null) - centre
-        val ccwSweep = norm2pi(a1.angle() - a0.angle())
-        val toClick = norm2pi((near - centre).angle() - a0.angle())
-        return cx.arcBetween(el.ref, from, to, ccw = toClick <= ccwSweep)
+        chose(if (ccw) 1 else 0)
+        return cx.arcBetween(el.ref, from, to, ccw = ccw)
     }
 
     private fun norm2pi(a: Double): Double {
@@ -14109,6 +14206,12 @@ class Document {
          * it, which is the very instability the tombstone exists to remove (OP-17).
          */
         val absentBands: Int = -1,
+        /**
+         * Why this entry's pick **did not resolve when the drawing was loaded** — a face the body does not have —
+         * or null where it did (OP-32 slice 2). The entry stands, says so, and makes its body invalid in those
+         * words until the drawing is rebuilt with the face back ([Construction.BlendRun.refusal]).
+         */
+        val refusal: Msg? = null,
     ) {
         /** Whether this entry is a **tombstone**: its rounding was removed and only its slots are left. */
         val absent: Boolean get() = absentBands >= 0
@@ -14361,6 +14464,7 @@ class Document {
             e.targets,
             e.choices,
             absentBands = e.absentBands,
+            refusal = e.refusal,
         )
 
     /** A dressing's **first** rounding, built through the one construction [runOf] states (OP-30). */
@@ -14375,7 +14479,8 @@ class Document {
         choices: List<BlendChoice>,
         absentBands: Int = -1,
         corners: CornerSlots = CornerSlots.NONE,
-    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands)), corners)
+        refusal: Msg? = null,
+    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands, refusal)), corners)
 
     /**
      * Take the entry [el] off its dressing **in place** (OP-30): the journal loses its step, the entry list
@@ -14621,8 +14726,20 @@ class Document {
         // face-space cut records its tip instead because its input — the *space's* anchor — is not named by
         // its step at all, so there would be nothing durable to re-resolve from.)
         val baseEl = analyticBaseOf(on, ev)
+        // **a graph load states what the pick meant, so a meaning it cannot resolve is an invalid rounding and never
+        // a load error** (OP-32 slice 2, OP-3): the body it rounds may have no value right now — an earlier rounding
+        // of the same dressing is too big, say — and then the walk above cannot tell the dressed body from what is
+        // under it; the step still says which dressing it joins and which edge or face it rounds, and that is built
+        // …from the last journal on, whose addresses no migration maps any more (OP-31's regrouping and cap slots
+        // read the body to map them, and a body with no value has nothing to read)
+        val loading = signs.isNotEmpty() && (replayingVersion ?: 0) >= DocumentFormat.CAP_SLOT_VERSION
+        val bodyNow = (ev.valueOf(baseEl?.ref ?: on.ref) as? SolidValue)?.solid
+        if (loading && (bodyNow == null || baseEl == null || (dressingOf(on) != null && baseEl !== on))) {
+            val why = (ev.eval(on.ref.node) as? EvalResult.Invalid)?.why ?: Msgs.noteOneDressedBodyHasNoValueRightNow(what = what, name = nameOf(on))
+            return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, null, why)
+        }
         val body =
-            (ev.valueOf(baseEl?.ref ?: on.ref) as? SolidValue)?.solid ?: run {
+            bodyNow ?: run {
                 noteMsg = Msgs.noteOneDressedBodyHasNoValueRightNow(what = what, name = nameOf(on))
                 return null
             }
@@ -14701,6 +14818,8 @@ class Document {
                 decideRun(address, Blend3.targets(body.feature, false, address)) { Blend3.targets(body.feature, false, address, oneRun(baseEl, ev)) }
             }
         if (targets == null) {
+            // …and an address the body no longer has is the same: the rounding stands, invalid, naming it
+            if (loading) return unresolvedBlend(on, size, kind, whole, signs, profileEl, profileRef, tipEl, whyTargets ?: Msg.EMPTY)
             noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = whyTargets ?: Msg.EMPTY)
             return null
         }
@@ -14926,6 +15045,92 @@ class Document {
     }
 
     /**
+     * **A rounding a graph load cannot resolve, built as what the file states** (OP-32 slice 2, OP-3): the edge or
+     * face its address names is not on the body as it stands — a hand edit, an upstream change that took it away —
+     * or the body has no value to look it up on. The file still says which dressing the rounding belongs to (by
+     * how many elements it declares, [dressingDeclares]), which body it applies to (`tips`), which run an edge pick
+     * ran along (`runs`) and every choice it made (`signs`), so all of that is built exactly; what is missing is
+     * stated where it is missing:
+     *
+     * - an **edge** is the run itself — the address, or the run the file recorded — and the pass refuses it by
+     *   name when it evaluates ([Blend3.blended]: *this solid has no edge 14*), so it heals on the very pass the
+     *   edge is back, whether a value or a rebuild brings it;
+     * - a **face** names edges that only the face can say, so the entry carries [why] as its refusal and the body
+     *   is invalid in those words — *this solid has no face 9* — until the drawing is rebuilt with the face there.
+     *
+     * Never a re-pick: nothing here looks for another edge near where one used to be.
+     */
+    private fun unresolvedBlend(
+        on: Element,
+        size: ScalarRef?,
+        kind: BlendKind,
+        whole: Boolean,
+        signs: List<Int>,
+        profileEl: Element?,
+        profileRef: ProfileRef?,
+        tip: Element?,
+        why: Msg,
+    ): Element? {
+        val address = signs[0]
+        val tipEl = tip ?: decideTip(on) { tipOfChain(on, Evaluator()) }
+        val removedBands = dressingRemoved
+        val joins = dressingDeclares == (if (removedBands >= 0) 0 else 1)
+        val perEdge = if (kind == BlendKind.PROFILE) 5 else 4
+        val stored = signs.drop(1).chunked(perEdge).mapNotNull { BlendChoice.of(it) }
+        val targets: List<Int>
+        val refusal: Msg?
+        if (whole) {
+            targets = emptyList()
+            refusal = why
+        } else {
+            targets = decideRun(address, listOf(address) to null) { listOf(address) to null }.first ?: listOf(address)
+            refusal = null
+        }
+        val choices = if (whole) stored else stored.take(targets.size)
+        val where = if (whole) Msgs.noteDressAFace() else Msgs.noteOneDressedBodyEdge()
+        val dress = dressingOf(on)?.takeIf { tipEl === on && joins }
+        if (dress != null) {
+            if (removedBands >= 0) {
+                dress.entries.add(DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal))
+                rebuildDressing(dress)
+                pendingTombstone = removedBands to signs
+                noteEdit()
+                return null
+            }
+            val el = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
+            el.space = dress.base.space
+            dress.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where, refusal = refusal))
+            rebuildDressing(dress)
+            registerSigns(el, signs)
+            return el
+        }
+        @Suppress("UNCHECKED_CAST")
+        val tipRef = tipEl.ref as SolidRef
+        if (joins) {
+            // one name and no dressing to join: the mesh tier's blend of what the tip is, which resolves its
+            // address when it evaluates — or, where even the tip cannot be read, the reason itself
+            val el = add(cx.unresolved(tipRef, why), ElementKind.SOLID, Styles.SOLID)
+            el.space = tipEl.space
+            registerSigns(el, signs)
+            return el
+        }
+        // …and a rounding that makes its dressing's body: the body, over the tip, with this one entry in it
+        val slots0 = dressingSlots
+        val made = passRef(tipRef, planeOfSpace(tipEl.space), kind, size, profileRef, targets, choices, removedBands, slots0, refusal)
+        val body0 = add(cx.indirect(made), ElementKind.SOLID, Styles.SOLID)
+        body0.space = tipEl.space
+        val entryEl = if (removedBands >= 0) null else add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID).also { it.space = tipEl.space }
+        dressings.add(
+            Dressing(body0, tipEl).also {
+                it.corners = slots0
+                it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands, refusal))
+            },
+        )
+        if (entryEl != null) registerSigns(entryEl, signs) else pendingTombstone = removedBands to signs
+        return body0
+    }
+
+    /**
      * Whether two edges that meet are **one tangent-continuous run** — the 2D joint registry, read one level
      * up (GitHub #29).
      *
@@ -15031,6 +15236,20 @@ class Document {
         }
         val ev = Evaluator()
         val tipEl = decideTip(solid) { tipOfChain(solid, ev) }
+        // **a graph load builds what the file states and lets the shell say what is wrong with it** (OP-32 slice 2,
+        // OP-3): the open face is its address, and a face the body does not have — or a body with no value right
+        // now — makes the shell invalid with that reason rather than refusing to load (the node checks the face)
+        if ((replayingVersion ?: 0) >= DocumentFormat.CAP_SLOT_VERSION && (!open || signs.isNotEmpty())) {
+            val bodyNow = (ev.valueOf(tipEl.ref) as? SolidValue)?.solid
+            val faceNow = signs.getOrNull(0)
+            if (bodyNow == null || (faceNow != null && Shell3.openFaceRefusal(bodyNow.feature, faceNow) != null)) {
+                val openFaces = if (open) listOfNotNull(faceNow) else emptyList()
+                val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces), ElementKind.SOLID, Styles.SOLID)
+                el.space = tipEl.space
+                registerSigns(el, openFaces)
+                return el
+            }
+        }
         val body =
             (ev.valueOf(tipEl.ref) as? SolidValue)?.solid ?: run {
                 noteMsg = Msgs.noteOneDressedBodyHasNoValueRightNow3(what = what, name = nameOf(tipEl))
@@ -16859,29 +17078,68 @@ class Document {
      * number that would fit ([Construction.trimmedLeg]), healing when it comes back (OP-3) — which is the
      * right answer and not a re-decision: re-scoring *whether* to trim on every recompute would make the
      * drawing's structure a function of its values (OP-21).
+     *
+     * **…and on every load neither** (OP-32 slice 2): which legs were trimmed, and which end of each was kept,
+     * is decided here once and **stated** — one number per leg after the rounding's own choices (`0` untouched,
+     * `1` the start kept, `2` the end kept), handed back as [stored] by a replay, which then asks nothing of
+     * where the handover lies now. Before it a load decided again from the geometry as it then stood, so a
+     * drawing whose leg had been pulled off its rounding came back with the leg untrimmed and valid where the
+     * session had shown it invalid — the drawing a load built was not the drawing that was saved.
      */
     private fun supersedeWithTrim(
         leg1: Element,
         leg2: Element,
         t1: PointRef,
         t2: PointRef,
-    ): Int {
+        stored: List<Int>? = null,
+    ): List<Int> {
         val ev = Evaluator()
-        val a = (ev.valueOf(t1) as? PointValue)?.p ?: return 0
-        val b = (ev.valueOf(t2) as? PointValue)?.p ?: return 0
-        val corner = cornerBetween(leg1, leg2, (a + b) * 0.5, ev) ?: return 0
         // **a path's leg is the path's own to round.** A retained path publishes its boundary as an ordered
         // chain, and the corner piece can only be *in* that chain if the path records it — so a rounding
         // that is not two adjacent legs of one path takes nothing off a leg that belongs to one, or the
         // path's loop would be left with a gap no piece fills. Two legs of different paths meeting at a
         // junction, two legs of one path that are not neighbours, a leg against a plain segment: each stays
         // the rounding against the carriers it has always been.
-        if (orthoCornerBetween(leg1, leg2) == null && (legOf(leg1) != null || legOf(leg2) != null)) return 0
-        var n = 0
-        if (trimLegTo(leg1, t1, a, corner, ev)) n++
-        if (trimLegTo(leg2, t2, b, corner, ev)) n++
-        if (n == 2) dimCornerPoint(corner, ev)
-        return n
+        if (orthoCornerBetween(leg1, leg2) == null && (legOf(leg1) != null || legOf(leg2) != null)) return listOf(0, 0)
+        val a = (ev.valueOf(t1) as? PointValue)?.p
+        val b = (ev.valueOf(t2) as? PointValue)?.p
+        val corner = if (a != null && b != null) cornerBetween(leg1, leg2, (a + b) * 0.5, ev) else null
+        val trims =
+            if (stored != null) {
+                listOf(keptLegEnd(leg1, t1, stored[0]), keptLegEnd(leg2, t2, stored[1]))
+            } else {
+                if (a == null || b == null || corner == null) return listOf(0, 0)
+                listOf(trimLegTo(leg1, t1, a, corner, ev), trimLegTo(leg2, t2, b, corner, ev))
+            }
+        if (trims.none { it == 0 } && corner != null) dimCornerPoint(corner, ev)
+        return trims
+    }
+
+    /** The trims a rounding's [signs] state after its [variant] choices — two of them, or null where a file has none. */
+    private fun storedTrims(
+        signs: List<Int>,
+        variant: Int,
+    ): List<Int>? = if (signs.size >= variant + 2) signs.subList(variant, variant + 2) else null
+
+    /** Trim [leg] to [cut] keeping the end [kept] states (`1` the start, `2` the end), or leave it (`0`) — a replay's trim. */
+    private fun keptLegEnd(
+        leg: Element,
+        cut: PointRef,
+        kept: Int,
+    ): Int {
+        if (kept != 1 && kept != 2) return 0
+        val view = leg.ref.node as? IndirectNode ?: return 0
+        val piece = pieceRef(leg)
+
+        @Suppress("UNCHECKED_CAST")
+        val trimmed: Ref<*> =
+            when (leg.kind) {
+                ElementKind.SEGMENT -> (piece as SegmentRef).let { cx.trimmedLeg(it, if (kept == 1) cx.segmentStart(it) else cx.segmentEnd(it), cut) }
+                ElementKind.ARC -> (piece as ArcRef).let { cx.trimmedArcLeg(it, if (kept == 1) cx.arcStart(it) else cx.arcEnd(it), cut) }
+                else -> return 0
+            }
+        view.boundTo = trimmed.node
+        return kept
     }
 
     /**
@@ -16912,15 +17170,17 @@ class Document {
         at: Vec2,
         corner: Vec2,
         ev: Evaluator,
-    ): Boolean {
-        val view = leg.ref.node as? IndirectNode ?: return false
+    ): Int {
+        val view = leg.ref.node as? IndirectNode ?: return 0
         val piece = pieceRef(leg)
-        val v = ev.valueOf(piece) ?: return false
-        if (!onPieceNow(v, at)) return false
+        val v = ev.valueOf(piece) ?: return 0
+        if (!onPieceNow(v, at)) return 0
+        val kept: Int
         val trimmed: Ref<*> =
             when (v) {
                 is SegmentValue -> {
                     val keepAtA = (v.seg.a - corner).length() >= (v.seg.b - corner).length()
+                    kept = if (keepAtA) 1 else 2
 
                     @Suppress("UNCHECKED_CAST")
                     val ref = piece as SegmentRef
@@ -16928,15 +17188,16 @@ class Document {
                 }
                 is ArcValue -> {
                     val keepAtStart = (GeomMath.arcStart(v.arc) - corner).length() >= (GeomMath.arcEnd(v.arc) - corner).length()
+                    kept = if (keepAtStart) 1 else 2
 
                     @Suppress("UNCHECKED_CAST")
                     val ref = piece as ArcRef
                     cx.trimmedArcLeg(ref, if (keepAtStart) cx.arcStart(ref) else cx.arcEnd(ref), cut)
                 }
-                else -> return false
+                else -> return 0
             }
         view.boundTo = trimmed.node
-        return true
+        return kept
     }
 
     /** Whether [at] lies on the bounded piece [v] as it stands — the question [trimLegTo] turns on. */
@@ -17048,14 +17309,14 @@ class Document {
         val (sign1, sign2) = storedLegSigns(signs) ?: legSigns(l1, l2, clickA, clickB)
         val arc = cx.filletBetweenLines(l1, l2, radius, sign1, sign2)
         val el = add(arc, ElementKind.ARC, Styles.CURVE)
-        registerSigns(el, listOf(sign1, sign2))
         // the op builds the arc from leg1's tangency to leg2's, so its own ends *are* the two joints — and a
         // rounding meets its legs *tangentially*, which is the fact a blend's run reads (GitHub #29)
         registerJoint(el, leg1, cx.arcStart(arc), tangent = true)
         registerJoint(el, leg2, cx.arcEnd(arc), tangent = true)
         supersedeCorner(leg1, leg2, el)
-        val trimmed = supersedeWithTrim(leg1, leg2, cx.arcStart(arc), cx.arcEnd(arc))
-        recordOrthoCorner(leg1, leg2, el, trimmed, radius, rounded = true)
+        val trims = supersedeWithTrim(leg1, leg2, cx.arcStart(arc), cx.arcEnd(arc), storedTrims(signs, 2))
+        registerSigns(el, listOf(sign1, sign2) + trims)
+        recordOrthoCorner(leg1, leg2, el, trims.count { it != 0 }, radius, rounded = true)
         return el
     }
 
@@ -17103,12 +17364,12 @@ class Document {
         val t1 = tangencyOn(leg1, centre)
         val t2 = tangencyOn(leg2, centre)
         val el = add(cx.filletArc(centre, t1, t2), ElementKind.ARC, Styles.CURVE)
-        registerSigns(el, listOf(v.side1, v.side2, v.branch))
         registerJoint(el, leg1, t1, tangent = true)
         registerJoint(el, leg2, t2, tangent = true)
         supersedeCorner(leg1, leg2, el)
-        val trimmed = supersedeWithTrim(leg1, leg2, t1, t2)
-        recordOrthoCorner(leg1, leg2, el, trimmed, radius, rounded = true)
+        val trims = supersedeWithTrim(leg1, leg2, t1, t2, storedTrims(signs, 3))
+        registerSigns(el, listOf(v.side1, v.side2, v.branch) + trims)
+        recordOrthoCorner(leg1, leg2, el, trims.count { it != 0 }, radius, rounded = true)
         return el
     }
 
@@ -17231,14 +17492,14 @@ class Document {
         val a = addDerived(setbackOn(leg1, corner, distance, v.side1))
         val b = addDerived(setbackOn(leg2, corner, distance, v.side2))
         val bevel = segment(a, b)
-        registerSigns(bevel, listOf(v.side1, v.side2, v.branch))
         // a bevel *turns* a corner where a rounding runs on smoothly, so these joints are not tangent —
         // which is what keeps a chamfered edge one band and a filleted run one ribbon (GitHub #29)
         registerJoint(bevel, leg1, a)
         registerJoint(bevel, leg2, b)
         supersedeCorner(leg1, leg2, bevel)
-        val trimmed = supersedeWithTrim(leg1, leg2, a, b)
-        recordOrthoCorner(leg1, leg2, bevel, trimmed, distance, rounded = false)
+        val trims = supersedeWithTrim(leg1, leg2, a, b, storedTrims(signs, 3))
+        registerSigns(bevel, listOf(v.side1, v.side2, v.branch) + trims)
+        recordOrthoCorner(leg1, leg2, bevel, trims.count { it != 0 }, distance, rounded = false)
         return bevel
     }
 
@@ -17305,15 +17566,15 @@ class Document {
         val a = addDerived(cx.pointAlongLine(l1, corner, distance, sign1))
         val b = addDerived(cx.pointAlongLine(l2, corner, distance, sign2))
         val bevel = segment(a, b)
-        // on the bevel, which is the step's *last* creation: the two ends are declared before it, and the
-        // signs have to be restated in a place the step can find them again (see [Document.storedSigns])
-        registerSigns(bevel, listOf(sign1, sign2))
         // the bevel's ends *are* where it hands over to each leg, and the corner it cut off is gone
         registerJoint(bevel, leg1, a)
         registerJoint(bevel, leg2, b)
         supersedeCorner(leg1, leg2, bevel)
-        val trimmed = supersedeWithTrim(leg1, leg2, a, b)
-        recordOrthoCorner(leg1, leg2, bevel, trimmed, distance, rounded = false)
+        val trims = supersedeWithTrim(leg1, leg2, a, b, storedTrims(signs, 2))
+        // on the bevel, which is the step's *last* creation: the two ends are declared before it, and the
+        // signs have to be restated in a place the step can find them again (see [Document.storedSigns])
+        registerSigns(bevel, listOf(sign1, sign2) + trims)
+        recordOrthoCorner(leg1, leg2, bevel, trims.count { it != 0 }, distance, rounded = false)
         return bevel
     }
 
@@ -18146,7 +18407,6 @@ class Document {
         ) {
             // once, before the loop: the freedoms belong to the gesture, not to a copy of it
             val refs = toolScalarRefs(tool, dofs, scalars)
-            var first = true
             // **the chain** (OP-17's sequential-feature rule, per index): copy 0 works on the part's tip, which is
             // a decision taken from what the user sees and therefore recorded (OP-32, [decideTip]); copy k works on
             // what copy k-1 just made — a fact of the construction, not of the view — so one Cut on one member
@@ -18172,9 +18432,10 @@ class Document {
                 val made = elements.filter { it !in before }
                 if (g.chainsPart) made.lastOrNull { it.kind == ElementKind.SOLID }?.let { chainTip = it }
                 // the first copy scores its choices from its own clicks; every other copy is handed the
-                // result, and the step writes it down — so a reload never scores again (OP-1)
-                if (first && scored.isEmpty()) scored = storedSigns(made)
-                first = false
+                // result, and the step writes it down — so a reload never scores again (OP-1). Since OP-32's
+                // slice 2 the file states no cell to score from, so the first copy that *built* anything is the
+                // one whose choices every copy after it takes, and the step states them.
+                if (scored.isEmpty()) scored = storedSigns(made)
                 perCopy[index] = made
             }
         }
@@ -18633,28 +18894,40 @@ class Document {
         }
     }
 
-    /** Concentric circle offset by [distance]; shrinks if [at] is inside the circle, else grows. */
+    /**
+     * Concentric circle offset by [distance]; shrinks if [at] is inside the circle, else grows — **scored once and
+     * stated** (OP-1, OP-32 slice 2): [stored] is the side a replay hands back, and the click is read only when
+     * there is none. Before [DocumentFormat.MEANING_VERSION] it was re-read on every load, so a circle grown past
+     * the clicked spot turned an outer offset into an inner one the next time the drawing was opened.
+     */
     fun concentricCircle(
         circle: Element,
         distance: ScalarRef,
         at: Vec2,
+        stored: Int? = null,
     ): Element {
         val ref = carrierCircle(circle)
         val c = (Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? CircleValue
-        val sign = if (c != null && (at - c.circle.center).length() < c.circle.radius) -1 else 1
-        return add(cx.concentricCircle(ref, distance, sign), ElementKind.CIRCLE, Styles.CURVE)
+        val sign = stored ?: if (c != null && (at - c.circle.center).length() < c.circle.radius) -1 else 1
+        return add(cx.concentricCircle(ref, distance, sign), ElementKind.CIRCLE, Styles.CURVE).also { registerSigns(it, listOf(sign)) }
     }
 
-    /** Parallel to [line] offset by [distance]; side chosen by which side of the line [at] is on. */
+    /**
+     * Parallel to [line] offset by [distance]; the side is the one [at] is on — **scored once and stated** (OP-1,
+     * OP-32 slice 2), [stored] being the side a replay hands back. Before [DocumentFormat.MEANING_VERSION] the
+     * click was re-read on every load, so a line moved across the clicked spot put its parallel on the other side
+     * the next time the drawing was opened.
+     */
     fun parallelAtDistance(
         line: Element,
         distance: ScalarRef,
         at: Vec2,
+        stored: Int? = null,
     ): Element {
         val lineRef = carrierLine(line)
         val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
-        val sign = if (l != null && (at - l.line.origin).dot(l.line.dir.perp()) < 0) -1 else 1
-        return add(cx.parallelAtDistance(lineRef, distance, sign), ElementKind.LINE, Styles.CONSTRUCT)
+        val sign = stored ?: if (l != null && (at - l.line.origin).dot(l.line.dir.perp()) < 0) -1 else 1
+        return add(cx.parallelAtDistance(lineRef, distance, sign), ElementKind.LINE, Styles.CONSTRUCT).also { registerSigns(it, listOf(sign)) }
     }
 
     // ---- transforms (preserve source kind & style) ----
@@ -18862,9 +19135,20 @@ class Document {
         l2: Element,
         at: Vec2,
         dofs: List<Quantity> = emptyList(),
+        signs: List<Int> = emptyList(),
     ): Element? {
         val a = carrierLine(l1)
         val b = carrierLine(l2)
+        // **the sector is a choice, stated** (OP-1, OP-32 slice 2): a replay hands back the two signs the click
+        // scored and asks nothing of the lines, which may not even cross right now (OP-3). Before
+        // [DocumentFormat.MEANING_VERSION] the click was re-read on every load, so turning a line past the
+        // clicked spot measured a different angle the next time the drawing was opened.
+        if (signs.size >= 2) {
+            val ref = cx.measureAngleSector(a, b, signs[0], signs[1])
+            measurement("angle", ref)
+            val radius = SourceNode(nextId("dR"), ScalarValue(dofs.getOrNull(0) ?: Quantity.mm(0.0)))
+            return annotate(ref, AngularDimension(ref, a, b, signs[0], signs[1], radius)).also { registerSigns(it, signs.take(2)) }
+        }
         val ev = Evaluator()
         val la = ((ev.eval(a.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return null
         val lb = ((ev.eval(b.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return null
@@ -18873,7 +19157,7 @@ class Document {
         val ref = cx.measureAngleSector(a, b, s1, s2)
         measurement("angle", ref)
         val radius = SourceNode(nextId("dR"), ScalarValue(dofs.getOrNull(0) ?: Quantity.mm((at - vertex).length())))
-        return annotate(ref, AngularDimension(ref, a, b, s1, s2, radius))
+        return annotate(ref, AngularDimension(ref, a, b, s1, s2, radius)).also { registerSigns(it, listOf(s1, s2)) }
     }
 
     /** The one displayable element of a dimension: the measurement it shows, drawn as [ann]. */

@@ -219,7 +219,7 @@ class ChamferOnArcTest {
         assertClose(reloaded.a.y, live.a.y, 1e-12, "likewise")
         assertClose(reloaded.b.x, live.b.x, 1e-12, "likewise")
         assertClose(reloaded.b.y, live.b.y, 1e-12, "likewise")
-        assertEquals(3, ed.doc.storedSigns(stored).size, "three signs: a way along each leg, and which crossing")
+        assertEquals(5, ed.doc.storedSigns(stored).size, "three signs — a way along each leg, and which crossing — then the end each leg's trim kept")
     }
 
     /**
@@ -241,7 +241,7 @@ class ChamferOnArcTest {
         ed.checkpoint()
         val bevel = bevelOf(ed)
         assertEquals(setOf(10.0 to 0.0, 0.0 to 10.0), setOf(bevel.a.x to bevel.a.y, bevel.b.x to bevel.b.y))
-        assertEquals(2, ed.doc.storedSigns(ed.doc.journal.last { it.kind == "tool" }).size, "two signs, as ever")
+        assertEquals(4, ed.doc.storedSigns(ed.doc.journal.last { it.kind == "tool" }).size, "two signs, as ever, then the end each leg's trim kept (OP-32 slice 2)")
         roundTrips(ed)
     }
 

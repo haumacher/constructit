@@ -78,7 +78,7 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
             load(
                 withEntries(
                     saved,
-                    features = listOf("""{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[17.5,15.4]],"params":["$r"],"signs":[16,-1,1,0,1],"creates":["e20"]}"""),
+                    features = listOf("""{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"params":["$r"],"edge":16,"signs":[-1,1,0,1],"creates":["e20"]}"""),
                 ),
             )
         val after = volumeOf(grown, "e18")

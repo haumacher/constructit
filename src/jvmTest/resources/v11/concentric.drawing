@@ -1,0 +1,5 @@
+e1 POINT true PointValue(p=Vec2(x=0.0, y=0.0))
+e2 POINT true PointValue(p=Vec2(x=30.0, y=0.0))
+e3 CIRCLE true CircleValue(circle=Circle(center=Vec2(x=0.0, y=0.0), radius=30.0))
+e4 CIRCLE true CircleValue(circle=Circle(center=Vec2(x=0.0, y=0.0), radius=20.0))
+scalar d ScalarValue(q=Quantity(base=10.0, dim=L))

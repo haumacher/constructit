@@ -405,9 +405,9 @@ group "g1" els=e6,e3
         val g = ed.doc.groups.single()
         assertTrue(g.placed, "got: ${ed.statusHint}")
 
-        // the step states the rider's parameter and keeps the click it was placed by
+        // the step states the rider's parameter and not the click it was placed by (OP-32 slice 2)
         val line = saved(ed.doc).tools("ptonline").first()
-        assertEquals("[[-10,20]]", line["clicks"].toString(), "the click is a choice and stays verbatim: $line")
+        assertTrue(!line.containsKey("clicks"), "the click is the gesture's, not the file's: $line")
         assertTrue(line.containsKey("dofs"), "and the position is state: $line")
 
         // turn the frame 90° — the case that used to break the file

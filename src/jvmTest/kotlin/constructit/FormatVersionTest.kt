@@ -184,7 +184,8 @@ pointoncurve e3 34.14213562373095,24.14213562373095 dofs=20mm -> e4
     @Test
     fun aFilletWritesTheVariantItScored() {
         val saved = DocumentFormat.save(crossing().doc)
-        assertEquals(listOf(-1, 1), saved(saved).tool("fillet").ints("signs"), saved)
+        // the variant, then which end of each leg the trim kept (OP-32 slice 2 — decided once, like the variant)
+        assertEquals(listOf(-1, 1, 1, 1), saved(saved).tool("fillet").ints("signs"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "and it round-trips verbatim")
     }
 
@@ -230,7 +231,7 @@ tool fillet els=e3,e6 clicks=20,0;60,30 scalar="f" signs=-1;1 -> e7
         assertTrue(!v1.contains("signs="), v1)
         val doc = DocumentFormat.load(v1)
         val saved = DocumentFormat.save(doc)
-        assertEquals(listOf(-1, 1), saved(saved).tool("fillet").ints("signs"), saved)
+        assertEquals(listOf(-1, 1, 1, 1), saved(saved).tool("fillet").ints("signs"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "stable from then on")
     }
 

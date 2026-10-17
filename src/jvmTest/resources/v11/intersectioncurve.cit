@@ -1,0 +1,15 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":11,"f":11},
+  "parameters": [
+    {"id":"f6","name":"depth","value":"30 mm"},
+    {"id":"f8","name":"height","value":"15 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[100,0],"creates":["e2","e3"]},{"id":"f3","at":[100,60],"creates":["e4","e5"]},{"id":"f4","at":[0,60],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"extrude","els":["e3"],"clicks":[[50,0]],"params":["f6"],"creates":["e9"]},
+    {"id":"f9","kind":"sketchspace","name":"plane1","offset":"f8","part":"e9"},
+    {"id":"f10","kind":"tool","space":"f9","tool":"intersectioncurve","els":["e9"],"clicks":[[50,0]],"signs":[0],"creates":["e10"]}
+  ]
+}

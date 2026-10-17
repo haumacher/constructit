@@ -1,0 +1,16 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":15,"f":12},
+  "parameters": [
+    {"id":"f6","name":"depth","value":"20 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[20,20],"creates":["e1"],"vertices":[{"id":"f2","at":[60,20],"creates":["e2","e3"]},{"id":"f3","at":[60,50],"creates":["e4","e5"]},{"id":"f4","at":[20,50],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"extrude","els":["e3"],"clicks":[[40,20]],"params":["f6"],"creates":["e9"]},
+    {"id":"f8","kind":"point","at":[3,0],"creates":["e10"]},
+    {"id":"f9","kind":"point","at":[0,6],"creates":["e11"]},
+    {"id":"f10","kind":"tool","tool":"chain","pts":["e10","e11"],"clicks":[[3,0],[0,6]],"creates":["e12"]},
+    {"id":"f11","kind":"tool","tool":"blendedge","els":["e9","e12"],"clicks":[[40,20],[1.5,3]],"signs":[8,-1,1,0,1,1],"creates":["e13","e14"]}
+  ]
+}

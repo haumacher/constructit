@@ -1,0 +1,26 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":18,"f":22},
+  "parameters": [
+    {"id":"f10","name":"depth","value":"30 mm"},
+    {"id":"f12","name":"radius","value":"40 mm"},
+    {"id":"f14","name":"radius2","value":"55 mm"},
+    {"id":"f16","name":"height","value":"30 mm"},
+    {"id":"f18","name":"radius3","value":"55 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[70,50],"creates":["e2"]},
+    {"id":"f3","kind":"path","at":[0,0],"creates":["e3"],"vertices":[{"id":"f5","at":[70,0],"creates":["e4","e5"]},{"id":"f6","at":[70,50],"creates":["e6","e7"]},{"id":"f8","at":[0,50],"creates":["e8","e9"]}],"close":{"id":"f9","creates":["e10"]}},
+    {"id":"f4","kind":"weldortho","vertex":"e3","onto":"e1"},
+    {"id":"f7","kind":"weldortho","vertex":"e6","onto":"e2"},
+    {"id":"f11","kind":"tool","tool":"extrude","els":["e5"],"clicks":[[35,0]],"params":["f10"],"creates":["e11"]},
+    {"id":"f13","kind":"tool","tool":"spherelocus","els":["e3"],"clicks":[[0,0]],"params":["f12"],"creates":["e12"]},
+    {"id":"f15","kind":"tool","tool":"spherelocus","els":["e6"],"clicks":[[70,50]],"params":["f14"],"creates":["e13"]},
+    {"id":"f17","kind":"tool","tool":"heightpoint","pts":["e8"],"clicks":[[0,50]],"params":["f16"],"creates":["e14"]},
+    {"id":"f19","kind":"tool","tool":"spherelocus","els":["e14"],"clicks":[[-61.3992252893288,71.06173107083606]],"params":["f18"],"creates":["e15"]},
+    {"id":"f20","kind":"tool","tool":"spherecircle","els":["e12","e13"],"clicks":[[-40,0],[70,105]],"creates":["e16"]},
+    {"id":"f21","kind":"tool","tool":"sphereonrun","els":["e15","e16"],"clicks":[[0,105],[35,10]],"signs":[0],"creates":["e17"]}
+  ]
+}

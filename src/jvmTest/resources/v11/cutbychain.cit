@@ -1,0 +1,19 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":24,"f":19},
+  "parameters": [
+    {"id":"f6","name":"depth","value":"20 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[80,0],"creates":["e2","e3"]},{"id":"f3","at":[80,50],"creates":["e4","e5"]},{"id":"f4","at":[0,50],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f7","kind":"tool","tool":"extrude","els":["e3"],"clicks":[[40,0]],"params":["f6"],"creates":["e9"]},
+    {"id":"f8","kind":"point","at":[-15,20],"creates":["e10"]},
+    {"id":"f9","kind":"point","at":[95,20],"creates":["e11"]},
+    {"id":"f10","kind":"tool","tool":"chain","pts":["e10","e11"],"clicks":[[-15,20],[95,20]],"creates":["e12"]},
+    {"id":"f11","kind":"tool","tool":"cutbychain","els":["e9","e12"],"clicks":[[40,50],[60,20],[40,40]],"signs":[1],"creates":["e13"]},
+    {"id":"f12","kind":"path","at":[20,30],"creates":["e14"],"vertices":[{"id":"f13","at":[30,30],"creates":["e15","e16"]},{"id":"f14","at":[30,40],"creates":["e17","e18"]},{"id":"f15","at":[20,40],"creates":["e19","e20"]}],"close":{"id":"f16","creates":["e21"]}},
+    {"id":"f17","kind":"tool","tool":"extrude","els":["e16"],"clicks":[[25,30]],"params":["f6"],"creates":["e22"]},
+    {"id":"f18","kind":"tool","tool":"subtract","els":["e13","e22"],"clicks":[[40,50],[25,30]],"creates":["e23"]}
+  ]
+}

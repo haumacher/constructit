@@ -1,0 +1,15 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":17,"f":13},
+  "parameters": [
+    {"id":"f8","name":"h","value":"20 mm"},
+    {"id":"f10","name":"r","value":"4 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[-26.875,-32.375],"creates":["e1"],"vertices":[{"id":"f2","at":[-26.875,15.375],"creates":["e2","e3"]},{"id":"f3","at":[61.875,15.375],"creates":["e4","e5"]},{"id":"f4","at":[61.875,0.375],"creates":["e6","e7"]},{"id":"f5","at":[-5.521648428788623,0.375],"creates":["e8","e9"]},{"id":"f6","at":[-5.521648428788623,-32.375],"creates":["e10","e11"]}],"close":{"id":"f7","creates":["e12"]}},
+    {"id":"f9","kind":"tool","tool":"extrude","els":["e11"],"clicks":[[-48.125,37.875]],"params":["f8"],"creates":["e13"]},
+    {"id":"f11","kind":"tool","tool":"filletedge","els":["e13"],"clicks":[[-31.252365457721638,11.31587462139538]],"params":["f10"],"signs":[13,-1,1,0,1],"slots":[{"entry":1,"kind":"rail","edges":[2,13],"piece":0},{"entry":1,"kind":"patch","edges":[2,13],"piece":0}],"creates":["e14","e15"]},
+    {"id":"f12","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[-15.659687663642714,14.554138077719443]],"params":["f10"],"signs":[2,-1,1,0,-1],"creates":["e16"]}
+  ]
+}

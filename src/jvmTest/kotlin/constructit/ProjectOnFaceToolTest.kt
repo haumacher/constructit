@@ -100,7 +100,7 @@ class ProjectOnFaceToolTest {
     /** The face index the step recorded — read out of the file, which is where a choice is stored (OP-18). */
     private fun storedFace(ed: Editor): Int {
         val step = assertNotNull(saved(ed.doc).tools(Tools.PROJECT_ON_FACE).lastOrNull())
-        return step.ints("signs").single()
+        return step.addressed().single()
     }
 
     private fun Viewport3.atLifted(
@@ -220,7 +220,7 @@ class ProjectOnFaceToolTest {
         val curve = project(f)
         val once = DocumentFormat.save(f.ed.doc)
         assertTrue(
-            saved(once).tools(Tools.PROJECT_ON_FACE).any { it.ints("signs") == listOf(5) },
+            saved(once).tools(Tools.PROJECT_ON_FACE).any { it.addressed() == listOf(5) },
             "the step records the face it chose, as an index into the body's own face order (OP-8): $once",
         )
         val doc = DocumentFormat.load(once)

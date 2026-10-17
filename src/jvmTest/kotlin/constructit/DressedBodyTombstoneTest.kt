@@ -189,8 +189,8 @@ class DressedBodyTombstoneTest {
                 parameters = listOf("""{"id":"f900","name":"rr","value":"1 mm"}"""),
                 features =
                     listOf(
-                        """{"id":"f901","kind":"tool","tool":"chamferedge","els":["${ed.doc.nameOf(body)}"],"clicks":[[0,0]],""" +
-                            """"params":["f900"],"signs":[$rail],"creates":["e900","e901"]}""",
+                        """{"id":"f901","kind":"tool","tool":"chamferedge","els":["${ed.doc.nameOf(body)}"],""" +
+                            """"params":["f900"],"edge":$rail,"creates":["e900","e901"]}""",
                     ),
             )
         val back = Editor()

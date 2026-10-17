@@ -21,7 +21,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 
 /**
- * **The document is a graph of features, not a journal** (OP-32) — the file format since version 11.
+ * **The document is a graph of features, not a journal** (OP-32) — the file format since version 11, stating
+ * what each pick means since version 12.
  *
  * The user's decision, in his words: *"It started with a simple 'recording of what has been done'. But this is not
  * a valid solution for a construction tool. Construction must be edited and refactored. Doing this on a journal of
@@ -29,7 +30,7 @@ import kotlinx.serialization.json.intOrNull
  * well-supported container format such as json."* So the file is one JSON object:
  *
  * ```
- * { "format": "constructit", "version": 11, "nextId": {"e": 21, "f": 40},
+ * { "format": "constructit", "version": 12, "nextId": {"e": 21, "f": 40},
  *   "parameters": [ {"id":"f1","name":"r","value":"20 mm"}, … ],
  *   "features":   [ {"id":"f2","kind":"point","at":[0,0],"creates":["e1"]}, … ],
  *   "names":      { "e5": "bore-axis" },
@@ -65,10 +66,16 @@ import kotlinx.serialization.json.intOrNull
  * round-trip, never scientific ([DocumentFormat.trim]); and a stored literal's meaning is frozen, so a change of
  * meaning is a version bump plus a migration.
  *
- * **What it does not do yet** (queued, OP-32 slices 2 and 3): a pick that is stored as a *click* stays a click
- * (`clicks`, `click`, `cells`) — turning each slot kind's click into its meaning is slice 2 — and the editor
- * still edits through its in-memory journal; refactoring the graph itself (replace an input, reroute a
- * dependent) is slice 3.
+ * **A pick is stated as what it means, never as where it landed** (OP-32 slice 2, version 12): an element by its
+ * identity, a branch, a side, a seam or a sector as the sign it is (`signs`), an edge or a face of a solid by its
+ * address (`edge`, `face` — [PickAddress]), a point on a curve by the curve and its parameter (`dofs`), a placement
+ * by the free value it is. The fields that carried the gesture's positions (`clicks`, an orbit's `cells`, an
+ * `intersectnear`'s or a `pointoncurve`'s `click`) are read from a version-11 file — whose builds score the
+ * meaning from them exactly as that file's own load did — and never written; a version-12 file that states one is
+ * refused by name.
+ *
+ * **What it does not do yet** (queued, OP-32 slice 3): the editor still edits through its in-memory journal;
+ * refactoring the graph itself (replace an input, reroute a dependent) is slice 3.
  */
 internal object GraphFormat {
     /** The library's compact encoder: every value of the file is written by it, never by hand. */
@@ -84,20 +91,22 @@ internal object GraphFormat {
      * for a positional one) and its type. [expr] marks a text the user typed as an expression, whose names
      * are references the order must respect.
      */
-    class Field(val json: String, val key: String?, val type: T, val expr: Boolean = false)
+    class Field(val json: String, val key: String?, val type: T, val expr: Boolean = false, val legacy: Boolean = false)
 
     private fun p(
         json: String,
         type: T,
         expr: Boolean = false,
-    ) = Field(json, null, type, expr)
+        legacy: Boolean = false,
+    ) = Field(json, null, type, expr, legacy)
 
     private fun k(
         key: String,
         type: T,
         json: String = key,
         expr: Boolean = false,
-    ) = Field(json, key, type, expr)
+        legacy: Boolean = false,
+    ) = Field(json, key, type, expr, legacy)
 
     /**
      * Every feature kind that is written field by field — the step kinds the journal reader replays, each
@@ -126,8 +135,8 @@ internal object GraphFormat {
             "attachortho" to listOf(p("vertex", T.EL), p("curve", T.EL), k("dofs", T.NUMS)),
             "unweld" to listOf(p("point", T.EL), k("dofs", T.NUMS)),
             "funccurve" to listOf(p("x", T.LABEL, expr = true), p("y", T.LABEL, expr = true), k("from", T.NUM_OR_LABEL, expr = true), k("to", T.NUM_OR_LABEL, expr = true)),
-            "intersectnear" to listOf(p("a", T.EL), p("b", T.EL), p("click", T.POS), k("signs", T.INTS)),
-            "pointoncurve" to listOf(p("curve", T.EL), p("click", T.POS), k("dofs", T.NUMS)),
+            "intersectnear" to listOf(p("a", T.EL), p("b", T.EL), p("click", T.POS, legacy = true), k("signs", T.INTS)),
+            "pointoncurve" to listOf(p("curve", T.EL), p("click", T.POS, legacy = true), k("dofs", T.NUMS)),
             "relative" to listOf(p("point", T.EL), p("base", T.EL), k("dofs", T.NUMS)),
             "absolute" to listOf(p("point", T.EL), k("dofs", T.NUMS)),
             "projectplane" to listOf(p("source", T.EL)),
@@ -135,14 +144,14 @@ internal object GraphFormat {
             "orthobreak" to listOf(p("leg", T.EL), p("at", T.POS), p("open", T.POS)),
             "tool" to
                 listOf(
-                    p("tool", T.TOOL), k("pts", T.ELS), k("els", T.ELS), k("clicks", T.POSITIONS), k("scalar", T.SCS, json = "params"),
+                    p("tool", T.TOOL), k("pts", T.ELS), k("els", T.ELS), k("clicks", T.POSITIONS, legacy = true), k("scalar", T.SCS, json = "params"),
                     k("count", T.INT), k("law", T.LABEL, expr = true), k("laws", T.LABEL, expr = true), k("match", T.ELS),
                     k("signs", T.INTS), k("removed", T.INT), k("slots", T.SLOTS), k("dofs", T.NUMS),
                 ),
             "pattern" to listOf(p("name", T.LABEL), p("shape", T.TEXT), k("ref", T.EL), k("centre", T.EL), k("to", T.EL), k("count", T.INT)),
             "orbit" to
                 listOf(
-                    p("pattern", T.PATTERN), p("tool", T.TOOL), k("pts", T.REFS), k("els", T.REFS), k("part", T.TEXT), k("cells", T.POSITIONS),
+                    p("pattern", T.PATTERN), p("tool", T.TOOL), k("pts", T.REFS), k("els", T.REFS), k("part", T.TEXT), k("cells", T.POSITIONS, legacy = true),
                     k("scalar", T.SCS, json = "params"), k("count", T.INT), k("signs", T.INTS), k("dofs", T.NUMS),
                 ),
             "macrodef" to listOf(p("name", T.LABEL), k("els", T.ELS), k("pts", T.ELS), k("scalar", T.SCS, json = "params")),
@@ -369,7 +378,11 @@ internal object GraphFormat {
                 val f = schema.firstOrNull { it.key == a.key } ?: error("step '${step.kind}' has an argument '${a.key}' its schema does not know")
                 values[f] = a.value
             }
-            for (f in schema) values[f]?.let { put(m, f, it) }
+            // **a click is never written** (OP-32, slice 2): what it meant — a branch, a side, an address, a
+            // position along a curve — is stated by the build itself (`signs`, `dofs`, `edge`/`face`), so the
+            // fields that carried the gesture's positions are read from an older file and never written again
+            for (f in schema) if (!f.legacy) values[f]?.let { put(m, f, it) }
+            addressed(m, step)
             // the decisions its build took from what the user sees, in the order taken (OP-32): `null` where the
             // decision was the picked body itself, or the picked edge alone — and nothing at all where every one was
             if (step.tips.any { it != null }) m["tips"] = JsonArray(step.tips.map { t -> t?.let { el(it) } ?: JsonNull })
@@ -377,6 +390,34 @@ internal object GraphFormat {
             if (step.creates.isNotEmpty()) m["creates"] = JsonArray(step.creates.map { el(it) })
             if (step.createsScalars.isNotEmpty()) m["scalars"] = JsonArray(step.createsScalars.map { sc(it) })
             return m
+        }
+
+        /**
+         * The **address** a tool's pick names on its solid, out of the choices and under its own name (OP-32,
+         * slice 2): `"edge": 13` or `"face": 4` before the `signs` that follow it — for the tools that declare
+         * one ([ToolDef.address]), whatever kind of feature applies them (a `tool`, or an `orbit` riding one).
+         */
+        fun addressed(
+            m: LinkedHashMap<String, JsonElement>,
+            step: Step,
+        ) {
+            val id = (m["tool"] as? JsonPrimitive)?.content ?: return
+            val toolId = if (id == "macro") return else id
+            val address = doc.toolDef(toolId)?.address ?: return
+            val signs = m["signs"] as? JsonArray ?: return
+            if (signs.isEmpty()) return
+            val out = LinkedHashMap<String, JsonElement>()
+            for ((k, v) in m) {
+                if (k == "signs") {
+                    out[address.name.lowercase()] = signs[0]
+                    if (signs.size > 1) out[k] = JsonArray(signs.drop(1))
+                } else {
+                    out[k] = v
+                }
+            }
+            check(step.kind == "tool" || step.kind == "orbit") { "an address on a '${step.kind}' feature" }
+            m.clear()
+            m.putAll(out)
         }
 
         fun put(
@@ -954,8 +995,21 @@ internal object GraphFormat {
             schema: List<Field>,
         ): List<String> {
             val out = arrayListOf(kind)
+            val address = addressOf(kind, o)
             for (f in schema) {
+                // **the address a pick named**, handed back first among the choices it was scored with (OP-32,
+                // slice 2) — the one place the replay engine's `signs=` and the file's typed field meet
+                if (f.json == "signs" && address != null) {
+                    out.add("signs=" + (listOf(address) + ((o["signs"] as? JsonArray)?.map { content(it) } ?: emptyList())).joinToString(";"))
+                    continue
+                }
                 var v = o[f.json] ?: continue
+                // a field that carried the gesture's **position** is read from a file that still states it and
+                // from no other: a file of this version states what the click meant instead, and one that states
+                // a click as well is not one this build wrote (OP-18 — a load may not guess which of the two wins)
+                if (f.legacy && version >= DocumentFormat.MEANING_VERSION) {
+                    throw DocumentFormat.LoadError(Messages.refusalFileClickField(field = f.json, version = version))
+                }
                 // the one literal a re-stamp rewrites (OP-23): the count of the pattern being re-stamped, or — one
                 // level in — the count of the ride whose own feature this is (#18)
                 if (f.json == "count" && restamp != null && isTarget(kind, o)) v = JsonPrimitive(restamp.count)
@@ -963,6 +1017,29 @@ internal object GraphFormat {
                 out.add(if (f.key == null) w else "${f.key}=$w")
             }
             return out
+        }
+
+        /**
+         * The edge or face address a `tool` or `orbit` feature states (`"edge": 13`), checked against what its tool
+         * declares ([ToolDef.address]) — null where it states none. A feature that names an edge for a tool that
+         * picks a face, or an address for a tool that picks none, is malformed: the replay would read the number as
+         * a choice it is not.
+         */
+        fun addressOf(
+            kind: String,
+            o: JsonObject,
+        ): String? {
+            if (kind != "tool" && kind != "orbit") return null
+            val stated = PickAddress.entries.filter { o.containsKey(it.name.lowercase()) }
+            if (stated.isEmpty()) return null
+            val id = str(o, "tool")
+            val declared = if (id == null || id == "macro") null else doc.toolDef(id)?.address
+            val one = stated.single()
+            if (declared != one) {
+                throw DocumentFormat.LoadError(Messages.refusalFileAddress(field = one.name.lowercase(), tool = id ?: "?"))
+            }
+            val v = o[one.name.lowercase()] as? JsonPrimitive
+            return v?.intOrNull?.toString() ?: throw DocumentFormat.LoadError(Messages.refusalFileAddress(field = one.name.lowercase(), tool = id ?: "?"))
         }
 
         fun isTarget(

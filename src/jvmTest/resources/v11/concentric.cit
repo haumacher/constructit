@@ -1,0 +1,14 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":5,"f":6},
+  "parameters": [
+    {"id":"f4","name":"d","value":"10 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[30,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"circle","pts":["e1","e2"],"clicks":[[0,0],[30,0]],"creates":["e3"]},
+    {"id":"f5","kind":"tool","tool":"concentric","els":["e3"],"clicks":[[30,0],[5,0]],"params":["f4"],"creates":["e4"]}
+  ]
+}

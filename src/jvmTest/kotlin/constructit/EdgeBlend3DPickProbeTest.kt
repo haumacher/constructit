@@ -70,7 +70,7 @@ param "h2" = 4mm
         word: String,
     ): kotlinx.serialization.json.JsonObject? = saved(ed.doc).tools(word).firstOrNull()
 
-    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.ints("signs").first()
+    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.addressed().first()
 
     @Suppress("UNCHECKED_CAST")
     private fun feature(ed: Editor) = Evaluator().solid(ed.solids().first().ref as SolidRef).feature
@@ -139,7 +139,7 @@ param "h2" = 4mm
         ed.pointerUp(s)
         val flat = assertNotNull(stepOf(ed, "filletedge"), "from the plan: ${ed.statusHint}")
         assertEquals(addressOf(in3d), addressOf(flat), "one edge, two gestures: $in3d vs $flat")
-        assertEquals(in3d.ids("params") to in3d.ints("signs"), flat.ids("params") to flat.ints("signs"), "same choices after the click")
+        assertEquals(in3d.ids("params") to in3d.addressed(), flat.ids("params") to flat.addressed(), "same choices after the click")
         assertSolidsManifold(ed)
     }
 }

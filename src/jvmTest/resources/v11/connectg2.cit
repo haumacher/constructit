@@ -1,0 +1,17 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":10,"f":10},
+  "parameters": [],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[60,40],"creates":["e2"]},
+    {"id":"f3","kind":"point","at":[140,30],"creates":["e3"]},
+    {"id":"f4","kind":"tool","tool":"curve3smooth","els":["e1","e2","e3"],"clicks":[[0,0],[60,40],[140,30]],"creates":["e4"]},
+    {"id":"f5","kind":"point","at":[300,120],"creates":["e5"]},
+    {"id":"f6","kind":"point","at":[360,60],"creates":["e6"]},
+    {"id":"f7","kind":"point","at":[420,120],"creates":["e7"]},
+    {"id":"f8","kind":"tool","tool":"curve3smooth","els":["e5","e6","e7"],"clicks":[[300,120],[360,60],[420,120]],"creates":["e8"]},
+    {"id":"f9","kind":"tool","tool":"connectg2","els":["e4","e8"],"clicks":[[138,30],[302,118]],"signs":[1,0],"dofs":[1,1],"creates":["e9"]}
+  ]
+}

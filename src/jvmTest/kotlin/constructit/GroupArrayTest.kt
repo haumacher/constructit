@@ -130,7 +130,7 @@ class GroupArrayTest {
         val array = saved(text).tool("arraycircular")
         assertEquals(listOf("e3"), array.ids("pts"), "got:\n$text")
         assertEquals(listOf("e1", "e2"), array.ids("els"))
-        assertEquals("[[40,0],[0,0]]", array["clicks"].toString())
+        assertTrue(!array.containsKey("clicks"), "the clicks picked elements, and the elements are what the file states (OP-32 slice 2): $array")
         assertEquals(3, array.int("count"))
         assertEquals(listOf("e4", "e5", "e6", "e7"), array.ids("creates"))
         assertEquals(1, ed.doc.journal.count { it.kind == "tool" })

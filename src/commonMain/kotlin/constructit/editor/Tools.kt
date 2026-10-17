@@ -307,6 +307,26 @@ class ScalarSlot(
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS, PLANES, CUSTOM }
 
 /**
+ * **What a pick on a solid names beyond the solid itself** (OP-32, slice 2): one of its edges, or one of its faces —
+ * the click's *meaning*, resolved once when the tool runs ([ToolDef.build] scores it) and stated in the file as a
+ * typed field (`"edge": 13`, `"face": 4`), never as the position that was clicked.
+ *
+ * The address is the **naming authority's own**: the index into the solid's structurally named, index-stable
+ * edge or face list ([constructit.geom.Section3.edges], [constructit.geom.Section3.faces]) — the same number a
+ * dressing's `runs` and `slots`, a `sketchspace … piece=` and a `sectioninput edge=` already use, and the number every
+ * migration of those lists (OP-31's regrouping, the cap slots) maps. A tool declares it and the file follows: the
+ * build's first scored choice is the address, so [GraphFormat] writes it under its own name and hands it back first
+ * on a load, with no case per tool (OP-18's *new tools round-trip for free*).
+ */
+enum class PickAddress {
+    /** An edge of the picked solid — a blend along one crease (and the run it carries on into). */
+    EDGE,
+
+    /** A face of the picked solid — a blend round a face's boundary, a shell's open face, a projection's target. */
+    FACE,
+}
+
+/**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
  * position, and [clicks] = the world position of every click in slot order.
  */
@@ -389,6 +409,12 @@ class Picks(
      */
     val matches: List<Element> = emptyList(),
 ) {
+    /**
+     * The world position of click [i], or the origin where there is none — a replay of a file that states what
+     * the click meant rather than where it landed (OP-32 slice 2), whose build reads the meaning and not this.
+     */
+    fun click(i: Int): Vec2 = clicks.getOrNull(i) ?: Vec2(0.0, 0.0)
+
     /** The same picks with [elements] replaced — see [Document.runTool]'s dressing-entry normalisation. */
     fun withElements(els: List<Element>): Picks =
         Picks(points, els, at, clicks, dofs, count, signs, landings, view, law, laws, matches)
@@ -649,6 +675,13 @@ class ToolDef(
      * prefix, so a hole in the middle would shift every slot behind it.
      */
     val slotsNeeded: ((Document, List<Element>) -> Int)? = null,
+    /**
+     * What this tool's pick names **on** the solid it picks, when it names more than the solid: an edge or a
+     * face ([PickAddress], OP-32 slice 2) — null for every tool whose picks are the elements alone. Declared by
+     * the edge and face roundings, the open shell and the projection onto a face, whose builds score that address
+     * once and state it as the first of their choices; the file then carries it as a field of its own.
+     */
+    val address: PickAddress? = null,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /**
@@ -1324,7 +1357,7 @@ object Tools {
             // arc length to be the parameter. Its `dofs=` rides the same seam every other rider's does.
             ToolDef(POINT_ON_ELLIPSE, ToolCategory.POINTS, listOf(SlotKind.CONIC), replicates = false, icon = Icons.POINT_ON_ELLIPSE) { d, p, _ -> d.pointOnEllipse(p.elements[0], p.at, p.dofs.firstOrNull()) },
             ToolDef(POINT_ON_LINE, ToolCategory.POINTS, listOf(SlotKind.LINE), replicates = false, icon = Icons.POINT_ON_LINE) { d, p, _ -> d.pointOnLine(p.elements[0], p.at, p.dofs.firstOrNull()) },
-            ToolDef(POINT_AT_DIST, ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf(len("distance")), icon = Icons.POINT_AT_DIST) { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at) },
+            ToolDef(POINT_AT_DIST, ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf(len("distance")), icon = Icons.POINT_AT_DIST) { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at, p.signs.firstOrNull()) },
             // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
             // supplied x and y and a click merely says "now"
             ToolDef(POINT_XY, ToolCategory.POINTS, emptyList(), scalars = listOf(len("x"), len("y")), icon = Icons.POINT_XY) { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
@@ -1453,11 +1486,11 @@ object Tools {
             // picks: what is thrown, and what it is thrown at. The direction is the drawing's own space —
             // stating it again would be a second way to say what a space already says — and which face is
             // scored once from where the drawing lands and then persisted, exactly as step 6's chosen curve is.
-            ToolDef(PROJECT_ON_FACE, ToolCategory.CURVES, listOf(SlotKind.CURVE, SlotKind.SOLID), crossSpace = true, icon = Icons.PROJECT_ON_FACE) { d, p, _ -> d.projectOntoFace(p.elements[0], p.elements[1], p.signs) },
+            ToolDef(PROJECT_ON_FACE, ToolCategory.CURVES, listOf(SlotKind.CURVE, SlotKind.SOLID), crossSpace = true, icon = Icons.PROJECT_ON_FACE, address = PickAddress.FACE) { d, p, _ -> d.projectOntoFace(p.elements[0], p.elements[1], p.signs) },
             ToolDef(CONNECT_G2, ToolCategory.CURVES, listOf(SlotKind.PATH3, SlotKind.PATH3), crossSpace = true, scalars = listOf(num("tension", 1.0), num("far tension", 1.0)), scalarsTypedOnly = true, icon = Icons.CONNECT_G2) { d, p, s -> d.connectCurves(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1), p.clicks, p.signs, Continuity.G2) },
-            ToolDef(OUTLINE, ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
+            ToolDef(OUTLINE, ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks, p.signs) },
             ToolDef(THICKEN, ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
-            ToolDef(CONCENTRIC, ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
+            ToolDef(CONCENTRIC, ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at, p.signs.firstOrNull()) },
             // rectangular *by construction* — the two other corners share the clicked corners' coordinates,
             // so no gesture and no parameter edit can shear it (see [Document.rectangle])
             // two SIDE slots, because the corners this tool wants are the path's own vertices: a POINT slot
@@ -1547,12 +1580,12 @@ object Tools {
             // sectors round the crease the blend fills, whether that sector is material — is scored once and
             // written into the step's `signs=` (OP-1/OP-18). The construction itself is the op node's job
             // ([Blend3]), so these are data like every other tool.
-            ToolDef(BLEND_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), icon = Icons.BLEND_EDGE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
-            ToolDef(BLEND_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), icon = Icons.BLEND_FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
-            ToolDef(CHAMFER_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), icon = Icons.CHAMFER_EDGE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
-            ToolDef(CHAMFER_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), icon = Icons.CHAMFER_FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
-            ToolDef(PROFILE_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, icon = Icons.PROFILE_EDGE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
-            ToolDef(PROFILE_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, icon = Icons.PROFILE_FACE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
+            ToolDef(BLEND_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), icon = Icons.BLEND_EDGE, address = PickAddress.EDGE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(BLEND_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), icon = Icons.BLEND_FACE, address = PickAddress.FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(CHAMFER_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), icon = Icons.CHAMFER_EDGE, address = PickAddress.EDGE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(CHAMFER_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), icon = Icons.CHAMFER_FACE, address = PickAddress.FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(PROFILE_EDGE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, icon = Icons.PROFILE_EDGE, address = PickAddress.EDGE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
+            ToolDef(PROFILE_FACE, ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, icon = Icons.PROFILE_FACE, address = PickAddress.FACE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
             // ----- The shell (session 75): one `SOLID` pick, one length, and — for the open row — the face the
             // click named, scored once and written into the step's `signs=` (OP-1/OP-18). The construction is
             // the op node's ([Shell3]); the two rows are one build with one flag, which is what keeps the
@@ -1565,7 +1598,7 @@ object Tools {
             ToolDef(LOFT_RULED, ToolCategory.SOLIDS, listOf(SlotKind.AREA), repeating = true, minPicks = 2, crossSpace = true, carriesMatches = true, icon = Icons.LOFT_RULED) { d, p, _ -> d.skinSolid(p.elements, SkinRow.RULED, p.matches) },
             ToolDef(LOFT_FAIRED, ToolCategory.SOLIDS, listOf(SlotKind.AREA), repeating = true, minPicks = 2, crossSpace = true, carriesMatches = true, icon = Icons.LOFT_FAIRED) { d, p, _ -> d.skinSolid(p.elements, SkinRow.FAIRED, p.matches) },
             ToolDef(MATCH_SECTIONS, ToolCategory.SOLIDS, listOf(SlotKind.CURVE, SlotKind.CURVE), replicates = false, crossSpace = true, icon = Icons.MATCH_SECTIONS) { d, p, _ -> d.matchSections(p.elements[0], p.elements[1]) },
-            ToolDef(SHELL, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("wall thickness")), icon = Icons.SHELL) { d, p, s -> d.shellSolid(p.elements[0], s[0], open = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(SHELL, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("wall thickness")), icon = Icons.SHELL, address = PickAddress.FACE) { d, p, s -> d.shellSolid(p.elements[0], s[0], open = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             ToolDef(SHELL_CLOSED, ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("wall thickness")), icon = Icons.SHELL_CLOSED) { d, p, s -> d.shellSolid(p.elements[0], s[0], open = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             // Placement (the JT-import package, OP-9): a solid, a point in the space you are looking at,
             // and a **defaulted** angle — so the everyday gesture is two clicks and typing a number first
@@ -1648,17 +1681,17 @@ object Tools {
             ToolDef(ANGLE_BISECTOR, ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), icon = Icons.ANGLE_BISECTOR) { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },
             ToolDef(PERPENDICULAR, ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), icon = Icons.PERPENDICULAR) { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
             ToolDef(PARALLEL, ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), icon = Icons.PARALLEL) { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },
-            ToolDef(PARALLEL_AT, ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalars = listOf(len("distance")), icon = Icons.PARALLEL_AT) { d, p, s -> d.parallelAtDistance(p.elements[0], s[0], p.at) },
+            ToolDef(PARALLEL_AT, ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalars = listOf(len("distance")), icon = Icons.PARALLEL_AT) { d, p, s -> d.parallelAtDistance(p.elements[0], s[0], p.at, p.signs.firstOrNull()) },
             ToolDef(TANGENT, ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), icon = Icons.TANGENT) { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
             // Two slots, the second of them asked for only where the drawing has not already answered it
             // ([ToolDef.slotsNeeded], GitHub #19): a point on one circle by construction needs one click, a
             // circle ∩ circle crossing needs the circle named as well.
             ToolDef(TANGENT_AT, ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT, SlotKind.CIRCLE), slotsNeeded = { d, els -> if (els.isNotEmpty() && d.circlesThrough(els[0]).size > 1) 2 else 1 }, icon = Icons.TANGENT_AT) { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0], p.elements.getOrNull(1)) },
-            ToolDef(FILLET, ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("radius")), preview = Previews::fillet, icon = Icons.FILLET) { d, p, s -> d.filletBetweenCurves(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1], p.signs) },
+            ToolDef(FILLET, ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("radius")), preview = Previews::fillet, icon = Icons.FILLET) { d, p, s -> d.filletBetweenCurves(p.elements[0], p.elements[1], s[0], p.click(0), p.click(1), p.signs) },
             // any carrier leg, since session 76: the chamfer-on-arc convention is decided — the setback is
             // measured **along the carrier**, so on a round leg it is an arc distance (see
             // [FilletMath.setback] for the argument, and DESIGN.md where the question was parked)
-            ToolDef(CHAMFER, ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("distance")), preview = Previews::chamfer, icon = Icons.CHAMFER) { d, p, s -> d.chamferBetweenCurves(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1], p.signs) },
+            ToolDef(CHAMFER, ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("distance")), preview = Previews::chamfer, icon = Icons.CHAMFER) { d, p, s -> d.chamferBetweenCurves(p.elements[0], p.elements[1], s[0], p.click(0), p.click(1), p.signs) },
             ToolDef(OUTER_TANGENTS, ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), icon = Icons.OUTER_TANGENTS) { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = false) },
             ToolDef(INNER_TANGENTS, ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), icon = Icons.INNER_TANGENTS) { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = true) },
             // ----- Transform -----
@@ -1702,7 +1735,7 @@ object Tools {
             // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
             ToolDef(DIM_LINEAR, ToolCategory.ANNOTATE, listOf(SlotKind.INPUT_POINT, SlotKind.INPUT_POINT, SlotKind.SIDE), shortcut = 'M', replicates = false, preview = Previews::linearDimension, icon = Icons.DIM_LINEAR) { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
             ToolDef(DIM_RADIAL, ToolCategory.ANNOTATE, listOf(SlotKind.CENTERED, SlotKind.SIDE), replicates = false, preview = Previews::radialDimension, icon = Icons.DIM_RADIAL) { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
-            ToolDef(DIM_ANGULAR, ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), replicates = false, preview = Previews::angularDimension, icon = Icons.DIM_ANGULAR) { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
+            ToolDef(DIM_ANGULAR, ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), replicates = false, preview = Previews::angularDimension, icon = Icons.DIM_ANGULAR) { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs, p.signs) },
         )
 
     /**

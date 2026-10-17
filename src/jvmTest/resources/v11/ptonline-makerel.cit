@@ -1,0 +1,17 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":6,"f":10},
+  "parameters": [
+    {"id":"f3","name":"radius","value":"20 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[60,0],"creates":["e2"]},
+    {"id":"f4","kind":"tool","tool":"circleR","pts":["e1"],"clicks":[[0,0]],"params":["f3"],"creates":["e3"]},
+    {"id":"f5","kind":"tool","tool":"segment","pts":["e1","e2"],"clicks":[[0,0],[60,0]],"creates":["e4"]},
+    {"id":"f6","kind":"tool","tool":"ptonline","els":["e4"],"clicks":[[30,0]],"dofs":[{"mm":30}],"creates":["e5"]},
+    {"id":"f7","kind":"tool","tool":"mdist","pts":["e1","e2"],"clicks":[[0,0],[60,0]],"scalars":["f8"]},
+    {"id":"f9","kind":"tool","tool":"makerel","els":["e5","e1"],"clicks":[[30,0],[0,0]],"dofs":[{"mm":30}]}
+  ]
+}

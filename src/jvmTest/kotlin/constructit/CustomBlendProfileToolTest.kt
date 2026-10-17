@@ -132,8 +132,9 @@ class CustomBlendProfileToolTest {
         assertEquals(2, els.size, "the step names the body and the profile: $step")
         val chainStep = saved(text).tool(Tools.CHAIN)
         assertEquals(chainStep.ids("creates").single(), els[1], "…the profile second, in slot order: $step")
-        val signs = step.ints("signs")
+        val signs = step.addressed()
         assertEquals(1 + 5 * 4, signs.size, "one address and **five** choices per edge: $step")
+        assertTrue(step.containsKey("face"), "the address is the face the gesture named (OP-32 slice 2): $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
 
         val back = DocumentFormat.load(text)

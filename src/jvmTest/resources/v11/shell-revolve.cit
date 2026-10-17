@@ -1,0 +1,16 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":14,"f":12},
+  "parameters": [
+    {"id":"f10","name":"wall","value":"2 mm"}
+  ],
+  "features": [
+    {"id":"f1","kind":"path","at":[0,0],"creates":["e1"],"vertices":[{"id":"f2","at":[25,0],"creates":["e2","e3"]},{"id":"f3","at":[25,40],"creates":["e4","e5"]},{"id":"f4","at":[0,40],"creates":["e6","e7"]}],"close":{"id":"f5","creates":["e8"]}},
+    {"id":"f6","kind":"point","at":[0,-10],"creates":["e9"]},
+    {"id":"f7","kind":"point","at":[0,50],"creates":["e10"]},
+    {"id":"f8","kind":"tool","tool":"line","pts":["e9","e10"],"clicks":[[0,-10],[0,50]],"creates":["e11"]},
+    {"id":"f9","kind":"tool","tool":"revolve","els":["e3","e11"],"clicks":[[12,0],[0,45]],"creates":["e12"]},
+    {"id":"f11","kind":"tool","tool":"shell","els":["e12"],"clicks":[[10.000000000000028,40]],"params":["f10"],"signs":[2],"creates":["e13"]}
+  ]
+}

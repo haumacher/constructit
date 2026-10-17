@@ -278,7 +278,7 @@ show els=e2
         // the picked address and *its own* four choices are exactly the ones the file carried
         val rounding = saved(once).tools("filletedge").single()
         assertEquals(listOf("e18"), rounding.ids("els"), once)
-        assertEquals(listOf(8, -1, 1, 0, 1), rounding.ints("signs").take(5), "the address and the click's own choice, verbatim: $once")
+        assertEquals(listOf(8, -1, 1, 0, 1), rounding.addressed().take(5), "the address and the click's own choice, verbatim: $once")
         assertEquals(3, blendFeature(load(once), "e19").targets.size, "and it replays to the run")
         // ...and from here the file is a fixed point, choices and all
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is a fixed point")

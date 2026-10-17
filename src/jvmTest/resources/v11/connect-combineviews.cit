@@ -1,0 +1,27 @@
+{
+  "format": "constructit",
+  "version": 11,
+  "nextId": {"e":14,"f":19},
+  "parameters": [
+    {"id":"f7","name":"angle","value":"90 deg"},
+    {"id":"f14","name":"radius","value":"25 mm"},
+    {"id":"f15","name":"pitch","value":"40 mm"},
+    {"id":"f16","name":"turns","value":"1.5"}
+  ],
+  "features": [
+    {"id":"f1","kind":"point","at":[0,0],"creates":["e1"]},
+    {"id":"f2","kind":"point","at":[200,0],"creates":["e2"]},
+    {"id":"f3","kind":"tool","tool":"segment","pts":["e1","e2"],"clicks":[[0,0],[200,0]],"creates":["e3"]},
+    {"id":"f4","kind":"point","at":[0,40],"creates":["e4"]},
+    {"id":"f5","kind":"point","at":[200,40],"creates":["e5"]},
+    {"id":"f6","kind":"tool","tool":"segment","pts":["e4","e5"],"clicks":[[0,40],[200,40]],"creates":["e6"]},
+    {"id":"f8","kind":"sketchspace","name":"plane1","line":"e3","angle":"f7"},
+    {"id":"f9","kind":"point","space":"f8","at":[0,0],"creates":["e7"]},
+    {"id":"f10","kind":"point","space":"f8","at":[200,80],"creates":["e8"]},
+    {"id":"f11","kind":"tool","space":"f8","tool":"segment","pts":["e7","e8"],"clicks":[[0,0],[200,80]],"creates":["e9"]},
+    {"id":"f12","kind":"tool","space":"f8","tool":"combineviews","els":["e6","e9"],"clicks":[[100,40],[100,40]],"creates":["e10"]},
+    {"id":"f13","kind":"point","at":[400,40],"creates":["e11"]},
+    {"id":"f17","kind":"tool","tool":"helixleft","els":["e11"],"clicks":[[400,40]],"params":["f14","f15","f16"],"creates":["e12"]},
+    {"id":"f18","kind":"tool","tool":"connect","els":["e10","e12"],"clicks":[[195,40],[425,41]],"signs":[1,0],"dofs":[1,1],"creates":["e13"]}
+  ]
+}

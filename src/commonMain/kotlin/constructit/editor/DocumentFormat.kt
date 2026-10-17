@@ -148,7 +148,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 11
+    const val VERSION = 12
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -327,6 +327,23 @@ object DocumentFormat {
      * references rather than from where a line stands. See [GraphFormat].
      */
     const val GRAPH_VERSION = 11
+
+    /**
+     * The first version whose features state **what each pick meant rather than where it landed** (OP-32, slice
+     * 2): no `clicks` on a `tool`, no `cells` on an `orbit`, no `click` on an `intersectnear` or a `pointoncurve`.
+     * A branch, a side, a seam or a sector is the sign it already was (`signs`), an edge or a face of a solid is
+     * its address under its own name (`edge`, `face` — see [PickAddress]), a point on a curve is the curve and its
+     * parameter (`dofs`), and a placement is the free value it is.
+     *
+     * **The migration is the old load itself**: a file before this version hands its clicks to the very builds
+     * that scored them when it was written, at the same point of the dependency order, and every build states
+     * the meaning it reached — so the drawing is the one the old build loaded, and its re-save carries no click.
+     * Four builds used to re-read their click on every load instead of stating a choice (*Point at distance*,
+     * *Concentric circle*, *Parallel at distance*'s side and an angular dimension's sector) and the Outline
+     * tracer its joints and trims; each states it now, scored once from the click exactly as the old load scored
+     * it, which is the whole of what changed about them.
+     */
+    const val MEANING_VERSION = 12
 
     /**
      * The step kinds the file **folds into something else** and therefore numbers nothing for (OP-32): a space
@@ -627,7 +644,8 @@ object DocumentFormat {
                 //   slot nobody stated a value for. Last, and read back from the end, because how many of them
                 //   there are is decided by the *tool's slots* and never by the file — so the three above keep
                 //   the positions their builds read them at, and no tool has to know about the fourth.
-                val riderDof = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE }?.let { doc.restatedRiderParam(it, ev) }
+                // …a rider freed since (OP-32 slice 2) included: its step still says where on the curve it made it
+                val riderDof = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE || doc.madeAsRider(it) }?.let { doc.restatedRiderParam(it, ev) }
                 val dofs =
                     listOfNotNull(riderDof) +
                         step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
@@ -1348,10 +1366,12 @@ object DocumentFormat {
             }
             // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
             // click scores it once more — this time for good, since the save that follows writes it down
-            "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]), keyedInts(words, "signs").firstOrNull())
+            // the click is an older file's (OP-32 slice 2): from version 12 on the branch it chose is all there is
+            "intersectnear" -> doc.intersectNear(el(1), el(2), positional(words, 3), keyedInts(words, "signs").firstOrNull())
             // `dofs=` is the rider's own parameter, restated (see [restate]); a script written before it was
             // recorded simply has none, and the click position places the rider as it always did
-            "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]), keyedNums(words, "dofs").firstOrNull())
+            // …and from version 12 on the parameter is all there is: no click stands beside it (OP-32 slice 2)
+            "pointoncurve" -> doc.pointOnCurve(el(1), positional(words, 2), keyedNums(words, "dofs").firstOrNull())
             "relative" -> doc.makeRelative(el(1), el(2), keyedNums(words, "dofs"))
             // A **projected point** (GitHub #14): the source it follows, by name — the target plane is the space
             // this step was written in (the lazy `space` step precedes it), so replay re-projects and discovers
@@ -1857,7 +1877,15 @@ object DocumentFormat {
                 "clicks" -> clicks = retraced?.second ?: v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
                 "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
                 // the discrete choices this tool scored from its clicks, replayed verbatim (OP-1, OP-18)
-                "signs" -> signs = v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
+                // …except where a re-stamp has just re-traced the boundary: its pieces are new, so the joints and
+                // trims are scored afresh from the clicks the trace placed on them (OP-23, OP-32 slice 2)
+                "signs" ->
+                    signs =
+                        if (retraced != null) {
+                            emptyList()
+                        } else {
+                            v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
+                        }
                 // an ordered list, so a two-scalar tool needs no key of its own; names are quoted, hence
                 // split on the quotes rather than on the comma (a name may contain one)
                 "scalar" ->
@@ -1902,6 +1930,8 @@ object DocumentFormat {
         if (laws != null && !tool.carriesLaws) {
             throw LoadError("${tool.id} reads no section per station, and this step states laws=\"$laws\"")
         }
+        // a re-traced boundary's clicks are the trace's own, whether or not the file stated any (OP-32 slice 2)
+        retraced?.let { clicks = it.second }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
         if (matches.isNotEmpty() && !tool.carriesMatches) {
             throw LoadError("${tool.id} states no correspondence between sections, and this step carries match=")
@@ -1963,6 +1993,12 @@ object DocumentFormat {
             ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }
             ?.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
             ?: emptyList()
+
+    /** The positional position at [i], or null where the row states none there (a keyed word, or nothing). */
+    private fun positional(
+        words: List<String>,
+        i: Int,
+    ): Vec2? = words.getOrNull(i)?.takeIf { !it.contains('=') }?.let { parsePos(it) }
 
     private fun parsePos(s: String): Vec2 {
         val parts = s.split(',')
