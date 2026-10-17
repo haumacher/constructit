@@ -16,10 +16,17 @@ import kotlin.math.floor
  * it (see [Feature3.MeshBoolean]) and is a sink from then on.
  *
  * The contract every actual must keep:
- * - **Deterministic.** The same two meshes must give the same triangle list, bit for bit, on every run —
- *   the model is a pure function of its parameters (OP-4), and a mesh that reshuffled itself between two
+ * - **Deterministic — bit for bit where the engine is, and to its own retriangulation where it is not.** The
+ *   model is a pure function of its parameters (OP-4), and a mesh that reshuffled itself between two
  *   recomputes would break undo/reload equality. Manifold's own output ordering is not part of its API, so
- *   the result is put into a canonical form here rather than trusted: see [MeshCanon.canonical].
+ *   the result is put into a canonical form here rather than trusted: see [MeshCanon.canonical]. Canonical
+ *   order cannot repair an engine whose *answer* varies, though, and session 88 measured which engines'
+ *   do not: the browser's WebAssembly build — the engine the app ships — and the from-source JVM shim are
+ *   serial and give the same two meshes one canonical answer every time, so there the contract is bytes.
+ *   The clojars JVM binding, which the test suite runs on by default and which no shipped build uses,
+ *   retriangulates now and then in its own mesh import (two answers to identical operands, the same body to
+ *   a part in 10¹²), with no execution policy on its surface to pin; there the contract is *the same body*,
+ *   and the suite says so through one helper rather than asserting a bit that engine never promised.
  * - **Result-or-reason, never a throw.** `null to reason` becomes an invalid node that hides its
  *   dependents and heals (OP-3), exactly like every other refusal in [Geom3].
  * - **Honest about availability.** [available] is false when the engine cannot run *right now* — no native
@@ -35,7 +42,8 @@ expect object MeshBool {
 
     /**
      * [kind] applied to two closed meshes, or null with a reason. The result is canonical
-     * ([MeshCanon.canonical]) and therefore a deterministic function of the two inputs — and it carries
+     * ([MeshCanon.canonical]) and therefore a deterministic function of the two inputs wherever the engine's
+     * own answer is (see the contract above) — and it carries
      * **which operand every triangle's surface came from** ([BoolMesh.owner]), which is what lets the result
      * keep its faces (OP-31, item 4).
      */

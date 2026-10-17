@@ -161,6 +161,6 @@ class BlendVertexProbeTest {
         @Suppress("UNCHECKED_CAST")
         val mesh = Evaluator().solid(back.ref as SolidRef).mesh
         assertManifold(mesh, "reloaded rounded box")
-        assertClose(Geom3.volume(mesh), v, tol = 1e-9, msg = "the same body")
+        assertSameBody(Geom3.volume(mesh), v, "the reloaded rounded box", whenQuantised = 1e-9)
     }
 }

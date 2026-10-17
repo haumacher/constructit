@@ -342,7 +342,7 @@ class BlendCanalSpineTest {
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "the drawing round-trips byte-equal")
         val was = volumeOf(bodyRef(DocumentFormat.load(script)), "as written")
         val now = volumeOf(bodyRef(DocumentFormat.load(once)), "as read back")
-        assertClose(now, was, 1e-7 * was, "the reloaded body is the same body")
+        assertSameBody(now, was, "the reloaded body", whenQuantised = 1e-7 * was)
     }
 
     // ---- fixtures ----

@@ -91,7 +91,7 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
 
         assertEquals(b.vertices.toSet(), a.vertices.toSet(), "the same vertices")
         assertEquals(b.triangles.size, a.triangles.size, "the same triangle count")
-        assertClose(Geom3.volume(a), Geom3.volume(b), tol = 1e-9, msg = "the same body")
+        assertClose(Geom3.volume(a), Geom3.volume(b), tol = sameBodyTol(Geom3.volume(b), 1e-9), msg = "the same body")
         assertTrue(Geom3.volume(a) < Geom3.volume(meshOf(custom.solids().first())), "material came off")
     }
 
@@ -109,7 +109,7 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(1, ed.solids().size, "gone")
         assertTrue(ed.redo(), "redo it")
         assertEquals(2, ed.solids().size, "back")
-        assertClose(Geom3.volume(meshOf(ed.solids().last())), v, tol = 1e-9, msg = "the same body after redo")
+        assertSameBody(Geom3.volume(meshOf(ed.solids().last())), v, "after redo", whenQuantised = 1e-9)
         val saved = DocumentFormat.save(ed.doc)
         assertTrue(saved.lines().any { it.trim().startsWith("tool blendedge") }, "the step is recorded:\n$saved")
         val again = DocumentFormat.load(saved)

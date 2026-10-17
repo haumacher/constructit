@@ -217,7 +217,7 @@ class DeferredMeshProbeTest {
 
         @Suppress("UNCHECKED_CAST")
         val volBack = Geom3.volume(Evaluator().solid(reloaded.ref as SolidRef).mesh)
-        assertEquals(vol, volBack, absoluteTolerance = 1e-9, message = "a reloaded body reports the same volume")
+        assertSameBody(volBack, vol, "a reloaded body reports its volume", whenQuantised = 1e-9)
 
         // and the analytic sanity check the number is worth: a tube of radius 2.5 on a 2-turn coil of
         // radius 20, pitch 12 — length is the coil's arc length, so volume ≈ pi r^2 L, inscribed twice

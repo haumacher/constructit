@@ -109,7 +109,7 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(saved, DocumentFormat.save(doc4), "and is a fixed point")
         val a = Editor().also { it.replaceDocument(doc3) }
         val b = Editor().also { it.replaceDocument(doc4) }
-        assertClose(volume(solid(b)), volume(solid(a)), tol = 1e-9, msg = "the same body either way")
+        assertClose(volume(solid(b)), volume(solid(a)), tol = sameBodyTol(volume(solid(a)), 1e-9), msg = "the same body either way")
         assertClose(volume(solid(a)) / (loopArea(a) * 18.0), 1.0, tol = 2e-3, msg = "the prism over the rounded loop, within the arcs' chords")
         assertManifold(((Evaluator().eval(solid(a).ref.node) as EvalResult.Ok).value as SolidValue).solid.mesh, "the rounded prism")
     }

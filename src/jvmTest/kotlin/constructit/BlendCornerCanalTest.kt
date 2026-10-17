@@ -591,7 +591,7 @@ class BlendCornerCanalTest {
         assertManifold(other.mesh, "$what, one gesture at a time")
         val v = Geom3.volume(body.mesh)
         // …to the engine's own ULP, which is the class the general boolean is deterministic in (session 84)
-        assertClose(Geom3.volume(other.mesh), v, 1e-7 * v, "$what: the two routes are the same body")
+        assertClose(Geom3.volume(other.mesh), v, sameBodyTol(v, 1e-7 * v), "$what: the two routes are the same body")
         assertInsideItsOwnBracket(body, v0, what)
         return 2 to true
     }
@@ -637,7 +637,7 @@ class BlendCornerCanalTest {
         val two = Evaluator().solid(assertNotNull(seq.first, "$what: two gestures — ${seq.second}"))
         assertManifold(two.mesh, "$what, sequentially")
         val v = Geom3.volume(one.mesh)
-        assertClose(Geom3.volume(two.mesh), v, 1e-7 * v, "$what: both routes give the same body")
+        assertClose(Geom3.volume(two.mesh), v, sameBodyTol(v, 1e-7 * v), "$what: both routes give the same body")
         val c3 = Construction()
         val back = Evaluator().solid(assertNotNull(rounded(c3, make(c3), pair.reversed(), r).first, "$what: the other order"))
         assertClose(Geom3.volume(back.mesh), v, 1e-7 * v, "$what: and so does the other gesture order")

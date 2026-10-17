@@ -262,7 +262,7 @@ class BlendConcaveVertexTest {
         val first = filled(r, orders[0]).let { volumeOf(it.first, "order ${orders[0]}") }
         for (order in orders.drop(1)) {
             val v = volumeOf(filled(r, order).first, "order $order")
-            assertClose(v, first, abs(first) * 1e-5, "order $order is the same body")
+            assertClose(v, first, sameBodyTol(first, abs(first) * 1e-5), "order $order is the same body")
         }
     }
 

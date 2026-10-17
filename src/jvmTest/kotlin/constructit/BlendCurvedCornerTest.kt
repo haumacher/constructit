@@ -428,16 +428,18 @@ class BlendCurvedCornerTest {
      * **No stored form moved.** This slice appends no slot, renumbers none and writes nothing new into a
      * file: a curved crease's notch is a *boundary piece* and not an address, the corner face a curved pair
      * makes is the very `BlendCorner` slot the catalogue already had, and no format version rose. The
-     * fixtures assert it the only way a construction can — the same dressing built twice is the same body to
-     * the last bit, and the two gesture orders of one corner agree.
+     * fixtures assert it the only way a construction can — the same dressing built twice is the same body
+     * ([assertSameBody]: to the last bit on an engine that keeps it, and to the default binding's own
+     * retriangulation, a part in 10¹², where it does not — `BooleanDeterminismTest` measures it on this very
+     * corner), and the two gesture orders of one corner agree.
      */
     @Test
     fun theSameDressingIsTheSameBodyAndBothOrdersAgree() {
         val (_, once) = built(::keyhole, listOf(STEM_TOP, DISC_TOP), 3.0, what = "once")
         val (_, twice) = built(::keyhole, listOf(STEM_TOP, DISC_TOP), 3.0, what = "twice")
-        assertClose(once, twice, 1e-9 * once, "the same construction is the same body — to the general engine's own ULP noise, which slice 5g measured at a part in 1e12 between two evaluations")
+        assertSameBody(twice, once, "the same construction built twice")
         val (_, other) = built(::keyhole, listOf(DISC_TOP, STEM_TOP), 3.0, what = "the other order")
-        assertClose(once, other, 1e-9 * once, "and the corner does not care which edge was picked first — to the same ULP noise")
+        assertClose(other, once, sameBodyTol(once), "and the corner does not care which edge was picked first")
     }
 
     private companion object {

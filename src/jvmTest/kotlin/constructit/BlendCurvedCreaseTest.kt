@@ -371,7 +371,7 @@ class BlendCurvedCreaseTest {
         val rimOnly = volumeOf(bodyRef(ed.doc), "the rim alone")
         assertTrue(rimOnly > both, "…and its torus's worth of material with it: $rimOnly against $both")
         assertTrue(ed.undo(), "the removal is one undo step")
-        assertEquals(both, volumeOf(bodyRef(ed.doc), "restored"), "one undo gives it back to the last bit")
+        assertSameBody(volumeOf(bodyRef(ed.doc), "restored"), both, "one undo gives it back")
     }
 
     @Suppress("UNCHECKED_CAST")

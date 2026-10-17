@@ -343,7 +343,7 @@ param "r" = 5mm
         assertTrue(reloaded.loadNotes.isEmpty(), "no load notes: ${reloaded.loadNotes}")
         val back = reloaded.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef
         assertNull((Evaluator().eval(back.node) as? EvalResult.Invalid)?.reason, "the reloaded tip is valid")
-        assertEquals(v, Geom3.volume(Evaluator().solid(back).mesh), 1e-9, "the reload is the same body")
+        assertSameBody(Geom3.volume(Evaluator().solid(back).mesh), v, "the reload", whenQuantised = 1e-9)
         // undo takes the fill off and leaves the two rounded caps valid
         ed.undo()
         val caps = ed.solids().last().ref as SolidRef
