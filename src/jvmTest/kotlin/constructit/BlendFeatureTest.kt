@@ -400,7 +400,7 @@ class BlendFeatureTest {
         val once = DocumentFormat.save(ed.doc)
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "blend + face space + cut round-trips byte-equal")
         val back = DocumentFormat.load(once)
-        assertClose(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), bored, 1e-6, "and reloads to the same body")
+        assertSameBody(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), bored, "the reloaded bored body", whenQuantised = 1e-6)
     }
 
     // ---- 4: blends chain, the second addressing the first's extended list ----
@@ -478,7 +478,7 @@ class BlendFeatureTest {
         val text = DocumentFormat.save(ed.doc)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
         val back = DocumentFormat.load(text)
-        assertClose(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), v, 1e-6, "and the same body comes back")
+        assertSameBody(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), v, "the reloaded body", whenQuantised = 1e-6)
         val f = (Evaluator().valueOf(back.elements.last { it.kind == ElementKind.SOLID }.ref) as SolidValue).solid.feature
         assertTrue(f is Feature3.Blend && f.base !is Feature3.Blend, "one dress-up feature, not a chain of two: $f")
         assertEquals(

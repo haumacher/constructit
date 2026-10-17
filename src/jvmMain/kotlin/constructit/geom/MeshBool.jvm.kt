@@ -48,6 +48,19 @@ import java.io.File
  * two platforms compute with the same engine and the same precision. Its determinism is a build fact and
  * not a flag: Manifold 3 *removed* `ExecutionParams::deterministic`, and `MANIFOLD_PAR=OFF` — a serial
  * engine with nothing left to race — is what replaces it.
+ *
+ * **Determinism, measured where the coin is** (OP-4; session 88, closing the session-83 queue entry). The
+ * keyhole corner's two operands, identical to the bit, come back from the clojars engine as one of two meshes
+ * — 1007 or 1010 vertices, `15000.062802156805` or `15000.06280217351` mm³ — in about one call in four, and
+ * three experiments say where the coin is: it still lands both ways with the process pinned to **one CPU**
+ * (so it is no thread race, and no thread count would pin it); it lands both ways when one `MeshGL` is
+ * imported afresh each time; and one **imported** pair subtracted forty times answers with one mesh forty
+ * times. So it is the binding's mesh import, not the boolean's reductions, and nothing on this binding's Java
+ * surface — no `ExecutionParams`, no `ManifoldParams`, no thread control — reaches it. Upstream Manifold 3.5.1
+ * built serial does not toss it: the shim below gives one mesh on the same operands every time, and so does
+ * the browser's WebAssembly build of the same version, which is what the app ships. The contract this engine
+ * keeps is therefore *the same body* (see [MeshBool]'s common declaration), and the suite asserts exactly that
+ * on it — `engineIsBitDeterministic` and `assertSameBody` in the test support.
  */
 actual object MeshBool {
     /**

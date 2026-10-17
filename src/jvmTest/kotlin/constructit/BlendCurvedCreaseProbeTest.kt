@@ -150,7 +150,7 @@ tool filletedge els=e9 clicks=30,0 scalar="r" signs=8;-1;1;0;1 -> e10,e11
         val text = plate("4") + "param \"r1\" = 1mm\ntool filletedge els=e10 clicks=0,1 scalar=\"r1\" signs=$n0;${scored.signs().joinToString(";")} -> e12,e13\n"
         val e2 = load(text)
         val fromFile = body(e2)
-        assertClose(volumeOf(rounded, "dsl"), volumeOf(refOf(fromFile), "file"), 1e-9, "the file's step builds the same body")
+        assertClose(volumeOf(rounded, "dsl"), volumeOf(refOf(fromFile), "file"), sameBodyTol(volumeOf(rounded, "dsl"), 1e-9), "the file's step builds the same body")
         val faces2 = assertNotNull(Section3.faces(Evaluator().solid(refOf(fromFile)).feature).first)
         val cap = faces2.indices.first { faces2[it].name is FaceName.BlendCap && faces2[it].plane != null }
         val e3 = load(text + "sketchspace \"cap\" el=e12 piece=$cap\nsectioninput \"cap\" edge=0 -> e14\n")

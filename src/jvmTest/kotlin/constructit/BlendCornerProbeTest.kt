@@ -101,7 +101,7 @@ class BlendCornerProbeTest {
         val again = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(again), "byte-equal round trip")
         val back = again.elements.last { it.kind == ElementKind.SOLID }
-        assertClose(volumeOf(back), v, tol = 1e-9, msg = "the reloaded body is the same body")
+        assertSameBody(volumeOf(back), v, "the reloaded body", whenQuantised = 1e-9)
         assertManifold(meshOf(back), "reloaded")
     }
 
@@ -126,7 +126,7 @@ class BlendCornerProbeTest {
         assertEquals(6, saved.lines().count { it.trim().startsWith("tool chamferedge") }, "six recorded steps:\n$saved")
         val again = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(again), "six dressed steps round-trip")
-        assertClose(volumeOf(again.elements.last { it.kind == ElementKind.SOLID }), v, tol = 1e-9, msg = "and rebuild the same body")
+        assertSameBody(volumeOf(again.elements.last { it.kind == ElementKind.SOLID }), v, "and the six steps rebuild it", whenQuantised = 1e-9)
     }
 
     /** The reporter's fillet on the triangle: retype the radius and the corner follows; undo brings the body back. */

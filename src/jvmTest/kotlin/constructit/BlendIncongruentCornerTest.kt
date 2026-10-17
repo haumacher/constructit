@@ -281,7 +281,7 @@ class BlendIncongruentCornerTest {
         assertTrue(left.isNotEmpty() && left.all { it.reason != null }, "…and the corner's slots stay, each saying why: $left")
 
         assertTrue(ed.undo(), "the removal is one undo step")
-        assertEquals(pair, volumeOf(bodyRef(ed.doc), "the pair, restored"), "one undo gives the pair back to the last bit")
+        assertSameBody(volumeOf(bodyRef(ed.doc), "the pair, restored"), pair, "one undo gives the pair back")
     }
 
     /**

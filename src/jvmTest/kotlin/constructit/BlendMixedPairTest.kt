@@ -300,7 +300,7 @@ class BlendMixedPairTest {
         val one = volumeOf(bodyOfScript(script(band, fill, chained = false)), "one dressing of two entries")
         val two = volumeOf(bodyOfScript(script(band, fill, chained = true)), "the same two as a chain")
         for ((what, v) in listOf("the other order" to b, "one dressing" to one, "the chain" to two)) {
-            assertClose(v, a, abs(a) * 1e-6, "$what is the same body: $v vs $a")
+            assertClose(v, a, sameBodyTol(a, abs(a) * 1e-6), "$what is the same body: $v vs $a")
         }
     }
 

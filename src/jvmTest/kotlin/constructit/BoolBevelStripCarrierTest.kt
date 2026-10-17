@@ -654,7 +654,7 @@ class BoolBevelStripCarrierTest {
         val again = bodyOf(ed2)
         assertManifold(again.mesh, "the reloaded body")
         val v = Geom3.volume(bored.mesh)
-        assertClose(Geom3.volume(again.mesh), v, 1e-7 * v, "the reloaded body is the same body, to the float32 snap")
+        assertSameBody(Geom3.volume(again.mesh), v, "the reloaded body, to the float32 snap", whenQuantised = 1e-7 * v)
         assertTrue(stripsOf(facesOf(again)).isNotEmpty(), "…and it names its strip too")
         println("bevel carrier | editor route | ${fs.size} faces, ${stripsOf(fs).size} strip piece(s)")
     }

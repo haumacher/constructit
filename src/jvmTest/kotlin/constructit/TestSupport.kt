@@ -55,11 +55,16 @@ fun assertClose(
  * engine that does round would be asserting **less** than this suite does today. So each assertion keeps
  * the exactness it has where it has it, and states [REL] of the figure where the engine computes in
  * doubles.
+ *
+ * *And never less than [reevaluationTol]* (session 88): "came back to the last bit" under float32 was true of
+ * the grid and not of the default binding, whose import retriangulates the same operands now and then — so a
+ * route assertion is held to the construction's own agreement plus that engine's measured noise, never to a
+ * bit the engine does not promise.
  */
 fun sameBodyTol(
     magnitude: Double,
     whenQuantised: Double = 0.0,
-): Double = if (constructit.geom.MeshBool.isNative) maxOf(whenQuantised, REL * abs(magnitude)) else whenQuantised
+): Double = maxOf(whenQuantised, reevaluationTol(magnitude), if (constructit.geom.MeshBool.isNative) REL * abs(magnitude) else 0.0)
 
 /**
  * How nearly two routes to one body agree under an engine that computes in **doubles** — a shade above the
@@ -67,6 +72,100 @@ fun sameBodyTol(
  * orders above the 5.2e-12 the engine itself reaches on a fixture with nothing shared in it.
  */
 const val REL = 2e-8
+
+/**
+ * **Whether the general boolean running this suite is bit-deterministic** (OP-4, OP-9; the session-83 queue
+ * entry *"deterministic only to an ULP"*, closed in session 88) — the one place the suite asks which half of
+ * [constructit.geom.MeshBool]'s contract it may assert.
+ *
+ * Measured, not assumed: the browser's `manifold-3d` 3.5.1 (single-threaded WebAssembly, the engine the app
+ * ships) answers the keyhole corner's two operands with one mesh 120 times out of 120 across three
+ * processes, and so does the from-source shim (`native/`, serial) 80 times out of 80. The clojars binding the
+ * suite runs on by default does not: the same operands give two meshes (1007 or 1010 vertices, volumes
+ * `15000.062802156805` and `15000.06280217351`) in about one call in four — also pinned to one CPU, so it is
+ * not a thread race, and also from one `MeshGL` imported twice, while one *imported* pair subtracted forty
+ * times gives one mesh, so the coin is in that binding's mesh import. No execution policy is on its Java
+ * surface to pin, so the suite states the engine it has: [BooleanDeterminismTest] asserts bytes where this is
+ * true and [reevaluationTol] where it is not.
+ */
+val engineIsBitDeterministic: Boolean get() = constructit.geom.MeshBool.isNative
+
+/**
+ * How far **one construction evaluated again** — a second evaluation, an undo, a reload — may move a body's
+ * volume, for the engine that is running ([engineIsBitDeterministic]): nothing on an engine that keeps the
+ * bit contract, and [REEVALUATION_REL] of [magnitude] on the default JVM binding, which retriangulates.
+ *
+ * Every same-body assertion in the suite reaches this, directly through [assertSameBody] and [assertSameMesh]
+ * or through [sameBodyTol] for two *routes* to one body, so the engine's own noise is stated once and is
+ * never mistaken for a defect of the construction (OP-4) — nor a defect of the construction for noise, which
+ * is why it is three orders above the noise and not a loosening to the float32 snap.
+ */
+fun reevaluationTol(magnitude: Double): Double = if (engineIsBitDeterministic) 0.0 else REEVALUATION_REL * abs(magnitude)
+
+/**
+ * The default JVM binding's re-evaluation noise, stated with headroom: the largest difference measured between
+ * two answers to identical operands is 1.1e-12 of the volume (the keyhole corner), and the tight-ring pivot's
+ * two meshes agree to nine decimals.
+ */
+const val REEVALUATION_REL = 1e-9
+
+/**
+ * **The same construction gave the same body** (OP-4): [actual] against [expected] at [reevaluationTol], or at
+ * [whenQuantised] where the assertion has always allowed more (a float32 snap, a chord tolerance).
+ */
+fun assertSameBody(
+    actual: Double,
+    expected: Double,
+    what: String,
+    whenQuantised: Double = 0.0,
+) = assertClose(actual, expected, maxOf(whenQuantised, reevaluationTol(expected)), "$what (the same body, OP-4)")
+
+/**
+ * **The same construction gave the same mesh**: bit for bit on an engine that keeps the bit contract, and on
+ * one that does not either bit for bit or — where its import came up the other way — the same body by
+ * [assertSameBody]. The weaker half is the measured truth about that engine and not a tolerance on ours.
+ */
+fun assertSameMesh(
+    actual: Mesh3,
+    expected: Mesh3,
+    what: String,
+) {
+    if (engineIsBitDeterministic || actual == expected) {
+        assertEquals(expected, actual, "$what (the same mesh, bit for bit, OP-4)")
+    } else {
+        assertSameBody(Geom3.volume(actual), Geom3.volume(expected), "$what — retriangulated by the engine's own import")
+    }
+}
+
+/**
+ * **save → load → save is a fixed point** (OP-4, OP-18), for a file that may state a value **derived from a
+ * general boolean** — the one way such a float reaches a file is a source node restated with what drives it:
+ * a parameter wired to a solid's measured volume or extent writes that measurement in its `param` step, and a
+ * point welded to a corner of a bored body's section writes the corner. On an engine that keeps the bit
+ * contract this is byte equality; on the default JVM binding a line may differ only in numbers that agree to
+ * [REEVALUATION_REL].
+ */
+fun assertSameFile(
+    actual: String,
+    expected: String,
+    what: String,
+) {
+    if (engineIsBitDeterministic || actual == expected) {
+        assertEquals(expected, actual, "$what (byte-equal, OP-4)")
+        return
+    }
+    val a = actual.lines()
+    val e = expected.lines()
+    assertEquals(e.size, a.size, "$what: the same steps\n$actual")
+    val number = Regex("-?[0-9]+(\\.[0-9]+)?([eE]-?[0-9]+)?")
+    for (i in e.indices) {
+        if (a[i] == e[i]) continue
+        assertEquals(e[i].replace(number, "#"), a[i].replace(number, "#"), "$what: line ${i + 1} differs in more than a number")
+        val na = number.findAll(a[i]).map { it.value.toDouble() }.toList()
+        val ne = number.findAll(e[i]).map { it.value.toDouble() }.toList()
+        for (k in ne.indices) assertSameBody(na[k], ne[k], "$what: line ${i + 1}, number ${k + 1}")
+    }
+}
 
 /**
  * The node an element's geometry is **computed by** — behind the re-pointable view a trimmable curve

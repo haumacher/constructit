@@ -192,7 +192,7 @@ class MeshBooleanTest {
         // the two volumes less the box where they overlap: 16 × 16 × 20 mm of shared material
         val analytic = 20.0 * 20.0 * 100.0 + 16.0 * 16.0 * 100.0 - 16.0 * 16.0 * 20.0
         assertClose(ev.scalar(c.measureVolume(fused)).base, analytic, tol = 0.5, msg = "a union counts the overlap once")
-        assertEquals(ev.solid(fused).mesh, Evaluator().solid(fused).mesh, "and it is deterministic")
+        assertSameMesh(Evaluator().solid(fused).mesh, ev.solid(fused).mesh, "the fused body evaluated again")
     }
 
     /** Cross-axis **intersection**: what is in both is exactly the box where the two prisms cross. */

@@ -320,7 +320,7 @@ class BooleanProvenanceTest {
         val part = c.union(c.post(), c.bar())
         val one = Evaluator().solid(part)
         val two = Evaluator().solid(part)
-        assertEquals(one.mesh, two.mesh, "the same triangles, bit for bit")
+        assertSameMesh(two.mesh, one.mesh, "the cross bar evaluated twice")
         val a = assertNotNull(Section3.faces(one.feature).first)
         val b = assertNotNull(Section3.faces(two.feature).first)
         assertEquals(a.map { it.name }, b.map { it.name }, "the same faces in the same order")

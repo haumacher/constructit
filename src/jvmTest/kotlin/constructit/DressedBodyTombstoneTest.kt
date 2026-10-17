@@ -227,7 +227,7 @@ class DressedBodyTombstoneTest {
         val back = DocumentFormat.load(text)
         assertEquals(2, entriesOf(back).size, "two rows come back, not three")
         assertEquals(2, back.elements.count { it.kind == ElementKind.SOLID }, "…on the one body")
-        assertClose(volumeOf(bodyOf(back)), v, abs(v) * 1e-9, "the same body")
+        assertSameBody(volumeOf(bodyOf(back)), v, "the reloaded tombstoned body")
         assertEquals(text, DocumentFormat.save(back), "and the file is a fixed point")
 
         // the slot came back too, in the very place it stood

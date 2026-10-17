@@ -172,7 +172,7 @@ class BlendTightRingTest {
             assertManifold(other.mesh, "the tight ring's pivot at r = $r, one gesture at a time")
             val v = Geom3.volume(body.mesh)
             assertTrue(v < v0, "r = $r: the dressing takes material off the body")
-            assertClose(Geom3.volume(other.mesh), v, 1e-7 * v, "r = $r: the two routes are the same body")
+            assertClose(Geom3.volume(other.mesh), v, sameBodyTol(v, 1e-7 * v), "r = $r: the two routes are the same body")
             val corner = facesOf(body).filter { it.name is FaceName.BlendCorner }
             assertEquals(1, corner.size, "r = $r: one corner face, and only one")
             val reason = assertNotNull(corner[0].reason, "r = $r: …and it says what it is").render()
@@ -255,7 +255,7 @@ class BlendTightRingTest {
         val dsl = Evaluator().solid(assertNotNull(round(cx, base, pair(Evaluator().solid(base)), 2.0).first, "the DSL builds it too"))
         assertManifold(dsl.mesh, "the one-gesture body")
         val v = Geom3.volume(dsl.mesh)
-        assertClose(Geom3.volume(fromFile.mesh), v, 1e-7 * v, "two recorded gestures and one DSL gesture are the same body")
+        assertClose(Geom3.volume(fromFile.mesh), v, sameBodyTol(v, 1e-7 * v), "two recorded gestures and one DSL gesture are the same body")
     }
 
     /** The tight ring's own drawing as a `.cit`: the revolve, then the two cap edges rounded one gesture each. */

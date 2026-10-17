@@ -138,7 +138,7 @@ class CustomBlendProfileToolTest {
 
         val back = DocumentFormat.load(text)
         val body = back.elements.last { it.kind == ElementKind.SOLID }
-        assertClose(volumeOf(body), volumeOf(ed.solids().last()), 1e-9, "and the reloaded body is the same body")
+        assertSameBody(volumeOf(ed.solids().last()), volumeOf(body), "the reloaded body", whenQuantised = 1e-9)
 
         ed.undo()
         assertEquals(1, ed.solids().size, "one press takes back the whole gesture")

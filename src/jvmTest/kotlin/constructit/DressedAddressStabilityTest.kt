@@ -521,7 +521,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         val a = volumeOf(solids.last())
         val nine = DocumentFormat.load(cornerRoundedAtNine)
         assertTrue(nine.loadNotes.none { "numbered from a record" in it }, "a file at the version says nothing: ${nine.loadNotes}")
-        assertClose(a, volumeOf(nine.elements.last { it.kind == ElementKind.SOLID }), abs(a) * 1e-9, "and it is the same body")
+        assertSameBody(volumeOf(nine.elements.last { it.kind == ElementKind.SOLID }), a, "the drawing with its record written down")
 
         val once = DocumentFormat.save(doc)
         assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}\n"), "it is saved at the version this build writes:\n$once")
