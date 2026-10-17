@@ -21,6 +21,7 @@ import constructit.geom.Vec2
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -143,7 +144,7 @@ class WallExtendTest {
         val grown = wallOf(ed)
         val entry = assertNotNull(ed.doc.scalars.firstOrNull { it.name == "d" })
         assertClose(Evaluator().scalar(grown.thickness).mm, 5.0, msg = "still 5 mm, the wall's own")
-        assertTrue(DocumentFormat.save(ed.doc).contains("scalar=\"${entry.name}\""), "and the step still names it")
+        assertTrue(saved(ed.doc).tools("thicken").single().ids("params").contains("f${entry.serial}"), "and the step still names it")
         assertClose(Evaluator().scalar(d.ref).mm, 5.0)
     }
 
@@ -170,13 +171,12 @@ class WallExtendTest {
         assertEquals(5, (grown.carrier as ThickCarrier.Network).curves.size, ed.statusHint)
         assertTrue(Evaluator().eval(grown.footprint.ref.node) is EvalResult.Ok, ed.statusHint)
         val text = DocumentFormat.save(ed.doc)
-        // the step is after the segment it names, which is the whole point of the move — and the wall is
-        // renamed by it, because a script name *is* the journal's order (OP-18). The status says so.
-        assertTrue(
-            text.indexOf("tool segment") < text.indexOf("tool thicken"),
-            "the thicken step must follow the curve it names:\n$text",
-        )
-        assertTrue(ed.statusHint.contains("moved after"), "and the move is spoken: ${ed.statusHint}")
+        // the grown wall names the segment drawn after it, and the load orders it by that reference rather
+        // than by any place in the file (OP-32) — and it is **not** renamed: a name is an identity now, not
+        // the journal's order, so the status has no move to speak of
+        val segment = saved(text).tools("segment").last().ids("creates").single()
+        assertTrue(segment in saved(text).tool("thicken").ids("els"), "the thicken step names the curve:\n$text")
+        assertFalse(ed.statusHint.contains("moved after"), "and nothing was renamed: ${ed.statusHint}")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and save -> load -> save is byte-equal")
         assertEquals(2, regionOf(grown).holes.size)
     }
@@ -207,8 +207,9 @@ class WallExtendTest {
         val iv = assertNotNull(grown.intervals.singleOrNull(), "the opening came along: ${ed.statusHint}")
         assertClose(Evaluator().scalar(iv.position).mm, 30.0, msg = "and it is where it was")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.indexOf("tool thicken") < text.indexOf("opening"), "the opening still follows its wall:\n$text")
-        assertTrue(text.indexOf("tool segment") < text.indexOf("tool thicken"), "which follows the curve:\n$text")
+        val wall = saved(text).tool("thicken")
+        assertEquals(wall.ids("creates").single(), saved(text).kind("opening").single().str("wall"), "the opening still names its wall:\n$text")
+        assertTrue(saved(text).tools("segment").last().ids("creates").single() in wall.ids("els"), "which names the curve:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save is byte-equal")
     }
 

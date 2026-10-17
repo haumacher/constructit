@@ -248,9 +248,9 @@ tool sweep els=e7,e10 clicks=50,0;-50,8 signs=0 dofs=0deg;0deg -> e11
     fun theMigratedFileStatesTheNewNumberAndIsThenStable() {
         val once = DocumentFormat.save(DocumentFormat.load(ringAtFormatTwo))
         assertEquals(
-            atThisVersion(ringAtFormatTwo).replace("signs=0", "signs=1"),
+            imported(atThisVersion(ringAtFormatTwo).replace("signs=0", "signs=1")),
             once,
-            "the header comes up to format 3 and the recorded crossing with it — and no other line moves",
+            "the migrated file is the one a current journal with the shifted crossing makes — and nothing else moves",
         )
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and it is a fixed point from there")
         assertIsTheFarCrossingsRing(meshOf(lastSolid(DocumentFormat.load(once))), "the re-saved body")
@@ -260,7 +260,9 @@ tool sweep els=e7,e10 clicks=50,0;-50,8 signs=0 dofs=0deg;0deg -> e11
     @Test
     fun aFormatThreeNumberIsTakenAsItStands() {
         val current = atThisVersion(ringAtFormatTwo).replace("signs=0", "signs=1")
-        assertEquals(current, DocumentFormat.save(DocumentFormat.load(current)), "no second shift, ever")
+        val once = imported(current)
+        assertEquals(listOf(1), saved(once).tools("sweep").last().ints("signs"), "no second shift, ever")
+        assertEquals(once, imported(once), "…and the graph is a fixed point")
         assertIsTheFarCrossingsRing(meshOf(lastSolid(DocumentFormat.load(current))), "the format-3 body")
     }
 
@@ -273,10 +275,11 @@ tool sweep els=e7,e10 clicks=50,0;-50,8 signs=0 dofs=0deg;0deg -> e11
         val floating = ringAtFormatTwo.replace("signs=0", "signs=-1")
         val doc = DocumentFormat.load(floating)
         assertEquals(
-            atThisVersion(floating),
+            imported(atThisVersion(floating)),
             DocumentFormat.save(doc),
-            "the header comes up to format 3 and the origin reading survives it verbatim",
+            "the origin reading survives the import verbatim",
         )
+        assertEquals(listOf(-1), saved(doc).tools("sweep").last().ints("signs"))
     }
 
     /**
@@ -296,7 +299,7 @@ tool sweep els=e7,e10 clicks=50,0;-50,8 signs=0 dofs=0deg;0deg -> e11
         assertTrue(notes[0].contains("no value right now"), "it says what it could not measure: ${notes[0]}")
         assertTrue(notes[0].contains("kept as it was written"), "and what it did instead: ${notes[0]}")
         assertTrue(
-            DocumentFormat.save(doc).contains("signs=0"),
+            saved(doc).tools("sweep").last().ints("signs") == listOf(0),
             "the number is written back exactly as it came:\n${DocumentFormat.save(doc)}",
         )
         assertTrue(assertNotNull(doc.note).contains("no value right now"), "and the load speaks: ${doc.note}")

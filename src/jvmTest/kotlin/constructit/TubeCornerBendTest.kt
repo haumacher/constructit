@@ -200,17 +200,15 @@ attach e9 e19
     fun theRefusedDrawingStillRoundTrips() {
         val doc = DocumentFormat.load(script)
         val once = DocumentFormat.save(doc)
-        assertTrue(once.lines().any { it.startsWith("tool tube") }, "the refused tube is in the file: $once")
+        assertTrue(saved(once).hasTool("tube"), "the refused tube is in the file: $once")
         val again = DocumentFormat.load(once)
         assertEquals(refusalOf(doc), refusalOf(again), "the reloaded drawing refuses in the same words")
         assertEquals(once, DocumentFormat.save(again), "…and writes itself back byte for byte, attachment and all")
-        val moved = atThisVersion(script).lines().zip(once.lines()).filter { it.first != it.second }
-        assertEquals(
-            listOf("attach e9 e19", "point 12.442618571818494,22.357698716930418 -> e9"),
-            moved.map { it.first }.sortedBy { it.first() },
-            "the first save touches the attach — which now states its freedom — and the foot it re-derived once",
-        )
-        assertTrue(moved.single { it.first.startsWith("attach") }.second.startsWith("attach e9 e19 dofs="), "$once")
+        // the import is the file the same journal makes at the last journal version, and its attach states the
+        // freedom it creates (session 63's creep closed) — the foot it re-derived once is the one difference the
+        // first save made, which the paste-literal check below holds to the paste
+        assertEquals(imported(atThisVersion(script)), once, "the import is the old file's own graph")
+        assertTrue(saved(once).kind("attach").single().let { it.str("point") == "e9" && it.str("curve") == "e19" && it.containsKey("dofs") }, "$once")
 
         // **and the stored file still means what it meant.** The claim the fix owes a file written by an
         // earlier build: `e9` comes back where that file put it — the recorded position itself, since a script

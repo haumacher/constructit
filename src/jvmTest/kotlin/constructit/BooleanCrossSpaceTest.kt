@@ -389,10 +389,11 @@ tool revolve els=e28,e29 clicks=50.410797908588975,18.74032756933117;-14.5810454
         val volume = Geom3.volume(meshOf(union))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("${DocumentFormat.HEADER}\n"), "the cross-space union owes no bump of its own: ${once.lines().first()}")
-        val step = assertNotNull(once.lines().firstOrNull { it.startsWith("tool union ") }, "the union is one step")
-        assertTrue(
-            step.contains("els=${ed.doc.nameOf(column(ed.doc))},${ed.doc.nameOf(foundation(ed.doc))}"),
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "the cross-space union owes no bump of its own")
+        val step = saved(once).tool("union")
+        assertEquals(
+            listOf(ed.doc.nameOf(column(ed.doc)), ed.doc.nameOf(foundation(ed.doc))),
+            step.ids("els"),
             "and it names the two solids, in pick order: $step",
         )
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is byte-equal")
@@ -416,9 +417,9 @@ tool revolve els=e28,e29 clicks=50.410797908588975,18.74032756933117;-14.5810454
         val volume = Geom3.volume(meshOf(assertNotNull(ed.solids().lastOrNull())))
 
         val once = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(once.lines().firstOrNull { it.startsWith("tool union ") })
+        val step = saved(once).tool("union")
         assertTrue(
-            step.contains("els=${ed.doc.nameOf(foundation(ed.doc))},${ed.doc.nameOf(column(ed.doc))}"),
+            step.ids("els") == listOf(ed.doc.nameOf(foundation(ed.doc)), ed.doc.nameOf(column(ed.doc))),
             "the section pick recorded the solid itself: $step",
         )
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is byte-equal")

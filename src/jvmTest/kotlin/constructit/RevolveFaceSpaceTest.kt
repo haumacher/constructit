@@ -317,8 +317,8 @@ class RevolveFaceSpaceTest {
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(7.0, 0.0))
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("sketchspace") }
-        assertTrue("piece=" in step && "el=" in step, "the address is the one it always was: $step")
+        val step = saved(text).kind("sketchspace").single()
+        assertTrue(step.containsKey("piece") && step.containsKey("el"), "the address is the one it always was: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
         val back = DocumentFormat.load(text)
         val space = assertNotNull(back.spaces.firstOrNull { !it.isPlan })

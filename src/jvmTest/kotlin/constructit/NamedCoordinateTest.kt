@@ -128,7 +128,7 @@ class NamedCoordinateTest {
         assertClose(radiusOf(ed.doc.elements.single { it.kind == ElementKind.CIRCLE }), 21.0, tol = 1e-9, msg = "nothing moved")
 
         val text = roundTrips(ed, "the re-stamped file round-trips byte for byte")
-        assertTrue(text.contains("bind \"r\" = \"hinge.x / 2 + 1mm\""), "the file says it too:\n$text")
+        assertEquals("hinge.x / 2 + 1mm", saved(text).formulaOf("r"), "the file says it too:\n$text")
         assertFalse(text.contains("\"P.x"), "and the old name is nowhere in it")
     }
 

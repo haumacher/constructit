@@ -307,7 +307,7 @@ attachortho e15 e7
     fun theReportedFixtureRoundTrips() {
         val ed = load()
         val once = DocumentFormat.save(ed.doc)
-        assertEquals(atThisVersion(web), withoutRestatedAttach(once), "the file must replay to itself")
+        assertEquals(imported(atThisVersion(web)), once, "the file must replay to itself")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and be a fixed point from that save on")
     }
 }

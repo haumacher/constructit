@@ -75,7 +75,7 @@ class BoolCanalCarrierProbeTest {
                 abs(a.z - height) < 1e-9 && abs(b.z - height) < 1e-9 && ((a - corner).length() < 1e-9 || (b - corner).length() < 1e-9)
             }
         assertEquals(2, tops.size, "two top edges share the far corner")
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart ${plan[0].x},${plan[0].y} -> e1\n")
         var n = 2
         for (i in 1 until plan.size) {

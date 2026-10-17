@@ -72,9 +72,9 @@ class SectionFamilyToolTest {
     private fun stepOf(
         ed: Editor,
         el: Element,
-    ): String {
+    ): kotlinx.serialization.json.JsonObject {
         val name = ed.doc.nameOf(el)
-        return DocumentFormat.save(ed.doc).lines().first { it.trimEnd().endsWith("-> $name") }
+        return assertNotNull(saved(ed.doc).creatorOf(name), "the feature that creates $name")
     }
 
     // ---- the rectangle fixture, swept with laws ----
@@ -116,8 +116,8 @@ class SectionFamilyToolTest {
     fun aConstantSweepWritesNoLawsAndAnOlderScriptBuildsTheIdenticalBody() {
         val (ed, _, body) = sweptRect()
         val step = stepOf(ed, body)
-        assertFalse(step.contains("laws="), "a section read once states none: $step")
-        assertFalse(step.contains("law="), "and no rigid law either: $step")
+        assertFalse(step.containsKey("laws"), "a section read once states none: $step")
+        assertFalse(step.containsKey("law"), "and no rigid law either: $step")
 
         val reloaded = assertRoundTrips(ed)
         val back = reloaded.elements.last { it.kind == ElementKind.SOLID }
@@ -137,7 +137,7 @@ class SectionFamilyToolTest {
         val (ed, _, body) = sweptRect("w" to "20mm * (1 - 0.5*t)", "twist" to "15deg * t")
         val step = stepOf(ed, body)
         assertTrue(
-            step.contains("""laws="w = 20mm * (1 - 0.5*t); twist = 15deg * t""""),
+            step.str("laws") == "w = 20mm * (1 - 0.5*t); twist = 15deg * t",
             "the laws are stored verbatim, semicolon-separated and quoted: $step",
         )
 
@@ -192,19 +192,19 @@ class SectionFamilyToolTest {
         ed.click(midOf(100.0))
         ed.click(rect.pick())
         val body = assertNotNull(ed.solids().lastOrNull(), "the sweep was built: ${ed.statusHint}")
-        assertTrue(stepOf(ed, body).contains("""laws="w = span * (1 - 0.5*t)""""), stepOf(ed, body))
+        assertTrue(stepOf(ed, body).str("laws") == "w = span * (1 - 0.5*t)", "${stepOf(ed, body)}")
 
         // the **right** side: the name inside the text
         assertEquals("reach", ed.renameParameter(span, "reach"), ed.statusHint)
         assertTrue(
-            stepOf(ed, body).contains("""laws="w = reach * (1 - 0.5*t)""""),
+            stepOf(ed, body).str("laws") == "w = reach * (1 - 0.5*t)",
             "the name inside the law follows the rename: ${stepOf(ed, body)}",
         )
         // …and the **left** side: the driven name itself
         assertEquals("width", ed.renameParameter(ed.doc.scalars.first { it.name == "w" }, "width"), ed.statusHint)
         val now = stepOf(ed, ed.doc.elements.last { it.kind == ElementKind.SOLID })
         assertTrue(
-            now.contains("""laws="width = reach * (1 - 0.5*t)""""),
+            now.str("laws") == "width = reach * (1 - 0.5*t)",
             "and the driven name follows it too: $now",
         )
         // …and the file still loads, which is what a one-sided re-stamp would have broken
@@ -238,7 +238,7 @@ class SectionFamilyToolTest {
 
         ed.doc.journal.removeAll(cascade)
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("laws="), "and no law is left behind naming a value that has gone: $text")
+        assertFalse(saved(text).features.any { it.containsKey("laws") }, "and no law is left behind naming a value that has gone: $text")
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "the file that is left round-trips")
     }
@@ -277,7 +277,7 @@ tool tube els=e3 clicks=60,0 scalar="r" dofs=0deg;0deg laws="r = 7mm * (1 - 0.5*
     @Test
     fun aLawNamingAValueTheDrawingHasNotGotIsInvalidAndNamedByTheLoad() {
         val (ed, _, body) = sweptRect("w" to "20mm * (1 - 0.5*t)")
-        val text = DocumentFormat.save(ed.doc).replace("laws=\"w = ", "laws=\"chord = ")
+        val text = DocumentFormat.save(ed.doc).replace("\"laws\":\"w = ", "\"laws\":\"chord = ")
         val doc = DocumentFormat.load(text)
         val back = doc.elements.last { it.kind == ElementKind.SOLID }
         val said = assertNotNull(invalidity(back), "the body says why it has no shape")
@@ -299,8 +299,8 @@ tool tube els=e3 clicks=60,0 scalar="r" dofs=0deg;0deg laws="r = 7mm * (1 - 0.5*
     fun lawsAndTheRigidLawComposeOnOneStep() {
         val (ed, _, body) = sweptRect("w" to "20mm * (1 - 0.5*t)", rigid = "1 + t")
         val step = stepOf(ed, body)
-        assertTrue(step.contains("""law="1 + t""""), "the rigid factor rides the step: $step")
-        assertTrue(step.contains("""laws="w = 20mm * (1 - 0.5*t)""""), "and the family beside it: $step")
+        assertTrue(step.str("law") == "1 + t", "the rigid factor rides the step: $step")
+        assertTrue(step.str("laws") == "w = 20mm * (1 - 0.5*t)", "and the family beside it: $step")
         assertRoundTrips(ed)
         assertManifold(meshOf(body), "the composed body")
 
@@ -361,7 +361,7 @@ tool tube els=e3 clicks=60,0 scalar="r" dofs=0deg;0deg laws="r = 7mm * (1 - 0.5*
         val after = ed.doc.elements.first { ed.doc.nameOf(it) == name }
         assertEquals(name, ed.doc.nameOf(after), "the body keeps its name, so it keeps its identity")
         assertTrue(
-            stepOf(ed, after).contains("""laws="w = 20mm * (1 - 0.5*t); twist = 30deg * t""""),
+            stepOf(ed, after).str("laws") == "w = 20mm * (1 - 0.5*t); twist = 30deg * t",
             "the one row re-stated and the other left alone: ${stepOf(ed, after)}",
         )
         assertManifold(meshOf(after), "the re-lawed body")

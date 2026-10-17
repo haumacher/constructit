@@ -42,10 +42,12 @@ tool segment pts=e10,e4 clicks=-41.25,33.75;53,12.75 -> e11
         assertTrue(ed.deleteSelection(), "delete the additional segment: ${ed.statusHint}")
 
         val after = DocumentFormat.save(ed.doc)
-        assertEquals(3, Regex("tool fillet").findAll(after).count(), "all three fillets survive:\n$after")
-        assertTrue(after.contains("dofs="), "the on-curve point keeps its parameter:\n$after")
+        assertEquals(3, saved(after).tools("fillet").size, "all three fillets survive:\n$after")
+        assertTrue(saved(after).features.any { it.containsKey("dofs") }, "the on-curve point keeps its parameter:\n$after")
         assertEquals(after, DocumentFormat.save(DocumentFormat.load(after)), "and the result round-trips")
-        // the surviving script is the original minus exactly the last step
-        assertEquals(once.trim().lines().dropLast(1), after.trim().lines(), "one step gone, nothing else changed")
+        // the surviving file is the original minus exactly the last feature — and every identity it kept is the
+        // identity it had (OP-32): a delete renames nothing
+        assertEquals(saved(once).features.dropLast(1), saved(after).features, "one feature gone, nothing else changed")
+        assertEquals(saved(once).parameters, saved(after).parameters)
     }
 }

@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer
 import constructit.editor.Tools
 import constructit.geom.Vec2
 import constructit.l10n.Messages
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.net.InetSocketAddress
@@ -1649,15 +1650,14 @@ class BrowserE2ETest {
             page.mouse().click(cx + 40.0, cy - 40.0)
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/22-drawn-in-3d.png")))
             val drawnIn3d = script()
-            assertTrue(drawnIn3d.contains("orthostart"), "the rectangle was drawn by clicking in the 3D view: $drawnIn3d")
+            assertTrue(saved(drawnIn3d).kind("path").isNotEmpty(), "the rectangle was drawn by clicking in the 3D view: $drawnIn3d")
             assertTrue(page.querySelectorAll("#tree .item").size >= 4, "…and its corners are in the tree")
 
             // the plane coordinates it recorded — the two clicks that made it, as the document has them
+            val path = saved(drawnIn3d).kind("path").single()
             val corners =
-                Regex("ortho(?:start|vertex) (-?[0-9.eE+-]+),(-?[0-9.eE+-]+)")
-                    .findAll(drawnIn3d)
-                    .map { Vec2(it.groupValues[1].toDouble(), it.groupValues[2].toDouble()) }
-                    .toList()
+                (listOf(path.pos("at")!!) + path.arr("vertices").map { it.jsonObject.pos("at")!! })
+                    .map { Vec2(it.first, it.second) }
             assertTrue(corners.size == 4, "a closed rectangle has four corners: $corners")
 
             // ---- the same two positions, clicked on the 2D canvas of a fresh page ----

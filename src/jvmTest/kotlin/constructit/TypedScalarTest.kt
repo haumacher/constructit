@@ -403,7 +403,7 @@ class TypedScalarTest {
         ed.click(Vec2(0.0, 0.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("param \"angle\" = -90deg") }, "the negative rides the param step:\n$text")
+        assertEquals("-90 deg", saved(text).valueOf("angle"), "the negative rides the parameter:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
     }
 
@@ -522,7 +522,7 @@ class TypedScalarTest {
         ed.writeSelectionField(i, 3.0)
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("dofs=3"), "the step restates the freedom it owns:\n$text")
+        assertTrue("[3]" in saved(text).dofs(), "the step restates the freedom it owns:\n$text")
         val again = DocumentFormat.load(text)
         assertTrue(again.loadNotes.isEmpty(), "nothing about it is ambiguous: ${again.loadNotes}")
         assertEquals(text, DocumentFormat.save(again), "save -> load -> save is byte-equal")
@@ -553,7 +553,7 @@ class TypedScalarTest {
         assertClose(helixOf(after).turns, 4.0, 1e-12)
         assertClose(helixOf(after).at(1.0).z, 48.0, 1e-12, "four pitches of 12 mm")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("dofs=4"), "and the step restates it from now on:\n$text")
+        assertTrue("[4]" in saved(text).dofs(), "and the step restates it from now on:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 
@@ -623,7 +623,7 @@ class TypedScalarTest {
 
         // and it saves like the coil's own freedom does
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("dofs=180deg;0deg"), "roll restated, twist still at its default:\n$text")
+        assertTrue(saved(text).dofs().any { it.endsWith("""{"deg":180},{"deg":0}]""") }, "roll restated, twist still at its default:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 
@@ -651,7 +651,7 @@ class TypedScalarTest {
         val mid = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.DERIVED_POINT }, "a derived midpoint: ${ed.statusHint}")
         assertTrue(ed.doc.ownFields(mid).isEmpty(), "no freedom: 0.5 is the name of this construction")
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("dofs="), "so its step restates nothing:\n$text")
+        assertTrue(saved(text).dofs().isEmpty(), "so its step restates nothing:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 
@@ -673,8 +673,8 @@ class TypedScalarTest {
         assertEquals(1, ed.doc.scalars.count { it.name == "turns" }, "as an ordinary panel parameter")
         assertTrue(ed.doc.ownFields(el).isEmpty(), "and the step owns no freedom for a value it was given")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("scalar=\"radius\",\"pitch\",\"turns\""), "it rides scalar= as it always did:\n$text")
-        assertFalse(text.contains("dofs="), "and the step restates nothing of its own:\n$text")
+        assertTrue(saved(text).features.any { it.ids("params") == saved(text).paramIds("radius", "pitch", "turns") }, "it rides its params as it always did:\n$text")
+        assertTrue(saved(text).dofs().isEmpty(), "and the step restates nothing of its own:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 
@@ -692,7 +692,7 @@ class TypedScalarTest {
         ed.deleteSelection()
         assertTrue(ed.doc.elements.none { it.kind == ElementKind.SPACE_CURVE }, "the coil is gone: ${ed.statusHint}")
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("dofs="), "and nothing restates a freedom nobody owns:\n$text")
+        assertTrue(saved(text).dofs().isEmpty(), "and nothing restates a freedom nobody owns:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 
@@ -745,7 +745,7 @@ class TypedScalarTest {
         for (c in after) assertClose(helixOf(c).turns, 2.5, 1e-12, "and every copy follows the one number")
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.contains("dofs=2.5") }, "restated once, by the orbit step:\n$text")
+        assertEquals(1, saved(text).dofs().count { it == "[2.5]" }, "restated once, by the orbit step:\n$text")
         val back = DocumentFormat.load(text)
         assertTrue(back.loadNotes.isEmpty(), "and nothing about it is ambiguous: ${back.loadNotes}")
         assertEquals(text, DocumentFormat.save(back), "round trip, byte for byte")
@@ -816,8 +816,8 @@ class TypedScalarTest {
         assertEquals(0, ed.activeSpace.originCorner, "the corner was taken: ${ed.statusHint}")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.startsWith("tool spaceorigin") }, "the step is there:\n$text")
-        assertFalse(step.contains("dofs="), "and restates no freedom, because nothing can edit one: $step")
+        val step = assertNotNull(saved(text).tools("spaceorigin").firstOrNull(), "the step is there:\n$text")
+        assertFalse(step.containsKey("dofs"), "and restates no freedom, because nothing can edit one: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "round trip, byte for byte")
     }
 

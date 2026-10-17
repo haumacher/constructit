@@ -122,10 +122,10 @@ class PlaneAncestorTest {
 
         // no solid was clicked, and none is named as an input in the step — only the part a Cut would take
         val script = DocumentFormat.save(ed.doc)
-        val step = script.lines().first { it.startsWith("sketchspace") }
-        assertFalse(step.contains("line="), "no hinge line: $step")
-        assertFalse(step.contains(" el="), "and no picked face: $step")
-        assertTrue(step.contains("offset="), "its whole description is a height: $step")
+        val step = saved(script).kind("sketchspace").first()
+        assertFalse(step.containsKey("line"), "no hinge line: $step")
+        assertFalse(step.containsKey("el"), "and no picked face: $step")
+        assertTrue(step.containsKey("offset"), "its whole description is a height: $step")
     }
 
     /**
@@ -150,10 +150,10 @@ class PlaneAncestorTest {
         assertEquals(2, taken.size, "two section corners were materialized: ${ed.statusHint}")
 
         val script0 = DocumentFormat.save(ed.doc)
-        val inputs = script0.lines().filter { it.startsWith("sectioninput") }
+        val inputs = saved(script0).kind("sectioninput")
         assertEquals(2, inputs.size, "each pick recorded its own step:\n$script0")
         assertTrue(
-            inputs.count { it.contains(" el=") } == 1,
+            inputs.count { it.containsKey("el") } == 1,
             "the one that is not the space's own part names its solid — the other is the anchor:\n$inputs",
         )
 
@@ -263,8 +263,8 @@ class PlaneAncestorTest {
         // the gesture records the corner it materialized (`sectioninput … el=e9`) and then the tool step that
         // consumed it — so which solid the index belongs to is in the file, and replay re-scores nothing
         val script = DocumentFormat.save(ed.doc)
-        val input = script.lines().first { it.startsWith("sectioninput") }
-        assertTrue(input.contains(" el="), "the corner names the solid it is a corner of: $input")
+        val input = saved(script).kind("sectioninput").first()
+        assertTrue(input.containsKey("el"), "the corner names the solid it is a corner of: $input")
         val back = roundTrips(ed)
         val space2 = assertNotNull(back.spaceNamed(space.name), "the plane came back")
         assertEquals(space.originCorner, space2.originCorner, "on the same corner")
@@ -305,9 +305,9 @@ class PlaneAncestorTest {
         ed.setTool(Tools.POINT_ON_LINE)
         ed.click(Vec2(0.0, 50.0))
         val script = DocumentFormat.save(ed.doc)
-        val input = script.lines().firstOrNull { it.startsWith("sectioninput") }
+        val input = saved(script).kind("sectioninput").firstOrNull()
         assertNotNull(input, "the edge was materialized as an input:\n$script")
-        assertTrue(input.contains(" el="), "and it names the solid, the plane having no anchor: $input")
+        assertTrue(input.containsKey("el"), "and it names the solid, the plane having no anchor: $input")
         roundTrips(ed)
     }
 

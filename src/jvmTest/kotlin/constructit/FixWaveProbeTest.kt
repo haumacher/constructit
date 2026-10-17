@@ -16,6 +16,7 @@ import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -102,7 +103,7 @@ class FixWaveProbeTest {
         val saved = DocumentFormat.save(ed.doc)
         val circle = ed.doc.elements.first { it.kind == ElementKind.CIRCLE }
         val label = ed.doc.nameOf(circle)
-        assertTrue(saved.contains("-> $label"), "label '$label' must appear as a created name in:\n$saved")
+        assertNotNull(saved(saved).creatorOf(label), "label '$label' must appear as a created name in:\n$saved")
         ed.selectElement(circle)
         assertTrue(ed.selectionLabel().contains(label), "the selection header says '$label': ${ed.selectionLabel()}")
     }

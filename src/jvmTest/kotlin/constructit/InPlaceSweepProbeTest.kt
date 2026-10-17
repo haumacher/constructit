@@ -167,8 +167,8 @@ class InPlaceSweepProbeTest {
 
         // the choice is in the step, and the drawing round-trips byte-equal
         val script = DocumentFormat.save(ed.doc)
-        val step = script.lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(step.contains("signs=0"), "the one crossing is written down: $step")
+        val step = saved(script).tools("sweep").last()
+        assertEquals(listOf(0), step.ints("signs"), "the one crossing is written down: $step")
         val back = DocumentFormat.load(script)
         assertEquals(script, DocumentFormat.save(back), "save -> load -> save is byte-equal")
         assertTrue(back.loadNotes.isEmpty(), "nothing about it is ambiguous: ${back.loadNotes}")
@@ -249,8 +249,8 @@ class InPlaceSweepProbeTest {
 
         // the scored index is in the step, and the drawing round-trips byte-equal
         val script = DocumentFormat.save(ed.doc)
-        val step = script.lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(step.contains("signs=2"), "the crossing it chose is written down: $step")
+        val step = saved(script).tools("sweep").last()
+        assertEquals(listOf(2), step.ints("signs"), "the crossing it chose is written down: $step")
         assertEquals(script, DocumentFormat.save(DocumentFormat.load(script)), "save -> load -> save is byte-equal")
     }
 }

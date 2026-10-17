@@ -280,9 +280,9 @@ class LoftToolTest {
         assertTrue(railsA != railsB, "clicking a different corner joins different corners: $railsA vs $railsB")
         assertClose(volA, volB, 1e-9, "…and a quarter turn between two squares is a congruence, so the figure is the same")
 
-        val signsA = DocumentFormat.save(a.doc).lines().first { it.startsWith("tool loft") }
-        val signsB = DocumentFormat.save(b.doc).lines().first { it.startsWith("tool loft") }
-        assertTrue(signsA.contains("signs="), "the seam is written down: $signsA")
+        val signsA = saved(a.doc).features.first { it.str("tool")?.startsWith("loft") == true }
+        val signsB = saved(b.doc).features.first { it.str("tool")?.startsWith("loft") == true }
+        assertTrue(signsA.containsKey("signs"), "the seam is written down: $signsA")
         assertTrue(signsA != signsB, "and the two choices are different steps")
 
         for ((ed, rails) in listOf(a to railsA, b to railsB)) {

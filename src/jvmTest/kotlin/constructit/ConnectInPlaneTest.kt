@@ -357,8 +357,8 @@ class ConnectInPlaneTest {
     @Test
     fun theFixtureIsAFixedPointThroughSaveAndLoad() {
         val once = DocumentFormat.save(DocumentFormat.load(fixture))
-        assertEquals("constructit ${DocumentFormat.VERSION}", once.lines().first(), "re-saved at the version this build writes")
-        assertTrue(once.lines().any { it.startsWith("tool connect ") && it.contains("signs=0;0") }, "the step is unchanged: $once")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "re-saved at the version this build writes")
+        assertEquals(listOf(0, 0), saved(once).tool("connect").ints("signs"), "the step is unchanged: $once")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "save → load → save is byte-equal")
         assertEquals(ElementKind.BEZIER, named(doc, "e7").kind, "and the join is still a drawing curve")
@@ -400,7 +400,7 @@ class ConnectInPlaneTest {
 
         val once = DocumentFormat.save(doc)
         assertTrue(
-            once.lines().any { it.startsWith("tool connectg2 ") && it.contains("signs=0;0;1") },
+            saved(once).tool("connectg2").ints("signs") == listOf(0, 0, 1),
             "and the reading is written down beside the two ends: $once",
         )
         val back = DocumentFormat.load(once)

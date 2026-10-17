@@ -402,8 +402,8 @@ class JtImportTest {
         val mesh = onlyBody(ed).mesh
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("import ") }, "the body is one `import` step")
-        assertTrue(text.contains("mesh="), "and the step carries the extracted mesh, never the file's bytes")
+        assertEquals(1, saved(text).kind("import").size, "the body is one `import` feature")
+        assertTrue(saved(text).kind("import").single().containsKey("mesh"), "and the step carries the extracted mesh, never the file's bytes")
         assertFalse(text.contains(".jt bytes"), "nothing of the original file is stored")
 
         val reloaded = DocumentFormat.load(text)
@@ -972,7 +972,7 @@ class JtImportTest {
                 "tilted.jt",
             ).ok,
         )
-        assertTrue(DocumentFormat.save(ed2.doc).contains("pose="), "the part the anchor cannot say is recorded as the pose")
+        assertTrue(saved(ed2.doc).kind("import").any { it.containsKey("pose") }, "the part the anchor cannot say is recorded as the pose")
         // the *in-plane shift* still lands in the anchor, so the point a user drags sits under its body
         assertClose(anchorAt(ed2).x, 13.0, 1e-9, "the shift is the anchor point even when the rest cannot be")
         assertClose(anchorAt(ed2).y, -7.0, 1e-9)

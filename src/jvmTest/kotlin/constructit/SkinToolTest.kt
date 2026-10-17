@@ -197,9 +197,9 @@ class SkinToolTest {
         assertTrue(ed.statusHint.contains("2 sections skinned"), "the status line says what it made: ${ed.statusHint}")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.contains("tool ${Tools.LOFT_RULED}") }, text)
-        assertTrue("els=" in step, "the sections are named: $step")
-        assertTrue("match=" !in step, "and nothing is matched, so nothing is written: $step")
+        val step = assertNotNull(saved(text).tools(Tools.LOFT_RULED).firstOrNull(), text)
+        assertTrue(step.containsKey("els"), "the sections are named: $step")
+        assertTrue(!step.containsKey("match"), "and nothing is matched, so nothing is written: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save → load → save is byte-equal")
         val reloaded = DocumentFormat.load(text)
         val there = assertNotNull(reloaded.elements.lastOrNull { it.kind == ElementKind.SOLID })
@@ -280,11 +280,11 @@ class SkinToolTest {
 
         // the pair rides the loft's own step, by name
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.contains("tool ${Tools.LOFT_RULED}") }, text)
-        assertTrue("match=" in step, "the correspondence is stored: $step")
+        val step = assertNotNull(saved(text).tools(Tools.LOFT_RULED).firstOrNull(), text)
+        assertTrue(step.containsKey("match"), "the correspondence is stored: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "…and it round-trips byte-equal")
         assertTrue(
-            text.lines().none { it.contains(Tools.MATCH_SECTIONS) },
+            !saved(text).hasTool(Tools.MATCH_SECTIONS),
             "the Match itself records no step of its own — it re-stamped the loft's: $text",
         )
 
@@ -310,10 +310,8 @@ class SkinToolTest {
     fun aRenamedMatchedCurveReStampsAndADeletedOneTakesTheSkin() {
         val ed = matched()
         val text = DocumentFormat.save(ed.doc)
-        val pair = assertNotNull(text.lines().firstOrNull { it.contains("match=") }, text)
-        val named =
-            assertNotNull(pair.split(' ').firstOrNull { it.startsWith("match=") }, pair)
-                .removePrefix("match=").split(',')
+        val pair = assertNotNull(saved(text).features.firstOrNull { it.containsKey("match") }, text)
+        val named = pair.ids("match")
         assertEquals(2, named.size, "one stated pair, two names: $pair")
         val leg =
             assertNotNull(
@@ -323,10 +321,10 @@ class SkinToolTest {
         assertManifold(meshOf(assertNotNull(ed.solids().lastOrNull())), "the matched skin")
         assertEquals("seamedge", ed.doc.nameElement(leg, "seamedge"), "the curve takes a name")
         val renamed = DocumentFormat.save(ed.doc)
-        val stated = assertNotNull(renamed.lines().firstOrNull { it.contains("match=") }, renamed)
-        assertTrue("seamedge" in renamed, "the name is recorded as its own step: " + renamed)
+        val stated = assertNotNull(saved(renamed).features.firstOrNull { it.containsKey("match") }, renamed)
+        assertTrue("seamedge" in saved(renamed).names.values, "the name is recorded as an attribute of the curve: " + renamed)
         assertTrue(
-            stated.contains("match=" + ed.doc.nameOf(leg) + ","),
+            stated.ids("match").first() == ed.doc.nameOf(leg),
             "and the pair still names that very curve, through the naming authority: " + stated,
         )
         assertEquals(renamed, DocumentFormat.save(DocumentFormat.load(renamed)), "and the file still round-trips")
@@ -407,7 +405,7 @@ class SkinToolTest {
         assertTrue("folds this skin's shell back on itself" in fold, "and the fold is what it names: $fold")
         assertTrue("another vertex" in fold, "with the cure beside it: $fold")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue("match=" in text, "the stated twist is stored: $text")
+        assertTrue(saved(text).features.any { it.containsKey("match") }, "the stated twist is stored: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal with the pair in it")
     }
 
@@ -445,7 +443,7 @@ class SkinToolTest {
         assertManifold(meshOf(twisted), "the twisted hexagonal prism")
         assertTrue(Geom3.volume(meshOf(twisted)) < straight - 1000.0, "the twist is a smaller body: ${Geom3.volume(meshOf(twisted))}")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue("match=" in text, "the stated twist is stored: $text")
+        assertTrue(saved(text).features.any { it.containsKey("match") }, "the stated twist is stored: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal with the pair in it")
     }
 
@@ -627,7 +625,7 @@ class SkinToolTest {
         }
         assertTrue(Geom3.volume(b) > Geom3.volume(a) + 1000.0, "and swells between them: ${Geom3.volume(b)} vs ${Geom3.volume(a)}")
         val text = DocumentFormat.save(faired.doc)
-        assertTrue(text.lines().any { it.contains("tool ${Tools.LOFT_FAIRED}") }, "the row is the id: $text")
+        assertTrue(saved(text).hasTool(Tools.LOFT_FAIRED), "the row is the id: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal")
     }
 
@@ -647,8 +645,7 @@ class SkinToolTest {
         ed.click(Vec2(20.0, 0.0))
         assertEquals(1, ed.solids().size, "the plate: ${ed.statusHint}")
         val text = DocumentFormat.save(ed.doc)
-        val line = assertNotNull(text.lines().firstOrNull { it.contains("tool ${Tools.EXTRUDE}") }, text)
-        val broken = text.replace(line, line.replace("tool ${Tools.EXTRUDE}", "tool ${Tools.EXTRUDE} match=e1,e2"))
+        val broken = mapFeatures(text) { if (it.str("tool") == Tools.EXTRUDE) it.with("match", "[\"e1\",\"e2\"]") else it }
         val threw =
             try {
                 DocumentFormat.load(broken)

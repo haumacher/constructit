@@ -425,9 +425,10 @@ class PlacedGroupTest {
     fun aPlacedGroupSurvivesSaveLoadSaveByteIdentically() {
         val (ed, _) = placed()
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("place \"kitchen\" at=0,10 angle=0deg"), "got:\n$once")
+        val place = assertNotNull(saved(once).placeOf("kitchen"), "got:\n$once")
+        assertTrue(place.pos("at") == (0.0 to 10.0) && place["angle"].toString() == """{"deg":0}""", "got:\n$once")
         // the members' own steps keep restating WORLD positions: they are replayed before the retrofit
-        assertTrue(once.contains("point -60,0"), "got:\n$once")
+        assertTrue(saved(once).kind("point").any { it.pos("at") == (-60.0 to 0.0) }, "got:\n$once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         assertEquals(geometry(ed), geometry(Editor(reloaded)), "and the reloaded drawing is the same drawing")
@@ -443,16 +444,16 @@ class PlacedGroupTest {
         ed.click(Vec2(60.0, 0.0))
         ed.drag(Vec2(60.0, 0.0), Vec2(85.0, 20.0)) // the frame
         val afterFrame = DocumentFormat.save(ed.doc)
-        assertTrue(afterFrame.contains("at=25,30"), "the frame's origin is restated: got\n$afterFrame")
-        assertTrue(afterFrame.contains("point -35,20"), "and the members' world positions with it: got\n$afterFrame")
+        assertEquals(25.0 to 30.0, saved(afterFrame).placeOf("kitchen")?.pos("at"), "the frame's origin is restated: got\n$afterFrame")
+        assertTrue(saved(afterFrame).kind("point").any { it.pos("at") == (-35.0 to 20.0) }, "and the members' world positions with it: got\n$afterFrame")
         assertEquals(afterFrame, DocumentFormat.save(DocumentFormat.load(afterFrame)))
 
         ed.click(Vec2(85.0, 20.0))
         ed.click(Vec2(85.0, 20.0)) // e2 alone
         ed.drag(Vec2(85.0, 20.0), Vec2(90.0, 40.0))
         val afterMember = DocumentFormat.save(ed.doc)
-        assertTrue(afterMember.contains("point 90,40"), "a member's own world position moved: got\n$afterMember")
-        assertTrue(afterMember.contains("at=25,30"), "the frame did not: got\n$afterMember")
+        assertTrue(saved(afterMember).kind("point").any { it.pos("at") == (90.0 to 40.0) }, "a member's own world position moved: got\n$afterMember")
+        assertEquals(25.0 to 30.0, saved(afterMember).placeOf("kitchen")?.pos("at"), "the frame did not: got\n$afterMember")
         assertEquals(afterMember, DocumentFormat.save(DocumentFormat.load(afterMember)))
     }
 
@@ -484,7 +485,7 @@ class PlacedGroupTest {
         val g2 = ed.doc.groups.single()
         assertTrue(ed.unplaceGroup(g2))
         assertTrue(ed.doc.journal.none { it.kind == "place" })
-        assertEquals(afterMove.lines().filter { !it.startsWith("place") }, DocumentFormat.save(ed.doc).lines())
+        assertEquals(saved(afterMove).features.map { it.without("place") }, saved(ed.doc).features)
     }
 
     /** A `place` step whose group is gone goes too — the rule the `group` step already follows (OP-18). */
@@ -497,8 +498,8 @@ class PlacedGroupTest {
         assertTrue(ed.deleteSelection(), "got: ${ed.statusHint}")
         assertTrue(ed.doc.groups.isEmpty())
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("place"), "got:\n$text")
-        assertFalse(text.contains("group"), "got:\n$text")
+        assertFalse(saved(text).anyPlaced(), "got:\n$text")
+        assertTrue(saved(text).kind("group").isEmpty(), "got:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
     }
 
@@ -516,7 +517,7 @@ class PlacedGroupTest {
         assertTrue(g.placed, "the placement survives a member going")
         assertEquals(4, g.captures.size)
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("place \"kitchen\""), "got:\n$text")
+        assertNotNull(saved(text).placeOf("kitchen"), "got:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
 
         // and deleting a *captured* point (with the geometry built on it) re-runs the retrofit over what
@@ -543,7 +544,7 @@ class PlacedGroupTest {
         assertTrue(ed.doc.groups.isEmpty())
         assertTrue(ed.doc.freePoints.all { (it.ref.node as SourceNode).boundTo == null }, "and are free again")
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("place"), "got:\n$text")
+        assertFalse(saved(text).anyPlaced(), "got:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
     }
 

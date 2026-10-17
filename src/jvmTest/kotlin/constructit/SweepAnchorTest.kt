@@ -520,8 +520,8 @@ class SweepAnchorTest {
         val step = assertNotNull(ed.doc.creatingStep(solid), "the sweep has a step")
         val text = DocumentFormat.save(ed.doc)
         assertTrue(
-            text.lines().any { it.startsWith("tool sweep ") && it.contains("pts=${ed.doc.nameOf(corner)}") },
-            "the step names the very point that was clicked: ${text.lines().first { it.startsWith("tool sweep") }}",
+            saved(text).tools("sweep").any { it.ids("pts") == listOf(ed.doc.nameOf(corner)) },
+            "the step names the very point that was clicked: ${saved(text).tools("sweep").first()}",
         )
         assertEquals("tool", step.kind, "and it is an ordinary tool step")
         val inputs = Dependencies.inputsOf(ed.doc, solid)
@@ -602,7 +602,7 @@ class SweepAnchorTest {
         val ed = coilAndSquare()
         anchoredSweep(ed)
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("${DocumentFormat.HEADER}\n"), "the anchored sweep owes no bump of its own: ${once.lines().first()}")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "the anchored sweep owes no bump of its own")
         val again = DocumentFormat.save(DocumentFormat.load(once))
         assertEquals(once, again, "save -> load -> save is byte-equal")
         val back = DocumentFormat.load(once)
@@ -637,8 +637,8 @@ class SweepAnchorTest {
         assertEquals(DocumentFormat.save(doc), DocumentFormat.save(DocumentFormat.load(DocumentFormat.save(doc))), "and it re-saves stably")
         // …and no anchor was invented for it: the step it re-saves has no point argument at all
         assertTrue(
-            DocumentFormat.save(doc).lines().first { it.startsWith("tool sweep") }.let { !it.contains("pts=") },
-            "the re-saved step states no anchor: ${DocumentFormat.save(doc).lines().first { it.startsWith("tool sweep") }}",
+            saved(doc).tools("sweep").first().let { !it.containsKey("pts") },
+            "the re-saved step states no anchor: ${saved(doc).tools("sweep").first()}",
         )
     }
 

@@ -42,7 +42,7 @@ class BlendCornerCanalProbeTest {
 
     /** The revolved L, its cap's reflex pair rounded at 2 mm in two recorded gestures — as a file. */
     private fun turnedScript(r: Double = 2.0): String {
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         val prof = profile()
         sb.append("orthostart ${prof[0].x},${prof[0].y} -> e1\n")
         var n = 2

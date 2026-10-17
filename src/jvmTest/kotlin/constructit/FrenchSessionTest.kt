@@ -103,12 +103,12 @@ class FrenchSessionTest {
         for (word in listOf("congé", "chanfrein", "esquisse", "solide", "contour")) {
             assertFalse(word in fr, "no French reaches the file: $word")
         }
-        // …and no decimal comma in a measurement: the comma in `40.5,30` is the *coordinate* separator,
-        // which is the file's own syntax and has nothing to do with anyone's notation
-        for (literal in Regex("[-0-9.]+(?:mm|deg)\\b").findAll(fr)) {
-            assertFalse(',' in literal.value, "a decimal comma reached the file: ${literal.value}")
+        // …and no decimal comma in a value: a parameter's value is the expression a user would type, and
+        // its figure is the file's own spelling, never anyone's notation
+        for (p in saved(fr).parameters) {
+            assertFalse(',' in p.str("value")!!, "a decimal comma reached the file: ${p.str("value")}")
         }
-        assertTrue("6.5mm" in fr, "and a decimal literal was there to be spoiled:\n$fr")
+        assertTrue(saved(fr).parameters.any { it.str("value") == "6.5 mm" }, "and a decimal literal was there to be spoiled:\n$fr")
     }
 
     /** The armed hint and the formula parser, in the third language — slice 4's two conversions. */

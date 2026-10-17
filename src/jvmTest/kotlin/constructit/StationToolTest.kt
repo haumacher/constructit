@@ -423,7 +423,7 @@ class StationToolTest {
         ed.click(Vec2(8.0, 0.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(Regex("sketchspace \"station1\" path=e\\d+ at=\"distance\"").containsMatchIn(text), text)
+        assertTrue(saved(text).kind("sketchspace").any { it.str("name") == "station1" && it.str("path")!!.startsWith("e") && it.str("along") == saved(text).param("distance")?.str("id") }, text)
         val doc = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(doc), "save → load → save is byte-equal")
 

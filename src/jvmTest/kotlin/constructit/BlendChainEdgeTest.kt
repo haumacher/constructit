@@ -341,7 +341,7 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
         assertTrue(doc.loadNotes.isNotEmpty(), "the load says what changed")
         assertTrue(doc.loadNotes.any { "runs along" in it }, "…in its own words: ${doc.loadNotes}")
         val once = DocumentFormat.save(doc)
-        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}"), once.lines().first())
+        assertEquals(DocumentFormat.VERSION, saved(once).version, once.lines().first())
         assertEquals(7, DocumentFormat.CHAINED_RAIL_VERSION, "the version that says a rail is a chain")
         // …and having been saved at the new version, it is read without a note
         assertTrue(DocumentFormat.load(once).loadNotes.isEmpty(), "the migrated file needs no note: ${DocumentFormat.load(once).loadNotes}")

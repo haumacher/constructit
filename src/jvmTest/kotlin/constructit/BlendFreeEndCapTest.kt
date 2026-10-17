@@ -337,7 +337,7 @@ class BlendFreeEndCapTest {
         val once = DocumentFormat.save(ed.doc)
         val back = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(back), "save → load → save is byte-equal:\n$once")
-        assertTrue("constructit ${DocumentFormat.VERSION}" in once, "written at this version")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "written at this version")
         // **nothing about a flat-end slot is in the file**: no new argument, no slot name, and the rounding's
         // own `signs=` is the address and one choice per edge, exactly as before (OP-21, OP-18)
         assertTrue("cap" !in once && "slots=" !in once, "the file says nothing about flat ends:\n$once")

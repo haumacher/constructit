@@ -232,7 +232,7 @@ class ToolCompletionsTest {
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(20.0, 0.0))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("count=5"), "the count travels with the tool step; got:\n$text")
+        assertTrue(saved(text).features.any { it.int("count") == 5 }, "the count travels with the tool step; got:\n$text")
 
         // replay must build the same five sides even though the *editor's* count now says something else
         val fresh = Editor()
@@ -447,7 +447,7 @@ class ToolCompletionsTest {
         // named after the slot, editable, and part of the file — nothing marks it as typed
         val entry = ed.doc.scalars.single { it.editable }
         assertEquals("radius", entry.name)
-        assertTrue(DocumentFormat.save(ed.doc).contains("param \"radius\" = 7mm"), DocumentFormat.save(ed.doc))
+        assertEquals("7 mm", saved(ed.doc).valueOf("radius"), DocumentFormat.save(ed.doc))
         ed.doc.setParameter(entry, 11.0.mm)
         assertClose(Evaluator().circle(circle.ref as constructit.dsl.CircleRef).radius, 11.0, msg = "a typed value stays live")
         // the next one uniquifies exactly as a panel parameter does
@@ -600,7 +600,7 @@ class ToolCompletionsTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.click(Vec2(0.0, 0.0))
         assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
-        assertTrue(DocumentFormat.save(ed.doc).contains("scalar=\"r\""), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).features.any { it.ids("params").contains(saved(ed.doc).paramIds("r").single()) }, DocumentFormat.save(ed.doc))
         // a later pick replaces it, as before: the tool takes the *last* one
         ed.activeScalar = ed.doc.newParameter("r2", 3.0.mm)
         ed.click(Vec2(50.0, 0.0))

@@ -11134,19 +11134,6 @@
     },
     "x-translated": "9f1e4e67"
   },
-  "note.extendingWall.itsStepMovedAfterSo": " — its step moved after {name}, so the wall is {now} from here on",
-  "@note.extendingWall.itsStepMovedAfterSo": {
-    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: extending a wall: the same step, re-stamped over more carrier curves (GitHub #7, OP-23). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
-    "placeholders": {
-      "now": {
-        "type": "String"
-      },
-      "name": {
-        "type": "message"
-      }
-    },
-    "x-translated": "20194cca"
-  },
   "note.extendingWall.itsOffsetsAreApproximatedOp": " (its offsets are approximated — OP-15)",
   "@note.extendingWall.itsOffsetsAreApproximatedOp": {
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: extending a wall: the same step, re-stamped over more carrier curves (GitHub #7, OP-23).",
@@ -16540,11 +16527,6 @@
     },
     "x-translated": "182b9c95"
   },
-  "note.extendingWall.curvesItNowNames": "the curves it now names",
-  "@note.extendingWall.curvesItNowNames": {
-    "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: extending a wall: the same step, re-stamped over more carrier curves (GitHub #7, OP-23).",
-    "x-translated": "c57ebc97"
-  },
   "note.loftSkinOver.itsSource": "its source",
   "@note.loftSkinOver.itsSource": {
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1).",
@@ -19762,6 +19744,109 @@
     "placeholders": {
       "name": {
         "type": "message"
+      }
+    }
+  },
+  "refusal.file.notJson": "This file cannot be opened as a drawing: it is not well-formed JSON ({why})",
+  "@refusal.file.notJson": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {why} is the JSON reader's own technical message, which stays in English. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "why": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.file.notDrawing": "This file is not a ConstructIt drawing",
+  "@refusal.file.notDrawing": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. The file is JSON, but not a drawing of this program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands."
+  },
+  "refusal.file.newer": "This drawing is format {version}, and this build reads up to format {max}: it was written by a newer version of ConstructIt",
+  "@refusal.file.newer": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {version} and {max} are file format version numbers; the cure is to use a newer version of the program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "version": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "refusal.file.malformed": "{feature} cannot be read: {why}",
+  "@refusal.file.malformed": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is the identity and kind of one entry of the file (for example f12 (tool circle)), which stays as it is; {why} is a short technical detail in English. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "why": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.file.dangling": "{feature} refers to {ref}, which nothing in this drawing creates",
+  "@refusal.file.dangling": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is the identity and kind of one feature (for example f12 (tool circle)); {ref} is the identity it names (for example e7 or f3), which no feature of the file creates. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "ref": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.file.duplicate": "{ref} is created twice in this drawing, by {feature} and by {other}",
+  "@refusal.file.duplicate": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {ref} is an identity (for example e7 or f3); {feature} and {other} are the two features (for example f12 (tool circle)) that both claim to create it. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "ref": {
+        "type": "String"
+      },
+      "feature": {
+        "type": "String"
+      },
+      "other": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.file.cycle": "{feature} is built from its own result: {chain}; the features of a drawing cannot depend on one another in a circle",
+  "@refusal.file.cycle": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)) and {chain} lists the features of the circle, joined by arrows, in the order each depends on the next. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "chain": {
+        "type": "String"
+      }
+    }
+  },
+  "refusal.file.count": "{feature} created {created, plural, one{{created} element} other{{created} elements}}, but the file states {declared}",
+  "@refusal.file.count": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)); when it was rebuilt it produced a different number of elements than the file lists for it, which means the file was written by a different version of the program. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "created": {
+        "type": "int"
+      },
+      "declared": {
+        "type": "int"
+      }
+    }
+  },
+  "refusal.file.inFeature": "{feature}: {why}",
+  "@refusal.file.inFeature": {
+    "description": "Load error of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). A drawing is saved as a JSON file listing its features (the operations that build it, each with an identity such as f12) and its elements (the geometry, each with an identity such as e7). This sentence says why a drawing file could not be opened; it is shown under the file buttons. {feature} is one feature (for example f12 (tool circle)) and {why} is the reason it could not be rebuilt, which is already a sentence of its own. Text in curly braces is a placeholder filled in at run time; keep it exactly as it stands.",
+    "placeholders": {
+      "feature": {
+        "type": "String"
+      },
+      "why": {
+        "type": "String"
       }
     }
   }

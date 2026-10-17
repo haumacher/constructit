@@ -95,7 +95,7 @@ param "r" = 5mm
         val theirs = volumeOf(solids(DocumentFormat.load(script(listOf(0, 2, 3, 5, 6)))).last())
         assertTrue(abs(v - theirs) < 1e-6 * theirs, "two removals are the file without those steps: $v vs $theirs")
         val once = DocumentFormat.save(ed.doc)
-        assertEquals(2, once.lines().count { "removed=" in it }, "two tombstoned steps in the file:\n$once")
+        assertEquals(2, saved(once).tombstones().size, "two tombstoned steps in the file:\n$once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "a fixed point")
         val back = DocumentFormat.load(once)
         assertEquals(5, entries(back).size, "five live entries after a reload")
@@ -103,7 +103,7 @@ param "r" = 5mm
         // undo twice: both roundings return, and the file forgets both tombstones
         assertTrue(ed.undo() && ed.undo(), "two undos")
         assertEquals(7, entries(ed.doc).size)
-        assertTrue(DocumentFormat.save(ed.doc).lines().none { "removed=" in it }, "no tombstone left after undo")
+        assertTrue(saved(ed.doc).tombstones().isEmpty(), "no tombstone left after undo")
     }
 
     private fun plate(): Editor {
@@ -159,7 +159,7 @@ param "r" = 5mm
         val two = volumeOf(solids(ed.doc).last())
         assertTrue(two > all, "less taken off: $two vs $all")
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { "removed=" in it }, "the first step stays as a tombstone:\n$once")
+        assertTrue(saved(once).tombstones().isNotEmpty(), "the first step stays as a tombstone:\n$once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "a fixed point")
         // a fourth rounding joins the same body, after the tombstone
         ed.activeScalar = ed.doc.scalars.first { it.name == "c" }
@@ -171,6 +171,6 @@ param "r" = 5mm
         assertTrue(three < two, "the new rounding takes material: $three vs $two")
         val again = DocumentFormat.save(ed.doc)
         assertEquals(again, DocumentFormat.save(DocumentFormat.load(again)), "still a fixed point")
-        assertEquals(1, again.lines().count { "removed=" in it }, "one tombstone, three live entries")
+        assertEquals(1, saved(again).tombstones().size, "one tombstone, three live entries")
     }
 }

@@ -257,8 +257,8 @@ class CarrierRelativeTest {
         makeRelative(ed, "e5", "e4")
         ed.drag(pos(el(ed, "e5")), Vec2(75.0, 0.0))
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("tool makerel"), once)
-        assertEquals(2, once.lines().count { it.startsWith("tool makerel") && it.contains("dofs=") }, once)
+        assertTrue(saved(once).hasTool("makerel"), once)
+        assertEquals(2, saved(once).tools("makerel").count { it.containsKey("dofs") }, once)
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
 

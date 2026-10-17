@@ -325,7 +325,7 @@ class UnlinkTest {
 
         val once = DocumentFormat.save(ed.doc)
         assertTrue(
-            once.lines().any { it.startsWith("tool unlink") && it.contains("dofs=") },
+            saved(once).tools("unlink").any { it.containsKey("dofs") },
             "the step restates the freed position: $once",
         )
         val back = DocumentFormat.load(once)
@@ -350,7 +350,7 @@ class UnlinkTest {
         ed.doc.moveFreePoint(b, Vec2(12.0, 34.0))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("unweld ") && it.contains("dofs=") }, once)
+        assertTrue(saved(once).kind("unweld").any { it.containsKey("dofs") }, once)
         val back = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(back), "save -> load -> save must be byte-equal")
         val freed = back.elements.first { it !== back.freePoints[0] && it.isPoint }

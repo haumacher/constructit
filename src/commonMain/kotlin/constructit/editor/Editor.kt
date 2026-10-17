@@ -25,7 +25,7 @@ import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.mm
 
-/** Undo depth bound: snapshots are whole scripts, so the stack must not grow with the session. */
+/** Undo depth bound: snapshots are whole saved documents, so the stack must not grow with the session. */
 private const val UNDO_CAP = 100
 
 /** Below this screen distance a press-and-release is a *click*, not a drag. */
@@ -196,10 +196,10 @@ class Editor(
         resetPicks()
     }
 
-    // ---- undo/redo: the saved construction script is the undo substrate (OP-18) ----
+    // ---- undo/redo: the saved document is the undo substrate (OP-18; a graph of features since OP-32) ----
     //
-    // One snapshot of the saved script per committed user-level operation; undo replays the previous
-    // snapshot into a fresh document. Prefix-replay over the journal was rejected: a drag or a typed
+    // One snapshot of the saved document per committed user-level operation; undo loads the previous
+    // snapshot into a fresh document — the identities it states included, so an undo renames nothing. Prefix-replay over the journal was rejected: a drag or a typed
     // value mutates a source node's literal without adding a step, so journal length does not delimit
     // an operation — the saved text (which restates those literals) does.
     //
@@ -531,7 +531,8 @@ class Editor(
         }
         val was = g.count
         val label = g.label
-        val at = doc.journal.indexOfFirst { it === g.step }
+        // the ride's own feature, by its identity (OP-32) — which, unlike its place in the journal, a load keeps
+        val at = g.step?.fid ?: -1
         val result =
             try {
                 DocumentFormat.restampRide(DocumentFormat.save(doc), at, g.pattern.name, n)

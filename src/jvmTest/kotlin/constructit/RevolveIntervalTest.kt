@@ -363,9 +363,9 @@ class RevolveIntervalTest {
         assertManifold(meshOf(solid), "complete revolution by gesture")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool revolve") }
-        assertFalse(step.contains("scalar="), "the complete revolution states no angle: $step")
-        assertFalse(step.contains("dofs="), "...and owns no offset either, because it has no start: $step")
+        val step = saved(text).tool("revolve")
+        assertFalse(step.containsKey("params"), "the complete revolution states no angle: $step")
+        assertFalse(step.containsKey("dofs"), "...and owns no offset either, because it has no start: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
         assertEquals(Turn3.Full, featureOf(DocumentFormat.load(text).elements.first { it.kind == ElementKind.SOLID }).turn)
     }
@@ -403,9 +403,9 @@ class RevolveIntervalTest {
         assertManifold(meshOf(solid), "offset body")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool revolve") }
-        assertTrue(step.contains("scalar=\"angle\""), step)
-        assertTrue(step.contains("dofs=-90deg"), "the offset is restated as the value it stands at: $step")
+        val step = saved(text).tool("revolve")
+        assertEquals(saved(text).paramIds("angle"), step.ids("params"), "$step")
+        assertEquals("""[{"deg":-90}]""", step["dofs"].toString(), "the offset is restated as the value it stands at: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
         assertEquals(
             Turn3.Arc(-PI / 2.0, 0.0),
@@ -506,7 +506,7 @@ class RevolveIntervalTest {
         assertClose(featureOf(solid).turn.let { (it as Turn3.Arc).start } * 180.0 / PI, 45.0, 1e-9, msg = "it starts where it was told")
         assertClose((featureOf(solid).turn as Turn3.Arc).end * 180.0 / PI, 75.0, 1e-9, msg = "and ends a sweep later")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().single { it.startsWith("tool revolve") }.contains("scalar=\"angle\",\"offset\""), text)
+        assertEquals(saved(text).paramIds("angle", "offset"), saved(text).tool("revolve").ids("params"), text)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
     }
 
@@ -542,8 +542,10 @@ class RevolveIntervalTest {
         ed.revolveGesture()
         ed.activeScalar = ed.doc.newParameter("part", 30.0.deg)
         ed.revolveGesture()
-        val text = DocumentFormat.save(ed.doc).replace(" dofs=0deg", "")
-        assertFalse(text.contains("dofs="), "the pre-package spelling of both steps:\n$text")
+        // the pre-package spelling of both steps: no offset freedom stated — what every file written before this
+        // package carries, and a graph that leaves it out says the same (OP-32 keeps the absence's meaning)
+        val text = mapFeatures(DocumentFormat.save(ed.doc)) { if (it.str("tool") == "revolve") it.without("dofs") else it }
+        assertFalse(saved(text).features.any { it.containsKey("dofs") }, "the pre-package spelling of both steps:\n$text")
 
         val doc = DocumentFormat.load(text)
         assertTrue(doc.loadNotes.isEmpty(), "nothing about it is ambiguous: ${doc.loadNotes}")
@@ -559,7 +561,7 @@ class RevolveIntervalTest {
             "the full turn holds twelve of the 30° sectors ($ring vs ${12.0 * twelfth} mm³ — the two are inscribed at slightly different station counts)",
         )
         val again = DocumentFormat.save(doc)
-        assertEquals(2, again.lines().count { it.startsWith("tool revolve") && it.contains("dofs=0deg") }, again)
+        assertEquals(2, saved(again).tools("revolve").count { it["dofs"].toString() == """[{"deg":0}]""" }, again)
         assertEquals(again, DocumentFormat.save(DocumentFormat.load(again)), "and it is a fixed point from there on")
     }
 
@@ -673,10 +675,10 @@ class RevolveIntervalTest {
         // …and the number that did it is an ordinary parameter, negative, in the file — printed to the last
         // digit of the radian it is stored as, exactly as the user's own hand-set `angle4 = −15°` is
         val text = DocumentFormat.save(ed.doc)
-        val row = assertNotNull(text.lines().firstOrNull { it.startsWith("param \"offset\" = ") }, "the typed offset is a parameter:\n$text")
-        assertClose(row.removePrefix("param \"offset\" = ").removeSuffix("deg").toDouble(), -15.0, 1e-9, msg = "…and it is negative fifteen")
+        val row = assertNotNull(saved(text).valueOf("offset"), "the typed offset is a parameter:\n$text")
+        assertClose(row.removeSuffix(" deg").toDouble(), -15.0, 1e-9, msg = "…and it is negative fifteen")
         assertTrue(
-            text.lines().any { it.startsWith("tool revolve") && it.contains("scalar=\"angle5\",\"offset\"") },
+            saved(text).tools("revolve").any { it.ids("params") == saved(text).paramIds("angle5", "offset") },
             "the gesture consumed both typed numbers, in order:\n$text",
         )
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")

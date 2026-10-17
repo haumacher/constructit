@@ -124,7 +124,7 @@ class BlendCanalSpineProbeTest {
         val box = prism(cx)
         val tops = topsAtFarCorner(Evaluator().solid(box))
         val plan = listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth))
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart ${plan[0].x},${plan[0].y} -> e1\n")
         var n = 2
         for (i in 1 until plan.size) {

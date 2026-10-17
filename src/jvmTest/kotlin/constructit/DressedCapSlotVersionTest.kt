@@ -86,7 +86,7 @@ class DressedCapSlotVersionTest {
     @Test
     fun aVersionNineSketchSpaceOnABandFaceComesBackOnThatBand() {
         assertEquals(10, DocumentFormat.CAP_SLOT_VERSION, "the version at which every entry names its flat ends")
-        assertEquals(DocumentFormat.CAP_SLOT_VERSION, DocumentFormat.VERSION, "…and this build writes it")
+        assertEquals(DocumentFormat.CAP_SLOT_VERSION, DocumentFormat.JOURNAL_VERSION, "…and it is the last journal version, whose numbering the graph keeps")
         val ed = load(resource("v9-band-face-space.cit"))
         assertTrue(ed.doc.loadNotes.any { moved in it }, "the load says the face numbering moved: ${ed.doc.loadNotes}")
         val (piece, patch) = spaceFace(ed, "onband")
@@ -170,7 +170,7 @@ class DressedCapSlotVersionTest {
     /** Saved once at this version, the file says nothing more and is a fixed point of save (OP-18). */
     private fun assertFixedPointAndSilentSecondTime(ed: Editor) {
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}"), "it is written at this version")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "it is written at this version")
         val again = load(once)
         assertTrue(again.doc.loadNotes.none { moved in it }, "said once only: ${again.doc.loadNotes}")
         assertEquals(once, DocumentFormat.save(again.doc), "…and the file is a fixed point of save")

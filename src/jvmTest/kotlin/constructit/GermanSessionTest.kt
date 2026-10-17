@@ -271,7 +271,7 @@ show els=e2
 
         assertEquals(5.5, typed, "what was typed is what it means")
         val script = DocumentFormat.save(ed.doc)
-        assertTrue("5.5mm" in script, "the file keeps the decimal point (OP-18): $script")
+        assertEquals("5.5 mm", saved(script).valueOf("r"), "the file keeps the decimal point (OP-18): $script")
         assertFalse("5,5" in script, "…and never the reader's: $script")
         assertEquals("5,5", Format.display(5.5), "and the field shows it back the way it was typed")
         assertEquals("5.5", Format.display(5.5, "en"), "…while an English session reads the same value its way")

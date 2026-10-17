@@ -76,8 +76,8 @@ class FramedGroupDefaultTest {
         val g = ed.doc.groups.single()
         assertTrue(g.placed, "confirming created it *and* placed it: ${ed.statusHint}")
         val after = DocumentFormat.save(ed.doc)
-        assertTrue(after.lines().any { it.startsWith("group \"part\"") }, after)
-        assertTrue(after.lines().any { it.startsWith("place \"part\"") }, after)
+        assertNotNull(saved(after).group("part"), after)
+        assertTrue(saved(after).group("part")!!.containsKey("place"), after)
         assertTrue(ed.statusHint.contains("Grouped 3 elements as part"), "got: ${ed.statusHint}")
 
         assertEquals(after, DocumentFormat.save(DocumentFormat.load(after)), "save -> load -> save is byte-identical")
@@ -101,7 +101,7 @@ class FramedGroupDefaultTest {
         val g = ed.doc.groups.single()
         assertFalse(g.placed, "no frame was asked for")
         assertTrue(ed.statusHint.contains("a named set, with no frame"), "got: ${ed.statusHint}")
-        assertTrue(DocumentFormat.save(ed.doc).lines().none { it.startsWith("place ") }, "and none is recorded")
+        assertTrue(saved(ed.doc).kind("group").none { it.containsKey("place") }, "and none is recorded")
     }
 
     /**
@@ -155,6 +155,6 @@ class FramedGroupDefaultTest {
         assertFalse(g.placed, "but it has no frame")
         assertTrue(ed.statusHint.contains("Grouped 1 element as nothing-to-move"), "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("owns no degree of freedom"), "and says why: ${ed.statusHint}")
-        assertTrue(DocumentFormat.save(ed.doc).lines().none { it.startsWith("place ") })
+        assertTrue(saved(ed.doc).kind("group").none { it.containsKey("place") })
     }
 }

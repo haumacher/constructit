@@ -334,7 +334,7 @@ class HelixToolTest {
         assertEquals(1, ed.solids().size, "the spring rides it: ${ed.statusHint}")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ${Tools.HELIX_LEFT}") }, "the step records the tool id: $once")
+        assertTrue(saved(once).hasTool(Tools.HELIX_LEFT), "the step records the tool id: $once")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "the script round-trips byte for byte")
 

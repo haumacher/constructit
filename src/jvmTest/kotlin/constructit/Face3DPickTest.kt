@@ -172,9 +172,9 @@ class Face3DPickTest {
 
         // the file: the very step the 2D gesture writes, and a byte-equal replay of the whole story
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.trim().startsWith("sketchspace") }, text)
-        assertTrue("piece=4" in step, "the address is the piece index, recorded: $step")
-        assertTrue("el=" in step, "…of a named element: $step")
+        val step = assertNotNull(saved(text).kind("sketchspace").firstOrNull(), text)
+        assertEquals(4, step.int("piece"), "the address is the piece index, recorded: $step")
+        assertTrue(step.containsKey("el"), "…of a named element: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "the 3D face pick replays byte-equal")
     }
 
@@ -211,8 +211,8 @@ class Face3DPickTest {
         assertClose(rayAt.z, flatAt.z, tol = 1e-9, msg = "the same frame, z")
 
         // and the two files record the same address, which is the point of there being one address space
-        val one = DocumentFormat.save(flat.doc).lines().first { it.trim().startsWith("sketchspace") }
-        val two = DocumentFormat.save(ed.doc).lines().first { it.trim().startsWith("sketchspace") }
+        val one = saved(flat.doc).kind("sketchspace").first()
+        val two = saved(ed.doc).kind("sketchspace").first()
         assertEquals(one, two, "one step, two gestures")
     }
 
@@ -239,7 +239,7 @@ class Face3DPickTest {
         assertClose(plane.normal.z, 1.0, tol = 1e-9, msg = "the normal points out of the material")
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue("piece=5" in text, "the cap's address is recorded like any other: $text")
+        assertEquals(5, saved(text).kind("sketchspace").single().int("piece"), "the cap's address is recorded like any other: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "…and it reloads byte-equal")
     }
 
@@ -487,8 +487,8 @@ class Face3DPickTest {
         val near = assertNotNull(ed.solids().lastOrNull { it !== far }, "the occluder: ${ed.statusHint}")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.trim().startsWith("sketchspace") }, text)
-        assertTrue("el=${ed.doc.nameOf(far)} " in "$step " && "piece=0" in step, "the far body's own face, recorded: $step")
+        val step = assertNotNull(saved(text).kind("sketchspace").firstOrNull(), text)
+        assertTrue(step.str("el") == ed.doc.nameOf(far) && step.int("piece") == 0, "the far body's own face, recorded: $step")
 
         // the reload takes it verbatim
         val again = DocumentFormat.load(text)

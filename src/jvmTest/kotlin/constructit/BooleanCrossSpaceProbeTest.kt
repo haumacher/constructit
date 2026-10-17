@@ -130,9 +130,9 @@ class BooleanCrossSpaceProbeTest {
         // the file names the operands in pick order, which is what makes the order replayable
         val text = DocumentFormat.save(a.doc)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save → load → save is byte-equal")
-        val step = text.lines().last { it.startsWith("tool subtract") }
+        val step = saved(text).tools("subtract").last()
         val slabName = a.doc.nameOf(solids(a).first())
-        assertTrue(step.contains("els=$slabName,"), "the kept solid is named first: $step")
+        assertEquals(slabName, step.ids("els").first(), "the kept solid is named first: $step")
     }
 
     /** |A| + |B| = |A∪B| + |A∩B| — all four bodies from the general engine, all manifold. */

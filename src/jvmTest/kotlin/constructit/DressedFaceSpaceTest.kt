@@ -139,10 +139,8 @@ class DressedFaceSpaceTest {
         // **the address is this build's**, so the script it is appended to is written at this version first:
         // a file older than [DocumentFormat.CAP_SLOT_VERSION] has its face addresses mapped on load
         // (OP-31, slice 5p), and the fixture's own header is `constructit 7`.
-        val script =
-            DocumentFormat.save(DocumentFormat.load(SCRIPT)) + "sketchspace \"f\" el=e14 piece=${
-                assertNotNull(Section3.addressOfFace(solid.feature, FaceName.BlendBand(13, 0)), "the band has an address")
-            }\n"
+        val piece = assertNotNull(Section3.addressOfFace(solid.feature, FaceName.BlendBand(13, 0)), "the band has an address")
+        val script = withFeatures(DocumentFormat.save(DocumentFormat.load(SCRIPT)), """{"id":"f900","kind":"sketchspace","name":"f","el":"e14","piece":$piece}""")
         val ed = Editor()
         ed.replaceDocument(DocumentFormat.load(script))
         val once = DocumentFormat.save(ed.doc)

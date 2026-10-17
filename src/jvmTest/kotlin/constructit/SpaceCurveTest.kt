@@ -405,9 +405,9 @@ class SpaceCurveTest {
         assertTrue(path.elements.last().end == path.elements.first().start, "and the last piece hands back to the first")
 
         val script = DocumentFormat.save(ed.doc)
-        val step = script.lines().last { it.startsWith("tool curve3") }
+        val step = saved(script).tools("curve3").last()
         assertTrue(
-            step.contains("els=") && step.substringAfter("els=").substringBefore(" ").let { it.split(",").let { p -> p.first() == p.last() } },
+            step.ids("els").let { p -> p.isNotEmpty() && p.first() == p.last() },
             "the step states the closure by naming the first point again: $step",
         )
         val reloaded = DocumentFormat.load(script)

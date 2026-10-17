@@ -226,13 +226,13 @@ class SelectionTest {
         assertEquals(3, ed.setSelectionVisible(false))
         assertTrue(ed.doc.elements.none { it.visible })
         val hidden = DocumentFormat.save(ed.doc)
-        assertTrue(hidden.lines().any { it.startsWith("hide els=") }, "the selection is one batched step: $hidden")
+        assertEquals(listOf("e1", "e2", "e3"), saved(hidden).hidden, "the file states the three as hidden: $hidden")
         assertTrue(hidden.length > saved.length, "the hide is in the file now")
         assertTrue(DocumentFormat.load(hidden).elements.none { it.visible }, "and comes back hidden on load")
 
         assertEquals(3, ed.setSelectionVisible(true))
         assertTrue(ed.doc.elements.all { it.visible })
-        assertTrue(DocumentFormat.save(ed.doc).lines().any { it.startsWith("show els=") }, "showing is a step too")
+        assertTrue(saved(ed.doc).hidden.isEmpty(), "and shown again, nothing is hidden — the file states what is")
 
         // one undo per visibility gesture, and it walks back through them
         assertTrue(ed.undo())

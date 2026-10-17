@@ -107,8 +107,9 @@ class FuncCurveDomainTest {
     fun theDomainTextIsStoredVerbatimAndRoundTrips() {
         val (ed, _) = flank("T * 2")
         val text = roundTrip(ed)
-        assertTrue(text.contains("from=0"), "a plain end is still a plain number:\n$text")
-        assertTrue(text.contains("to=\"T * 2\""), "and a formula is the text itself, quoted:\n$text")
+        val curve = saved(text).kind("funccurve").single()
+        assertEquals("0", curve["from"].toString(), "a plain end is still a plain number:\n$text")
+        assertEquals("\"T * 2\"", curve["to"].toString(), "and a formula is the text itself, a JSON string:\n$text")
     }
 
     /** A rename re-stamps the domain, in the file — the same claim the two coordinate texts carry. */
@@ -117,7 +118,7 @@ class FuncCurveDomainTest {
         val (ed, el) = flank("T * 2")
         assertEquals("teeth", ed.doc.renameParameter(ed.doc.scalars.first { it.name == "T" }, "teeth"), "renamed")
         val text = roundTrip(ed)
-        assertTrue(text.contains("to=\"teeth * 2\""), "the domain reads the new name:\n$text")
+        assertEquals("teeth * 2", saved(text).kind("funccurve").single().str("to"), "the domain reads the new name:\n$text")
         assertTrue(!text.contains("\"T * 2\""), "and the old one is nowhere in it:\n$text")
         assertClose(curveOf(el).t1, 3.2, 1e-12, "nothing moved")
     }
@@ -138,7 +139,7 @@ class FuncCurveDomainTest {
         val doc = DocumentFormat.load(script)
         val el = assertNotNull(doc.elements.firstOrNull { it.kind == ElementKind.FUNC_CURVE })
         assertClose(curveOf(el).t1, 1.6, 1e-12, "the domain is the number it always was")
-        assertEquals(atThisVersion(script), DocumentFormat.save(doc), "and it is written back byte for byte")
+        assertEquals(imported(atThisVersion(script)), DocumentFormat.save(doc), "and it imports as itself")
     }
 
     // ---- the values: dimensionless, and it says so ----

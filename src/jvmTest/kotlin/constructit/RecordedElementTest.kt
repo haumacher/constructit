@@ -108,7 +108,7 @@ class RecordedElementTest {
 
         // the file has it, and says what it was built from and with
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool tube") }, "the tube is in the script: $once")
+        assertTrue(saved(once).hasTool("tube"), "the tube is in the script: $once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and save -> load -> save is byte-equal")
 
         // the node's own refusal, which is where a dimension error belongs (OP-7) — named, and not thrown
@@ -153,13 +153,13 @@ class RecordedElementTest {
         ed.click(Vec2(50.0, 0.0))
 
         val script = DocumentFormat.save(ed.doc)
-        val tubeLine = assertNotNull(script.lines().firstOrNull { it.startsWith("tool tube") }, script)
+        val tubeLine = assertNotNull(saved(script).tools("tube").firstOrNull(), script)
         val radius = assertNotNull(ed.doc.scalars.lastOrNull { it.name.startsWith("radius") }, "the typed radius is a panel row")
-        assertTrue(tubeLine.contains("scalar=\"${radius.name}\""), "the step consumes it: $tubeLine")
-        // ...and it is not a `param` line the script forgot about: every parameter is read by some later step
+        assertEquals(listOf("f${radius.serial}"), tubeLine.ids("params"), "the step consumes it: $tubeLine")
+        // ...and it is not a parameter the file forgot about: every parameter is read by some feature
         for (entry in ed.doc.scalars) {
             assertTrue(
-                script.lines().any { it.contains("scalar=") && it.contains("\"${entry.name}\"") },
+                saved(script).features.any { it.ids("params").contains("f${entry.serial}") },
                 "${entry.name} is an orphan parameter — nothing in the script consumes it:\n$script",
             )
         }
@@ -184,7 +184,7 @@ class RecordedElementTest {
             doc.elements.map { it.kind },
             "the coil, the welded ortho run and the wall it carries",
         )
-        assertEquals(atThisVersion(usersScript), DocumentFormat.save(doc), "and it is written back exactly as it was sent")
+        assertEquals(imported(atThisVersion(usersScript)), DocumentFormat.save(doc), "and it imports as itself")
 
         // the wall's thickness is `cnt`, a *dimensionless* parameter — drawing it must not throw either
         val ed = Editor()
@@ -344,7 +344,7 @@ class RecordedElementTest {
 
         // ...while the plain save is untouched, because it is also the undo substrate (OP-18) and a snapshot
         // that could refuse would break editing rather than one edit
-        assertTrue(DocumentFormat.save(doc).startsWith(DocumentFormat.HEADER), "the snapshot still works")
+        assertEquals(DocumentFormat.VERSION, saved(doc).version, "the snapshot still works")
     }
 
     // ---- the fixture, and the generic driver the audit runs every row through ----

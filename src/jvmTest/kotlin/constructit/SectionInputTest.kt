@@ -251,7 +251,7 @@ class SectionInputTest {
         val mid = ed.doc.elements.last { it.isPoint }
         assertClose(ed.pointAt(mid).x, 50.0, 1e-9)
         val before = DocumentFormat.save(ed.doc)
-        assertTrue(before.contains("sectioninput"), "the inputs are recorded by index: $before")
+        assertTrue(saved(before).kind("sectioninput").isNotEmpty(), "the inputs are recorded by index: $before")
         roundTrip(ed)
 
         // retype the height: the section shrinks by 2/3 and everything anchored on it follows
@@ -540,8 +540,9 @@ class SectionInputTest {
         ed.click(Vec2(25.0, 25.0))
         ed.click(Vec2(75.0, 75.0))
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.contains("sectioninput"), saved)
-        assertTrue(Regex("sectioninput \"plane1\" corner=\\d+").containsMatchIn(saved), "the index is the whole of the choice: $saved")
+        assertTrue(saved(saved).kind("sectioninput").isNotEmpty(), saved)
+        val plane1 = saved(saved).kind("sketchspace").single { it.str("name") == "plane1" }.str("id")
+        assertTrue(saved(saved).kind("sectioninput").any { it.str("plane") == plane1 && it.int("corner") != null }, "the index is the whole of the choice: $saved")
         val back = roundTrip(ed)
         assertEquals(
             ed.doc.elements.count { it.kind == ElementKind.DERIVED_POINT },

@@ -124,10 +124,10 @@ class ChainCutSecondCutProbeTest {
         assertTrue(vCut2 in 1e-9..vCut1, "the second chain took its own material: $vCut2 of $vCut1")
         // the chain extends at the tip: the second step names the FIRST CUT as its operand, not the handle
         val saved = DocumentFormat.save(doc)
-        val steps = saved.lineSequence().filter { it.startsWith("tool cutbychain") }.toList()
+        val steps = saved(saved).tools("cutbychain")
         assertEquals(2, steps.size, "two recorded cuts")
         assertTrue(
-            steps[1].contains("els=${doc.nameOf(cut1)},"),
+            steps[1].ids("els").first() == doc.nameOf(cut1),
             "the second cut targets the first cut's body — the tip, not a fork: ${steps[1]}",
         )
         // this drawing carries the queued attach-restatement creep (~1e-13 mm on e40 per save, settling in
@@ -194,7 +194,9 @@ class ChainCutSecondCutProbeTest {
         val doc = ed.doc
         val chain2 = named(doc, "chain2")
         val chain1 = named(doc, "chain1")
-        val journal = { ed.doc.journal.size }
+        // what the file states, counted (OP-32): an undo restores a graph, so the in-memory journal it rebuilds
+        // need not repeat a space switch or a resume the imported journal happened to carry
+        val journal = { saved(ed.doc).let { it.features.size + it.parameters.size } }
         val layers = ArrayList<Int>()
 
         layers.add(journal())

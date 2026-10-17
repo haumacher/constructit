@@ -63,7 +63,7 @@ class ElementNameTest {
         val ed = drawing()
         ed.nameElement(segment(ed), "bore-axis")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it == "name e3 \"bore-axis\"" }, "the step says it plainly; got:\n$text")
+        assertEquals(mapOf("e3" to "bore-axis"), saved(text).names, "the file says it plainly; got:\n$text")
 
         val back = DocumentFormat.load(text)
         val seg = back.elements.first { it.kind == ElementKind.SEGMENT }
@@ -79,7 +79,7 @@ class ElementNameTest {
         val steps = ed.doc.journal.count { it.kind == "name" }
         assertEquals("spindle", ed.nameElement(seg, "spindle"))
         assertEquals(steps, ed.doc.journal.count { it.kind == "name" }, "a rename is state, not a second step")
-        assertTrue(DocumentFormat.save(ed.doc).contains("name e3 \"spindle\""), "and the file says the new one")
+        assertEquals(mapOf("e3" to "spindle"), saved(ed.doc).names, "and the file says the new one")
         assertTrue(!DocumentFormat.save(ed.doc).contains("bore-axis"), "…only the new one")
     }
 
@@ -112,7 +112,7 @@ class ElementNameTest {
         ed.selectElement(seg)
         assertTrue(ed.deleteSelection(), "the segment goes")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(!text.contains("name "), "and its name step with it, through the ordinary reference rule; got:\n$text")
+        assertTrue(saved(text).names.isEmpty(), "and its name with it, through the ordinary reference rule; got:\n$text")
         DocumentFormat.load(text) // the remaining script still replays
     }
 

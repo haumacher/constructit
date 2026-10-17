@@ -191,7 +191,8 @@ class GroupTest {
         assertEquals("kitchen", ed.doc.groups.single().name)
 
         ed.ungroup(ed.doc.groups.single())
-        assertEquals(beforeGroup, DocumentFormat.save(ed.doc))
+        // the drawing is the one before the group; the identity the group took stays spent (OP-32)
+        assertEquals(contentOf(beforeGroup), contentOf(DocumentFormat.save(ed.doc)))
         assertTrue(ed.undo())
         assertEquals("kitchen", ed.doc.groups.single().name, "one undo restores the group")
     }
@@ -209,7 +210,7 @@ class GroupTest {
         ed.groupSelection("hall")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("group \"kitchen\" els=e1,e3"), "got:\n$once")
+        assertEquals(listOf("e1", "e3"), saved(once).group("kitchen")?.ids("members"), "got:\n$once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         assertEquals(listOf("kitchen", "hall"), reloaded.groups.map { it.name })
@@ -241,7 +242,7 @@ class GroupTest {
         ed.click(Vec2(60.0, 0.0))
         assertTrue(ed.deleteSelection())
         assertTrue(ed.doc.groups.isEmpty(), "a group with no members left does not exist")
-        assertFalse(DocumentFormat.save(ed.doc).contains("group"), "and no group step is written")
+        assertTrue(saved(ed.doc).kind("group").isEmpty(), "and no group step is written")
     }
 
     /** The whole group can be deleted in one operation, because it is one multi-selection. */

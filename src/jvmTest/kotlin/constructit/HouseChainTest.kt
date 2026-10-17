@@ -324,13 +324,14 @@ class HouseChainTest {
         val ed = house.ed
 
         val text = DocumentFormat.save(ed.doc)
-        for (step in listOf("wall", "opening", "tool extrude", "tool cutopenings", "tool section", "tool extrudeface", "tool mextenty", "wire")) {
-            assertTrue(text.contains(step), "the file should record '$step':\n$text")
-        }
+        val s = saved(text)
+        for (kind in listOf("wall", "opening")) assertTrue(s.kind(kind).isNotEmpty(), "the file should record '$kind':\n$text")
+        for (tool in listOf("extrude", "cutopenings", "section", "extrudeface", "mextenty")) assertTrue(s.hasTool(tool), "the file should record 'tool $tool':\n$text")
+        assertTrue(s.parameters.any { it.containsKey("wire") }, "the file should record the wire:\n$text")
         // the *parameter* the roof is shaped by is a panel value and is recorded; the roof itself is not,
         // because only tool steps are — which is exactly the DSL-only part of this showcase, stated
-        assertTrue(text.contains("param \"gable\""), "the gable rise is an ordinary panel parameter:\n$text")
-        assertEquals(3, text.split("\n").count { it.startsWith("tool extrude") || it.startsWith("tool cutopenings") })
+        assertNotNull(s.param("gable"), "the gable rise is an ordinary panel parameter:\n$text")
+        assertEquals(3, s.tools("extrude").size + s.tools("extrudeface").size + s.tools("cutopenings").size)
 
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")

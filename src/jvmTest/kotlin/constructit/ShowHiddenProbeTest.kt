@@ -107,7 +107,7 @@ class ShowHiddenProbeTest {
 
         // and the file never learned the toggle existed
         val savedAfterUndo = DocumentFormat.save(ed.doc)
-        assertTrue(savedAfterUndo.contains("tool sweep"), "the sweep's step is in the file")
+        assertTrue(saved(savedAfterUndo).hasTool("sweep"), "the sweep's step is in the file")
         assertNotNull(savedBefore, "…")
         assertEquals(
             savedAfterUndo,

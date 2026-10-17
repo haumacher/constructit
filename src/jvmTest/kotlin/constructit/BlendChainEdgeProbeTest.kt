@@ -87,7 +87,7 @@ tool filletedge els=e14 clicks=-15.659687663642714,14.554138077719443 scalar="r"
     fun anOldFileIsToldOnceOnlyWhereARailRoundingChangedMeaning() {
         val withRail = load(threeBevels + railFillet)
         assertTrue(withRail.doc.loadNotes.isNotEmpty(), "a version-6 file whose rounding addresses a rail is told its run grew")
-        assertTrue(DocumentFormat.save(withRail.doc).startsWith("constructit ${DocumentFormat.VERSION}\n"), "and it is written at the version this build writes")
+        assertEquals(DocumentFormat.VERSION, saved(withRail.doc).version, "and it is written at the version this build writes")
         // …every one of these files is older than the corner-slot record too, and that migration says its
         // own sentence once (OP-31, slice 5g); what this test is about is the *run*, so it asks about that
         val bevelsOnly = load(threeBevels)

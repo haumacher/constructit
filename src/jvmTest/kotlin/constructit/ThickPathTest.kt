@@ -236,7 +236,7 @@ class ThickPathTest {
 
             // and it survives the round trip, since replay must build the same shape
             val text = DocumentFormat.save(ed.doc)
-            assertTrue(text.contains("wall \"t\" ${just.name.lowercase()}"), "got:\n$text")
+            assertTrue(saved(text).kind("wall").single().let { it.str("thickness") == saved(text).paramIds("t").single() && it.str("justify") == just.name.lowercase() }, "got:\n$text")
             assertEquals(just, DocumentFormat.load(text).thickNetworks.single().justification)
         }
     }

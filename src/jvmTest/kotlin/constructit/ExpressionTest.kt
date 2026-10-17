@@ -161,7 +161,7 @@ class ExpressionTest {
         val ed = circleDoc()
         assertTrue(ed.doc.bindParameter(scalarNamed(ed, "r"), "d/2 + 1mm"))
         val text = roundTrips(ed, "save -> load -> save is byte-equal with the expression in it")
-        assertTrue(text.contains("bind \"r\" = \"d/2 + 1mm\""), "the user's own text, spacing and all:\n$text")
+        assertEquals("d/2 + 1mm", saved(text).formulaOf("r"), "the user's own text, spacing and all:\n$text")
 
         val reloaded = DocumentFormat.load(text)
         val r = assertNotNull(reloaded.scalars.firstOrNull { it.name == "r" }, "the parameter came back")
@@ -176,8 +176,8 @@ class ExpressionTest {
         val ed = circleDoc()
         assertTrue(ed.doc.wireParameter(scalarNamed(ed, "r"), scalarNamed(ed, "d")), "wired the old way")
         val text = roundTrips(ed, "a pre-existing wire round-trips byte-equal")
-        assertTrue(text.contains("wire \"r\" = \"d\""), "written as the `wire` step it always was:\n$text")
-        assertFalse(text.contains("bind "), "and nothing new is written into an old file")
+        assertEquals("d", saved(text).wireOf("r"), "written as the wire it always was:\n$text")
+        assertNull(saved(text).formulaOf("r"), "and no formula is made of it")
 
         val reloaded = DocumentFormat.load(text)
         val r = assertNotNull(reloaded.scalars.firstOrNull { it.name == "r" }, "the parameter came back")
@@ -258,9 +258,11 @@ class ExpressionTest {
         assertTrue(ed.doc.bindParameter(bad2, "sin(n)"), "corrected — a plain number is read as radians")
         assertClose(Evaluator().scalar(bad2.ref).value, kotlin.math.sin(0.5), tol = 1e-12, msg = "healed")
 
-        // a re-bound parameter keeps *both* steps, each stating the text it stated — and the file round-trips
+        // a re-bound parameter states the formula it has **now** (OP-32): a binding is the parameter's state, so
+        // the correction replaces the first text rather than being a second step beside it — and the file round-trips
         val text = roundTrips(ed, "two bindings of one value round-trip")
-        assertEquals(2, text.lines().count { it.startsWith("bind \"bad\" ") }, "the correction is a second step:\n$text")
+        assertEquals("asin(sin(a))", saved(text).formulaOf("bad"), "the correction is what the file states:\n$text")
+        assertEquals("sin(n)", saved(text).formulaOf("bad2"), "…for each of the two:\n$text")
         assertClose(Evaluator().scalar(scalarNamed(ed, "bad").ref).deg, 30.0, tol = 1e-9, msg = "and the live value is the last one")
     }
 
@@ -369,7 +371,7 @@ class ExpressionTest {
         assertClose(radiusOf(ed.doc.elements.single { it.kind == ElementKind.CIRCLE }), 11.0, tol = 1e-9, msg = "nothing moved")
 
         val text = roundTrips(ed, "the re-stamped file round-trips")
-        assertTrue(text.contains("bind \"r\" = \"bore/2 + 1mm\""), "the file says it too:\n$text")
+        assertEquals("bore/2 + 1mm", saved(text).formulaOf("r"), "the file says it too:\n$text")
         assertFalse(text.contains("\"d\""), "and the old name is nowhere in it")
 
         // ...and the parameter carrying the formula may be renamed as well, with the wiring untouched
@@ -603,7 +605,7 @@ class ExpressionTest {
         assertEquals("sin/2 + 1mm", ed.doc.expressionOf(r), "re-stamped")
 
         val text = roundTrips(ed, "and the file this writes is a file this build can read")
-        assertTrue(text.contains("bind \"r\" = \"sin/2 + 1mm\""), "the stored text:\n$text")
+        assertEquals("sin/2 + 1mm", saved(text).formulaOf("r"), "the stored text:\n$text")
         val reloaded = DocumentFormat.load(text)
         assertClose(
             radiusOf(reloaded.elements.single { it.kind == ElementKind.CIRCLE }),

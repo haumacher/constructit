@@ -238,9 +238,9 @@ class IntersectionCurveToolTest {
     fun theBranchIsPersistedAsASignAndTheFileRoundTrips() {
         val f = bar()
         val once = DocumentFormat.save(f.ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ${Tools.INTERSECTION_CURVE}") }, "the step records the tool id: $once")
+        assertTrue(saved(once).hasTool(Tools.INTERSECTION_CURVE), "the step records the tool id: $once")
         assertTrue(
-            once.lines().any { it.startsWith("tool ${Tools.INTERSECTION_CURVE}") && it.contains("signs=1") },
+            saved(once).tools(Tools.INTERSECTION_CURVE).any { it.ints("signs") == listOf(1) },
             "…and the branch it chose, as an index (OP-1/OP-18): $once",
         )
         val doc = DocumentFormat.load(once)

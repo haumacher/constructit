@@ -268,10 +268,10 @@ class SphereLocusToolTest {
         val point = trilaterate(f.ed, NEAR_MINUS)
         val once = DocumentFormat.save(f.ed.doc)
         assertTrue(
-            once.lines().any { it.startsWith("tool ${Tools.SPHERE_TRILATERATE}") && it.contains("signs=-1") },
+            saved(once).tools(Tools.SPHERE_TRILATERATE).any { it.ints("signs") == listOf(-1) },
             "the step records the branch it chose, as a sign (OP-1/OP-18): $once",
         )
-        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}"), "and the header is untouched")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "and the header is untouched")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "save -> load -> save is byte-equal")
         val back = doc.elements.last { it.inSpace && it.kind == ElementKind.DERIVED_POINT }
@@ -292,8 +292,8 @@ class SphereLocusToolTest {
         threeLoci(f.ed)
         val chosen = pointOf(trilaterate(f.ed, NEAR_PLUS))
         val script = DocumentFormat.save(f.ed.doc)
-        assertTrue(script.contains("signs=1"), "the chosen branch is +1: $script")
-        val flipped = DocumentFormat.load(script.replace("signs=1", "signs=-1"))
+        assertTrue(saved(script).features.any { it.ints("signs") == listOf(1) }, "the chosen branch is +1: $script")
+        val flipped = DocumentFormat.load(mapFeatures(script) { if (it.ints("signs") == listOf(1)) it.with("signs", "[-1]") else it })
         val other = pointOf(flipped.elements.last { it.inSpace && it.kind == ElementKind.DERIVED_POINT })
         assertTrue((other - chosen).length() > 20.0, "the other sign is the other point: $other vs $chosen")
         assertClose((other - Vec3.ZERO).length(), 40.0, 1e-9, "and it is a solution too — 40 from the near corner")

@@ -181,7 +181,7 @@ class SphereLocusProbeTest {
         val locus = ed.loci().first()
         assertEquals("a sphere locus", ed.doc.kindWord(locus).render(), "the drawing's own word for it")
         val name = ed.doc.nameOf(locus)
-        assertTrue(DocumentFormat.save(ed.doc).contains("-> $name"), "and the file names it the same: $name")
+        assertNotNull(saved(ed.doc).creatorOf(name), "and the file names it the same: $name")
 
         // ...and a refusal that names it uses that word
         ed.setTool(Tools.SPHERE_CIRCLE)

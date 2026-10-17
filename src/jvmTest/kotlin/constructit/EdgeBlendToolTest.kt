@@ -256,6 +256,48 @@ class EdgeBlendToolTest {
         assertTrue(after > 30000.0, "and the pad is still on it — a fork would read about 23500")
     }
 
+    /** A chamfer of the plate's front rim, the step naming the **plate** — what an older file's step says. */
+    private fun chamferNamingThePlate(ed: Editor) {
+        val c = ed.doc.newParameter("c", 5.0.mm)
+        val tool = assertNotNull(Tools.byId(Tools.CHAMFER_EDGE))
+        val at = Vec2(15.0, 0.0)
+        ed.doc.runTool(tool, constructit.editor.Picks(emptyList(), listOf(ed.solids().first()), at, listOf(at)), listOf(c))
+    }
+
+    /**
+     * **The tip a blend works on is decided from what the user sees, once, and recorded** (OP-32): a chamfer whose
+     * step names the plate lands on the fused part because the part is what is visible, the feature says so in
+     * `tips`, and from then on hiding anything moves nothing — on screen or on reload. The same step with the
+     * part hidden decides the plate itself, which is the default and so is not stated.
+     */
+    @Test
+    fun theTipABlendLandsOnIsRecordedAndHidingMovesNothing() {
+        val ed = platePlusPad()
+        val union = ed.solids().last()
+        chamferNamingThePlate(ed)
+        val bevelled = ed.solids().last()
+        val v = volumeOf(bevelled)
+        val chamfer = saved(ed.doc).tool(Tools.CHAMFER_EDGE)
+        assertEquals(listOf(ed.doc.nameOf(union)), chamfer.ids("tips"), "the decision is on the feature: $chamfer")
+
+        // hide every body: the view changes, the construction does not
+        ed.doc.setElementsVisible(ed.solids(), false)
+        val text = DocumentFormat.save(ed.doc)
+        assertEquals(ed.solids().map { ed.doc.nameOf(it) }, saved(text).hidden, "the view states what is hidden")
+        val back = DocumentFormat.load(text)
+        val again = back.elements.last { it.kind == ElementKind.SOLID }
+        assertClose(volumeOf(again), v, 1e-6, "the reload builds the chamfer on the part it was decided on, hidden or not")
+        assertEquals(text, DocumentFormat.save(back), "and the file is a fixed point")
+
+        // the same gesture with the part hidden first decides the plate itself — the default, so nothing is stated
+        val other = platePlusPad()
+        other.doc.setElementsVisible(listOf(other.solids().last()), false)
+        chamferNamingThePlate(other)
+        val plain = saved(other.doc).tools(Tools.CHAMFER_EDGE).single()
+        assertTrue(!plain.containsKey("tips"), "the plate itself is the default: $plain")
+        assertTrue(volumeOf(other.solids().last()) < 24000.0, "and the bevel is on the plate alone")
+    }
+
     @Test
     fun aFaceChainAfterAUnionAlsoCutsThePartsTip() {
         val ed = platePlusPad()
@@ -392,10 +434,10 @@ class EdgeBlendToolTest {
         assertEquals(2, ed.solids().size)
 
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool ${Tools.BLEND_FACE}") }
-        assertTrue(step.contains("signs="), "the blend restates every choice it scored: $step")
+        val step = saved(text).tool(Tools.BLEND_FACE)
+        assertTrue(step.containsKey("signs"), "the blend restates every choice it scored: $step")
         // the address, then four integers per broken edge
-        val signs = step.substringAfter("signs=").substringBefore(" ").trim().split(";")
+        val signs = step.ints("signs")
         assertEquals(1 + 4 * 4, signs.size, "one address and four choices per edge: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
 
@@ -440,13 +482,13 @@ class EdgeBlendToolTest {
 
         val text = DocumentFormat.save(ed.doc)
         val back = DocumentFormat.load(text)
-        val steps = text.lines().filter { it.startsWith("tool ${Tools.BLEND_EDGE}") }
+        val steps = saved(text).tools(Tools.BLEND_EDGE)
         assertEquals(1, steps.size, "one blend step\n$text")
-        val address = steps[0].substringAfter("signs=").substringBefore(";").toInt()
+        val address = steps[0].ints("signs").first()
         val reloaded = DocumentFormat.save(back)
         assertEquals(text, reloaded, "save -> load -> save byte-equal after the drag")
         assertTrue(
-            reloaded.lines().single { it.startsWith("tool ${Tools.BLEND_EDGE}") }.contains("signs=$address;"),
+            saved(reloaded).tool(Tools.BLEND_EDGE).ints("signs").first() == address,
             "the reload takes the recorded edge verbatim rather than scoring the click again",
         )
         assertManifold(meshOf(back.elements.last { it.kind == ElementKind.SOLID }), "the reloaded blend")

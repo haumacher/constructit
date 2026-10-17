@@ -217,8 +217,8 @@ tool segment pts=e10,e11 clicks=-38.25,-16.5;19.5,-13.75 -> e12
         makeRelative(ed)
         ed.drag(pos(el(ed, 5)), Vec2(-10.0, 30.0), steps = 3) // the offset is state
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("tool makerel"), once)
-        assertTrue(once.contains("dofs="), once)
+        assertTrue(saved(once).hasTool("makerel"), once)
+        assertTrue(saved(once).tools("makerel").any { it.containsKey("dofs") }, once)
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
 
@@ -240,7 +240,7 @@ tool segment pts=e10,e11 clicks=-38.25,-16.5;19.5,-13.75 -> e12
         assertTrue(ed.doc.makeRelative(el(ed, 5), el(ed, 4)))
         ed.drag(pos(el(ed, 5)), Vec2(-40.0, 60.0), steps = 3)
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("relative ") && it.contains("dofs=") }, once)
+        assertTrue(saved(once).kind("relative").any { it.containsKey("dofs") }, once)
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)))
         val fresh = Editor()
         fresh.replaceDocument(DocumentFormat.load(once))

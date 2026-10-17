@@ -350,30 +350,20 @@ fun assertSameConstruction(
 }
 
 /**
- * An **older file** as this build writes it back: byte-identical but for the header line, which a save brings
- * up to [DocumentFormat.VERSION] (OP-18, *Versioning & migration*).
+ * An **older file** with its header brought up to the last journal version, [DocumentFormat.JOURNAL_VERSION]
+ * (OP-18, *Versioning & migration*) — and nothing else changed.
  *
  * Every fixture written by an earlier build is kept verbatim — that is what makes it a load test at all, and an
- * in-build round trip proves nothing across builds. So a re-save is asserted against *this*, not against a
- * fixture edited to say the current version: what is being pinned is that the only thing a version bump changes
- * about an old drawing is the line that says which version it is.
+ * in-build round trip proves nothing across builds. What this is for since OP-32: a file read at its own version
+ * and the same file read at the last journal version must import as **the same graph** wherever no migration
+ * applies — which is how "the only thing a version bump changes about an old drawing is the line that says which
+ * version it is" is still asserted, now that the re-save is JSON and not the journal it came from.
  */
 fun atThisVersion(text: String): String =
-    text.replaceFirst(Regex("^constructit \\d+"), "constructit ${DocumentFormat.VERSION}")
+    text.replaceFirst(Regex("^constructit \\d+"), "constructit ${DocumentFormat.JOURNAL_VERSION}")
 
-/**
- * [text] with the freedom an `attach` / `attachortho` step **restates** taken off again — `attach e6 e5
- * dofs=12mm` read back as `attach e6 e5`.
- *
- * What it is for: since session 63's creep was closed those two steps restate the rider's (or the junction's)
- * own position along its host, exactly as `pointoncurve` always has. A fixture written before that argument
- * existed is therefore byte-equal to its own save **but for** that one addition — and a test that says so
- * should say exactly that, rather than embedding the number, which is geometry the drawing owns and not
- * something a fixture's text should have to predict. What every such test asserts *beside* this is the property
- * the fix bought: from that first save on, the text is a fixed point (OP-18).
- */
-fun withoutRestatedAttach(text: String): String =
-    text.lines().joinToString("\n") { if (it.startsWith("attach")) it.substringBefore(" dofs=") else it }
+/** [text] — a journal, typically — imported and saved: the graph that file becomes (OP-32). */
+fun imported(text: String): String = DocumentFormat.save(DocumentFormat.load(text))
 
 /**
  * SVG golden support. On first run (file missing) the golden is written and the check passes;

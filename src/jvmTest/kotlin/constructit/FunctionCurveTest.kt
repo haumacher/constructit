@@ -294,7 +294,8 @@ class FunctionCurveTest {
         val text = roundTrip(ed)
         assertTrue(text.contains("\"r * (cos(t) + t * sin(t))\""), "x(t) is stored verbatim, spacing included:\n$text")
         assertTrue(text.contains("\"r * (sin(t) - t * cos(t))\""), "y(t) is stored verbatim:\n$text")
-        assertTrue(text.contains("from=0") && text.contains("to=1.6"), "the domain is restated:\n$text")
+        val curve = saved(text).kind("funccurve").single()
+        assertTrue(curve["from"].toString() == "0" && curve["to"].toString() == "1.6", "the domain is restated:\n$text")
     }
 
     @Test
@@ -326,7 +327,7 @@ class FunctionCurveTest {
         val to = assertNotNull(el.handle?.fields()?.firstOrNull { it.label == "to" })
         to.write(Quantity.number(2.5))
         val text = roundTrip(ed)
-        assertTrue(text.contains("to=2.5"), "the domain a field wrote comes back:\n$text")
+        assertEquals("2.5", saved(text).kind("funccurve").single()["to"].toString(), "the domain a field wrote comes back:\n$text")
     }
 
     // ---- intersections: numeric, deterministic, ordered along the curve ----

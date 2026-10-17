@@ -263,7 +263,7 @@ class BlendTightRingTest {
         val inner = ring / 2.0
         val prof =
             listOf(Vec2(0.0, inner), Vec2(0.0, ring + 10.0), Vec2(10.0, ring + 10.0), Vec2(10.0, ring), Vec2(20.0, ring), Vec2(20.0, inner))
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart ${prof[0].x},${prof[0].y} -> e1\n")
         var n = 2
         for (i in 1 until prof.size) {

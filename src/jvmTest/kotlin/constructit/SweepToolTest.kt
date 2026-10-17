@@ -333,7 +333,7 @@ class SweepToolTest {
         val tube = tubeAlong(ed, route, "7", Vec2(45.0, 0.0))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool tube") }, "the step records the tool id: $once")
+        assertTrue(saved(once).hasTool("tube"), "the step records the tool id: $once")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "the script round-trips byte for byte")
 

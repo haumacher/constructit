@@ -205,8 +205,8 @@ tool segment pts=e10,e11 clicks=-38.25,-16.5;19.5,-13.75 -> e12
         assertEquals(t, dof(rider), "a stretch that does not turn the host must not touch the parameter")
         assertEquals(where, pos(rider))
         assertEquals(
-            before.lines().first { it.startsWith("tool ptonline") },
-            DocumentFormat.save(ed.doc).lines().first { it.startsWith("tool ptonline") },
+            saved(before).tools("ptonline").first(),
+            saved(ed.doc).tools("ptonline").first(),
             "…so the rider's line of the file is byte-identical",
         )
     }
@@ -376,7 +376,7 @@ tool segment pts=e10,e11 clicks=-38.25,-16.5;19.5,-13.75 -> e12
         field.write(7.5.mm)
         val here = pos(rider)
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("dofs=7.5mm"), text)
+        assertTrue(saved(text).features.any { it["dofs"].toString() == """[{"mm":7.5}]""" }, text)
         assertEquals(here, pos(el(Editor().also { it.replaceDocument(DocumentFormat.load(text)) }, 10)))
     }
 

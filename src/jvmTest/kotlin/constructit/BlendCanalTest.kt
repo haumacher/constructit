@@ -354,7 +354,7 @@ class BlendCanalTest {
                 val b = path.end ?: return@filter false
                 abs(a.z - height) < 1e-9 && abs(b.z - height) < 1e-9 && ((a - corner).length() < 1e-9 || (b - corner).length() < 1e-9)
             }
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         val plan = listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth))
         sb.append("orthostart ${plan[0].x},${plan[0].y} -> e1\n")
         var n = 2

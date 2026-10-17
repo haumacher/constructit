@@ -85,7 +85,8 @@ class MaterialTest {
         assertEquals(Appearance("#c8c8c8", 0.6, 0.1), Appearance.DEFAULT, "...and the default is what it always was")
         assertTrue(doc.loadNotes.isEmpty(), "a drawing that predates a feature has nothing to be told: ${doc.loadNotes}")
         // ...and it saves back byte-identically, which is what "the reader was not edited" means
-        assertEquals(atThisVersion(preMaterials), DocumentFormat.save(doc), "save -> load -> save on a pre-materials file")
+        assertEquals(imported(atThisVersion(preMaterials)), DocumentFormat.save(doc), "save -> load -> save on a pre-materials file")
+        assertTrue(saved(doc).materials.isEmpty(), "and it states no material")
     }
 
     /** Assigning through the panel route: one step, one undo, and the row shows what it actually took. */
@@ -118,7 +119,7 @@ class MaterialTest {
         ed.setMaterial(ed.solid(), Appearance("#b87333", roughness = 0.35, metallic = 0.9))
         val once = DocumentFormat.save(ed.doc)
         assertTrue(
-            once.lines().any { it.startsWith("material ") && it.contains("color=#b87333") && it.contains("rough=0.35") },
+            saved(once).materials.values.single().let { it.str("color") == "#b87333" && it.str("rough") == "0.35" && it.str("metal") == "0.9" },
             "the step states all three numbers: $once",
         )
         val back = DocumentFormat.load(once)
@@ -132,10 +133,10 @@ class MaterialTest {
     fun clearingAMaterialDropsTheStep() {
         val ed = pyramid()
         ed.setMaterial(ed.solid(), Appearance("#b87333"))
-        assertTrue(DocumentFormat.save(ed.doc).contains("material "))
+        assertTrue(saved(ed.doc).materials.isNotEmpty())
         ed.setMaterial(ed.solid(), null)
         assertNull(ed.doc.assignedMaterial(ed.solid()))
-        assertTrue(!DocumentFormat.save(ed.doc).contains("material "), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).materials.isEmpty(), DocumentFormat.save(ed.doc))
     }
 
     /** Deleting the solid takes its material step with it — the ordinary reference rule, nothing special. */
@@ -145,7 +146,7 @@ class MaterialTest {
         ed.setMaterial(ed.solid(), Appearance("#b87333"))
         ed.selectElement(ed.solid())
         assertTrue(ed.deleteSelection())
-        assertTrue(!DocumentFormat.save(ed.doc).contains("material "), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).materials.isEmpty(), DocumentFormat.save(ed.doc))
     }
 
     /** Only solids can carry one, and the refusal says why rather than doing nothing. */

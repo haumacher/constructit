@@ -208,7 +208,7 @@ class ChamferOnArcTest {
         val live = bevelOf(ed)
 
         val text = roundTrips(ed)
-        assertTrue(text.contains("signs="), "the choice is in the file:\n$text")
+        assertTrue(saved(text).features.any { it.containsKey("signs") }, "the choice is in the file:\n$text")
         val back = DocumentFormat.load(text)
         val reloaded =
             assertNotNull(

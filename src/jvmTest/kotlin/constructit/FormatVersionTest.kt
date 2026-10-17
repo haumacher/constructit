@@ -76,7 +76,8 @@ class FormatVersionTest {
     fun aSaveNamesTheVersionItWrites() {
         val doc = Document()
         doc.freePoint(0.0.mm, 0.0.mm)
-        assertEquals(DocumentFormat.HEADER, DocumentFormat.save(doc).lineSequence().first(), "the file says what it is")
+        assertEquals(DocumentFormat.VERSION, saved(doc).version, "the file says what it is")
+        assertEquals("constructit", saved(doc).root["format"]?.toString()?.trim('"'), "and whose it is")
     }
 
     @Test
@@ -94,7 +95,7 @@ class FormatVersionTest {
         val doc = DocumentFormat.load("constructit 1\npoint 10,20 -> e1\n")
         assertEquals(Vec2(10.0, 20.0), pos(doc.elements[0]))
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.startsWith("${DocumentFormat.HEADER}\n"), saved)
+        assertEquals(DocumentFormat.VERSION, saved(saved).version, saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "and the migrated file is stable")
     }
 
@@ -129,7 +130,7 @@ pointoncurve e3 34.14213562373095,24.14213562373095 dofs=20mm -> e4
         )
         // and the v2 file it saves means the same geometry without any migration
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.contains("dofs=41.21320343559643mm"), saved)
+        assertEquals("""[{"mm":41.21320343559643}]""", saved(saved).kind("pointoncurve").single()["dofs"].toString(), saved)
         val again = DocumentFormat.load(saved)
         assertTrue(again.loadNotes.isEmpty(), "nothing left to decide: ${again.loadNotes}")
         assertClose((pos(rider(again)) - recorded).length(), 0.0, 1e-9)
@@ -183,7 +184,7 @@ pointoncurve e3 34.14213562373095,24.14213562373095 dofs=20mm -> e4
     @Test
     fun aFilletWritesTheVariantItScored() {
         val saved = DocumentFormat.save(crossing().doc)
-        assertTrue(Regex("tool fillet [^\n]*signs=-1;1").containsMatchIn(saved), saved)
+        assertEquals(listOf(-1, 1), saved(saved).tool("fillet").ints("signs"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "and it round-trips verbatim")
     }
 
@@ -204,14 +205,32 @@ pointoncurve e3 34.14213562373095,24.14213562373095 dofs=20mm -> e4
         assertClose((after - moved).length(), 0.0, 1e-9, "and the reload rebuilds that fillet, not its sibling")
     }
 
+    /**
+     * [crossing] as the **last journal-writing build** saved it (format 10), verbatim — the file the format-1
+     * fixture below is cut from, since this build writes graphs (OP-32) and a journal has to come from a build
+     * that wrote one.
+     */
+    private val crossingAtTen =
+        """
+constructit 10
+point 0,0 -> e1
+point 100,0 -> e2
+tool segment pts=e1,e2 clicks=0,0;100,0 -> e3
+point 60,-50 -> e4
+point 60,50 -> e5
+tool segment pts=e4,e5 clicks=60,-50;60,50 -> e6
+param "f" = 8mm
+tool fillet els=e3,e6 clicks=20,0;60,30 scalar="f" signs=-1;1 -> e7
+""".trimStart()
+
     /** A format-1 fillet carries no signs: it is scored **once** on load, then written down for good. */
     @Test
     fun aFormatOneFilletIsScoredOnceAndThenStored() {
-        val v1 = DocumentFormat.save(crossing().doc).replaceFirst("constructit 2", "constructit 1").replace(" signs=-1;1", "")
+        val v1 = crossingAtTen.replaceFirst("constructit 10", "constructit 1").replace(" signs=-1;1", "")
         assertTrue(!v1.contains("signs="), v1)
         val doc = DocumentFormat.load(v1)
         val saved = DocumentFormat.save(doc)
-        assertTrue(Regex("tool fillet [^\n]*signs=-1;1").containsMatchIn(saved), saved)
+        assertEquals(listOf(-1, 1), saved(saved).tool("fillet").ints("signs"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "stable from then on")
     }
 
@@ -376,8 +395,8 @@ group "hole" els=e43,e26,e33,e25,e44,e34,e45,e35,e1,e3,e18
     fun theReportedWheelIsSavedWithItsFilletVariantsAndIsThenStable() {
         val doc = DocumentFormat.load(wheel)
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.startsWith("${DocumentFormat.HEADER}\n"), saved.lineSequence().first())
-        assertEquals(4, Regex("tool fillet [^\n]*signs=").findAll(saved).count(), "every fillet now states its variant:\n$saved")
+        assertEquals(DocumentFormat.VERSION, saved(saved).version, saved.lineSequence().first())
+        assertEquals(4, saved(saved).tools("fillet").count { it.containsKey("signs") }, "every fillet now states its variant:\n$saved")
         val reloaded = DocumentFormat.load(saved)
         assertTrue(reloaded.loadNotes.isEmpty(), "nothing left to decide: ${reloaded.loadNotes}")
         assertEquals(saved, DocumentFormat.save(reloaded), "byte-stable at v2")

@@ -127,7 +127,12 @@ class GroupArrayTest {
 
         // one step, and its geometry slot names both members
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool arraycircular pts=e3 els=e1,e2 clicks=40,0;0,0 count=3 -> e4,e5,e6,e7"), "got:\n$text")
+        val array = saved(text).tool("arraycircular")
+        assertEquals(listOf("e3"), array.ids("pts"), "got:\n$text")
+        assertEquals(listOf("e1", "e2"), array.ids("els"))
+        assertEquals("[[40,0],[0,0]]", array["clicks"].toString())
+        assertEquals(3, array.int("count"))
+        assertEquals(listOf("e4", "e5", "e6", "e7"), array.ids("creates"))
         assertEquals(1, ed.doc.journal.count { it.kind == "tool" })
         assertRoundTrips(ed)
         assertEquals(2, ed.doc.groupMembers(g).size, "arraying a group does not change its membership")
@@ -326,7 +331,7 @@ class GroupArrayTest {
 
         assertTrue(ed.ungroup(g))
         assertEquals(arrayed, points(ed.doc).size, "the copies are unaffected by the group going")
-        assertFalse(DocumentFormat.save(ed.doc).contains("group \""), "no group step is left")
+        assertTrue(saved(ed.doc).kind("group").isEmpty(), "no group step is left")
         assertRoundTrips(ed)
     }
 

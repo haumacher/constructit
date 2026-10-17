@@ -108,8 +108,8 @@ class DocumentFormatTest {
         ed.click(Vec2(40.0, 10.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.startsWith(DocumentFormat.HEADER), "the file names its format")
-        assertTrue(text.contains("tool line"), "a tool application is one step; got:\n$text")
+        assertEquals(DocumentFormat.VERSION, saved(text).version, "the file names its format")
+        assertTrue(saved(text).hasTool("line"), "a tool application is one feature; got:\n$text")
         assertRoundTrips(ed)
     }
 
@@ -122,7 +122,7 @@ class DocumentFormatTest {
         ed.drag(Vec2(0.0, 0.0), Vec2(70.0, -25.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("point 70,-25"), "the script carries the position as it is now; got:\n$text")
+        assertEquals(70.0 to -25.0, saved(text).kind("point").single().pos("at"), "the file carries the position as it is now; got:\n$text")
         val reloaded = assertRoundTrips(ed)
         assertClose(points(reloaded)[0].x, 70.0)
         assertClose(points(reloaded)[0].y, -25.0)
@@ -137,7 +137,7 @@ class DocumentFormatTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.click(Vec2(0.0, 0.0))
 
-        assertTrue(DocumentFormat.save(ed.doc).contains("param \"t\" = 250mm"))
+        assertEquals("250 mm", saved(ed.doc).param("t")?.str("value"), DocumentFormat.save(ed.doc))
         val reloaded = assertRoundTrips(ed)
         assertClose(Evaluator().scalar(reloaded.scalars.first { it.name == "t" }.ref).mm, 250.0)
     }
@@ -180,7 +180,7 @@ class DocumentFormatTest {
         ed.finishPath()
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("orthovertex") }, "an extension is a value, not a step; got:\n$text")
+        assertEquals(1, saved(text).kind("path").single().arr("vertices").size, "an extension is a value, not a vertex; got:\n$text")
         val reloaded = assertRoundTrips(ed)
         assertClose(Evaluator().point(reloaded.orthoPaths.single().vertices[1].ref).x, 90.0)
     }
@@ -249,7 +249,13 @@ class DocumentFormatTest {
         ed.doc.setParameter(ed.doc.scalars.first { it.name == "pos" }, 25.0.mm)
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("opening e4 leg=0 pos=25mm width=\"w\" sill=0mm head=2100mm"), "got:\n$text")
+        val opening = saved(text).kind("opening").single()
+        assertEquals("e4", opening.str("wall"), "got:\n$text")
+        assertEquals(0, opening.int("leg"))
+        assertEquals("{\"mm\":25}", opening["pos"].toString(), "the position as typed, not the click")
+        assertEquals(saved(text).param("w")?.str("id"), opening.str("width"), "the width names its parameter")
+        assertEquals("{\"mm\":0}", opening["sill"].toString())
+        assertEquals("{\"mm\":2100}", opening["head"].toString())
         val reloaded = assertRoundTrips(ed)
         val tp = reloaded.thickNetworks.single()
         val interval = tp.intervals.single()

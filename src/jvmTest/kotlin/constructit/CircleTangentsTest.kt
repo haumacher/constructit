@@ -198,8 +198,8 @@ class CircleTangentsTest {
         val ed = triangle()
         ed.threeTangents(Vec2(30.0, 60.0))
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.contains("tool circle3tan"), saved)
-        assertTrue(saved.contains("signs="), "the two bisector branches are the stored choice (OP-1): $saved")
+        assertTrue(saved(saved).hasTool("circle3tan"), saved)
+        assertTrue(saved(saved).tool("circle3tan").containsKey("signs"), "the two bisector branches are the stored choice (OP-1): $saved")
         val reloaded = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(reloaded), "save -> load -> save is byte-equal")
         val before = circleOf(ed.doc)!!

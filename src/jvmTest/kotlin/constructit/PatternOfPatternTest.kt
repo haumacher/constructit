@@ -208,8 +208,8 @@ class PatternOfPatternTest {
         ed.click(ring(0))
         ed.click(ring(1))
         val script = DocumentFormat.save(ed.doc)
-        val ride = script.lines().last { it.startsWith("orbit \"P1\" polygon") }
-        assertTrue(ride.contains("signs="), "the ride's own scoring is written down: $ride")
+        val ride = saved(script).orbits("P1", "polygon").last()
+        assertTrue(ride.containsKey("signs"), "the ride's own scoring is written down: $ride")
         // …and reloading rebuilds the very same arcs, which is what "never re-scored" means in the drawing
         val again = DocumentFormat.load(script)
         assertEquals(arcs(ed.doc).size, arcs(again).size)
@@ -252,7 +252,7 @@ class PatternOfPatternTest {
         assertEquals(1, ed.doc.journal.count { it.kind == "pattern" }, "the nested rules have no step of their own")
         assertEquals(1, ed.doc.journal.count { it.kind == "orbit" }, "one ride, one step")
         val script = DocumentFormat.save(ed.doc)
-        assertTrue(script.contains("orbit \"P1\" polygon"), script)
+        assertTrue(saved(script).orbits("P1", "polygon").isNotEmpty(), script)
         assertRoundTrips(ed.doc, "a ring of rounded polygons")
 
         // one radius still drives every rounding of every copy, by reference
@@ -286,8 +286,8 @@ class PatternOfPatternTest {
         assertTrue(ed.statusHint.contains("24 copies"), ed.statusHint)
         assertTrue(ed.statusHint.contains("(6 x 4)"), ed.statusHint)
         val script = DocumentFormat.save(ed.doc)
-        val ride = script.lines().last { it.startsWith("orbit \"P1\" segment") }
-        assertTrue(Regex("pts=\\S+@\\d+@\\d+,\\S+@\\d+@\\d+").containsMatchIn(ride), ride)
+        val ride = saved(script).orbits("P1", "segment").last()
+        assertTrue(Regex("\\S+@\\d+@\\d+,\\S+@\\d+@\\d+").matches(ride.picks("pts")), "$ride")
         assertRoundTrips(ed.doc, "a gesture over both levels")
     }
 
@@ -408,7 +408,7 @@ class PatternOfPatternTest {
         assertTrue(ed.doc.nested.all { it.count == 4 && it.depth == 1 })
         assertEquals(1, ed.doc.patterns.size, "and only the outer one is a rule the file names")
         val script = DocumentFormat.save(ed.doc)
-        assertTrue(script.contains("orbit \"P1\" patterncircular"), script)
+        assertTrue(saved(script).orbits("P1", "patterncircular").isNotEmpty(), script)
         assertRoundTrips(ed.doc, "a pattern of patterns")
     }
 
@@ -451,9 +451,9 @@ class PatternOfPatternTest {
         // `tool polygon` is one application, as it always was: replay discovers no replication (OP-18)
         assertEquals(2, doc.journal.count { it.kind == "tool" }, "two polygon applications, replayed as recorded")
         assertEquals(6 + 6, segments(doc).size, "two hexagons of six sides")
-        // every step comes back verbatim — only the header says which build wrote it (OP-18)
-        val saved = DocumentFormat.save(doc).trim().lines()
-        assertEquals(USERS_SCRIPT.trim().lines().drop(1), saved.drop(1))
+        // every step comes back as it was written — the graph it imports as is the one the same journal makes
+        // at the last journal version, so no migration touched it (OP-18, OP-32)
+        assertEquals(imported(atThisVersion(USERS_SCRIPT)), DocumentFormat.save(doc))
         assertRoundTrips(doc, "the user's script")
     }
 

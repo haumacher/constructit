@@ -169,10 +169,10 @@ class InPlaceSweepTest {
     @Test
     fun theUsersFileRoundTripsByteEqualWithNoRecordedCrossing() {
         val once = DocumentFormat.save(DocumentFormat.load(PILLAR_CIT))
-        assertEquals(atThisVersion(PILLAR_CIT), once, "the file is written back exactly as it came")
+        assertEquals(imported(atThisVersion(PILLAR_CIT)), once, "the file imports as itself")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again")
         assertTrue(
-            once.lineSequence().first { it.startsWith("tool sweep") }.let { !it.contains("signs=") },
+            saved(once).tools("sweep").first().let { !it.containsKey("signs") },
             "no reading is recorded for a step that recorded none",
         )
     }
@@ -273,8 +273,8 @@ class InPlaceSweepTest {
     fun theRecordedCrossingRidesTheStepAndTheDrawingRoundTripsByteEqual() {
         val (doc, solid) = sweptAgain()
         val script = DocumentFormat.save(doc)
-        val step = script.lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(step.contains("signs=1"), "the crossing it chose is written down: $step")
+        val step = saved(script).tools("sweep").last()
+        assertEquals(listOf(1), step.ints("signs"), "the crossing it chose is written down: $step")
         assertEquals(script, DocumentFormat.save(DocumentFormat.load(script)), "and the drawing round-trips byte-equal")
 
         val back = DocumentFormat.load(script)
@@ -294,7 +294,7 @@ class InPlaceSweepTest {
     fun theOtherCrossingIsAChoiceTheFileStates() {
         val t = twoCrossings()
         val here = Bounds(meshOf(sweepGesture(t.doc, t.run, t.section)))
-        val far = DocumentFormat.save(t.doc).replace("signs=1", "signs=0")
+        val far = mapFeatures(DocumentFormat.save(t.doc)) { if (it.str("tool") == "sweep") it.with("signs", "[0]") else it }
         val other = DocumentFormat.load(far)
         val solid = lastSolid(other)
         assertNull(whyInvalid(solid), "the far crossing builds too: ${other.note}")
@@ -322,8 +322,8 @@ class InPlaceSweepTest {
                 "the anchored sweep was built: ${doc.note}",
             )
         assertTrue(assertNotNull(doc.note).contains("riding on"), "and it says so: ${doc.note}")
-        val step = DocumentFormat.save(doc).lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(!step.contains("signs="), "a stated anchor records no crossing: $step")
+        val step = saved(doc).tools("sweep").last()
+        assertTrue(!step.containsKey("signs"), "a stated anchor records no crossing: $step")
         assertNull(whyInvalid(solid), "and it is a body")
         assertManifold(meshOf(solid), "the anchored foundation")
         // **and it means exactly what it meant before**, which is the point: an anchor states which *point* of
@@ -380,7 +380,7 @@ class InPlaceSweepTest {
         val solids = ed.doc.elements.count { it.kind == ElementKind.SOLID }
         sweptAgain(ed.doc)
         ed.checkpoint()
-        assertTrue(DocumentFormat.save(ed.doc).contains("signs=1"), "the gesture recorded its crossing")
+        assertTrue(saved(ed.doc).tools("sweep").any { it.ints("signs") == listOf(1) }, "the gesture recorded its crossing")
         assertTrue(ed.undo(), "one undo")
         assertEquals(solids, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "and the solid is gone")
         assertEquals(before, DocumentFormat.save(ed.doc), "…and the choice recorded with it")
@@ -433,8 +433,8 @@ class InPlaceSweepTest {
         val tube = lastSolid(doc)
         assertNull(whyInvalid(tube), "the tube is a body: ${doc.note}")
         assertManifold(meshOf(tube), "a tube along the pillar's border")
-        val step = DocumentFormat.save(doc).lineSequence().last { it.startsWith("tool tube") }
-        assertTrue(!step.contains("signs="), "and it records no crossing, because it has none to make: $step")
+        val step = saved(doc).tools("tube").last()
+        assertTrue(!step.containsKey("signs"), "and it records no crossing, because it has none to make: $step")
         val b = Bounds(meshOf(tube))
         assertClose(b.zs.min(), -3.0, 1e-9, "its section is centred on the run, by definition")
         assertClose(b.zs.max(), 3.0, 1e-9, "…on both sides of it")
@@ -519,8 +519,8 @@ class InPlaceSweepTest {
         assertNull(whyInvalid(solid), "and it is a body")
         assertManifold(meshOf(solid), "a round section riding a crossing")
         val before = Bounds(meshOf(solid))
-        val recorded = DocumentFormat.save(t.doc).lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(recorded.contains("signs=1"), "the crossing is recorded: $recorded")
+        val recorded = saved(t.doc).tools("sweep").last()
+        assertEquals(listOf(1), recorded.ints("signs"), "the crossing is recorded: $recorded")
         // the other crossing is a different body, and while the section stands between the two both readings
         // are ordinary solids — which is what makes the comparison about the *choice*
         val otherBefore = Bounds(meshOf(assertNotNull(t.doc.sweepAlongCurve(t.run, t.section, pierce = 0))))
@@ -535,7 +535,7 @@ class InPlaceSweepTest {
             .drag(assertNotNull(positionOf(t.centre)) + Vec2(-120.0, 0.0), Evaluator())
         assertEquals(
             recorded,
-            DocumentFormat.save(t.doc).lineSequence().last { it.startsWith("tool sweep") },
+            saved(t.doc).tools("sweep").last(),
             "the step still records the crossing it scored, unchanged",
         )
         // …and so does the body. Which crossing it rides is not visible in the drawing's own plane — the

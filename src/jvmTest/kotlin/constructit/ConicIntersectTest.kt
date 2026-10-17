@@ -267,7 +267,7 @@ class ConicIntersectTest {
             val p = assertNotNull(ed.doc.intersectNear(a, b, want), "branch $i by proximity")
             assertClose(((Evaluator().valueOf(p) as PointValue).p - want).length(), 0.0, 1e-9, "branch $i")
             val script = DocumentFormat.save(ed.doc)
-            assertTrue(script.contains("signs=$i"), "branch $i is recorded as its index:\n$script")
+            assertTrue(saved(script).features.any { it.ints("signs") == listOf(i) }, "branch $i is recorded as its index:\n$script")
             val back = DocumentFormat.load(script)
             assertEquals(script, DocumentFormat.save(back), "branch $i replays byte-equal")
             val replayed = back.elements.last { it.kind == ElementKind.DERIVED_POINT }
