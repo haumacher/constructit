@@ -265,8 +265,8 @@ class PointSlotPlacementTest {
         val el = assertNotNull(ed.curves().lastOrNull(), "the coil: ${ed.statusHint}")
         assertClose(helixOf(el).radius, Vec2(25.0, 25.0).length(), 1e-9, "the start point is the corner itself")
         val saved = roundTrip(ed)
-        assertTrue(saved.contains("sectioninput"), "the corner is recorded as a section input: $saved")
-        assertTrue(saved.contains("point 50,50"), "and the empty click as an ordinary point: $saved")
+        assertTrue(saved(saved).kind("sectioninput").isNotEmpty(), "the corner is recorded as a section input: $saved")
+        assertTrue(saved(saved).kind("point").any { it.pos("at") == (50.0 to 50.0) }, "and the empty click as an ordinary point: $saved")
 
         // the section moves when the datum's height does, and the coil's start point moves with it
         val h = assertNotNull(ed.doc.spaces.last().offset, "the datum's offset is a parameter")

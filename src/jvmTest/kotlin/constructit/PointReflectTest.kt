@@ -220,7 +220,7 @@ class PointReflectTest {
         ed.reflect(Vec2(40.0, 20.0), Vec2(-40.0, -40.0))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ${Tools.POINT_REFLECT} ") }, "the step names the tool:\n$once")
+        assertTrue(saved(once).hasTool(Tools.POINT_REFLECT), "the step names the tool:\n$once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
 

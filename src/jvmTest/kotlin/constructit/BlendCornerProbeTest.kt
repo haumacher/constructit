@@ -123,7 +123,7 @@ class BlendCornerProbeTest {
         assertClose(v / target, 1.0, tol = 1e-6, msg = "six blends of blends = one chain: $v vs $target")
         assertClose(v / exactChamfered(), 1.0, tol = 1e-5, msg = "and both are the closed form")
         val saved = DocumentFormat.save(ed.doc)
-        assertEquals(6, saved.lines().count { it.trim().startsWith("tool chamferedge") }, "six recorded steps:\n$saved")
+        assertEquals(6, saved(saved).tools("chamferedge").size, "six recorded steps:\n$saved")
         val again = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(again), "six dressed steps round-trip")
         assertClose(volumeOf(again.elements.last { it.kind == ElementKind.SOLID }), v, tol = 1e-9, msg = "and rebuild the same body")

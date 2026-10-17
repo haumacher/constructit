@@ -480,6 +480,14 @@ class Element(
     var born: Int = 0
 
     /**
+     * This element's **file identity** (OP-32) — the `7` of `e7`, given once by the step that created it and
+     * never again to anything else in this document. It is also the name the user reads ([Document.nameOf]):
+     * one identity for the file, the panel, the status line and every refusal, and one that survives a delete
+     * of something else, which the journal's positional numbering did not. 0 for an element no step declared.
+     */
+    var serial: Int = 0
+
+    /**
      * Whether this element's value is a point **in space** (`Point3Value`) rather than one of the working
      * plane — a height point (OP-25), a key point of a curve in space, or a point riding a coil (OP-26).
      *
@@ -638,7 +646,15 @@ internal const val FAMILY_TWIST_NAME = "twist"
 internal const val FAMILY_ROLL_NAME = "roll"
 
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
-class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
+class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean) {
+    /**
+     * This scalar's **file identity** (OP-32): what a feature that reads it states, rather than its name — a
+     * name is the user's and changes, an identity never does. A parameter shares its feature's number; a
+     * scalar some other feature made (an opening's position, a measurement) has one of its own. 0 for a scalar
+     * no step declared, which a file has no way to name.
+     */
+    var serial: Int = 0
+}
 
 /**
  * A **flat named group** of elements (OP-16, build order step 1): organizational only — no frame, no
@@ -1500,6 +1516,92 @@ class Document {
     private var recordDepth = 0
 
     /**
+     * The **file identities** this document hands out (OP-32): an element's number (`e7`) and a feature's
+     * (`f12`), two counters that only ever grow, so an identity is never given out twice in one document —
+     * a deleted element's number stays retired, and the element made after it gets a new one.
+     *
+     * Two counters rather than one, deliberately. The element numbers are what a user reads and says about a
+     * drawing (the naming authority, [nameOf]), so they stay the dense sequence they always were: the first
+     * point of a fresh drawing is `e1` whatever parameters were typed before it, and a file written by an
+     * older build keeps every name it had when it is imported. The feature numbers are the file's own
+     * bookkeeping — the order a load replays in where nothing else decides it, and the identity of what is
+     * not an element (a parameter, a sketch space, a pattern, a group, a weld) — and nobody reads them.
+     * Both high-water marks are stored in the file, which is what makes them survive a save and a load.
+     */
+    internal var elementCounter = 0
+    internal var featureCounter = 0
+
+    /**
+     * The path the operation now recording belongs to, read by [recording] into [Step.path] (OP-32): an
+     * ortho step names its path explicitly, where the journal used to leave it to "the current path".
+     */
+    private var pendingPath: OrthoPath? = null
+
+    /**
+     * **What a build decided from what the user sees, recorded** (OP-32 — *recorded, never discovered*). Two
+     * builds take a decision from the drawing's **visibility**: which body is the tip of a chain a blend, a shell
+     * or a face-part ride works on ([tipOfChain] — the newest *visible* solid made of the picked one), and which
+     * edges an edge blend runs along (a hidden piece lends no tangency, [tangentRun]). Visibility is view state,
+     * so a model that re-read it on every load would change under a hide. So the decision is taken **once** — by
+     * the live gesture, or by the journal importer at the very point of the old journal where the old replay
+     * took it — and written on the feature's own step ([Step.tips], [Step.runs]); a graph file's load reads it
+     * back from there ([tape]) and asks nothing of visibility at all.
+     */
+    internal class Tape(private val tips: List<Element?>, private val runs: List<List<Int>?>) {
+        private var tip = 0
+        private var run = 0
+
+        fun nextTip(): Element? = tips.getOrNull(tip++)
+
+        fun nextRun(): List<Int>? = runs.getOrNull(run++)
+    }
+
+    /** The decisions the feature now replaying states — set by the graph reader for each feature (OP-32). */
+    internal var tape: Tape? = null
+
+    private val pendingTips = ArrayList<Element?>()
+    private val pendingRuns = ArrayList<List<Int>?>()
+
+    /** Whether decisions are read off the feature rather than taken: a graph file's load (OP-32). */
+    private val readsTape: Boolean get() = (replayingVersion ?: 0) > DocumentFormat.JOURNAL_VERSION
+
+    /**
+     * The tip a chain rule lands on for [base]: taken by [live] (the visible chain) in a gesture or a journal
+     * import, read off the feature in a graph load — where nothing stated means [base] itself — and recorded
+     * either way, as null where it is [base] (OP-32).
+     */
+    internal fun decideTip(
+        base: Element,
+        live: () -> Element?,
+    ): Element {
+        val t = if (readsTape) tape?.nextTip() ?: base else live() ?: base
+        pendingTips.add(t.takeIf { it !== base })
+        return t
+    }
+
+    /**
+     * The edges an edge blend picked at [address] runs along: taken by [live] (the tangent and chained run of
+     * what the drawing shows) in a gesture or a journal import, read off the feature in a graph load — where
+     * nothing stated means the picked edge alone, [single] — and recorded either way, as null where it is that
+     * edge alone (OP-32).
+     */
+    internal fun decideRun(
+        address: Int,
+        single: Pair<List<Int>?, Msg?>,
+        live: () -> Pair<List<Int>?, Msg?>,
+    ): Pair<List<Int>?, Msg?> {
+        val got =
+            if (readsTape) {
+                if (single.first == null) return single
+                (tape?.nextRun() ?: listOf(address)) to null
+            } else {
+                live()
+            }
+        got.first?.let { pendingRuns.add(it.takeIf { r -> r != listOf(address) }) }
+        return got
+    }
+
+    /**
      * How many **in-place rewirings** this document has seen: a weld, an attach, a re-parameterization
      * (OP-4 case b). Such an edit changes the construction while creating neither an element nor a scalar,
      * which is exactly what [recording]'s `skipIfEmpty` used to mistake for "the tool did nothing" — the
@@ -1593,6 +1695,9 @@ class Document {
         pendingExprBinding = null
         pendingFuncCurve = null
         pendingTombstone = null
+        pendingPath = null
+        pendingTips.clear()
+        pendingRuns.clear()
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1616,6 +1721,20 @@ class Document {
             // to offer, and a value written to a file that nothing can edit is noise, not a freedom.
             if (created.isNotEmpty()) step.ownDofs.addAll(pendingDofs)
             pendingDofs.clear()
+            step.path = pendingPath
+            pendingPath = null
+            // …and the decisions its build took from what the user sees, in the order it took them (OP-32)
+            step.tips = pendingTips.toList()
+            step.runs = pendingRuns.toList()
+            pendingTips.clear()
+            pendingRuns.clear()
+            // …and the step's **file identities** (OP-32): its own feature number, then a number for every
+            // element it made, in the order it made them, and one for every scalar. A parameter *is* the scalar
+            // it declares, so the two share one number; a step the file folds into something else (a name, a
+            // material, a space switch, a resume) is no unit of the file and takes none.
+            if (kind !in DocumentFormat.UNNUMBERED) step.fid = ++featureCounter
+            for (el in created) el.serial = ++elementCounter
+            for (s in step.createsScalars) s.serial = if (kind == "param") step.fid else ++featureCounter
             noteSpace(kind)
             journal.add(step)
             // …and the expression this operation bound, owned by the step that states it (OP-7, session 71):
@@ -1664,6 +1783,8 @@ class Document {
             pendingExprBinding = null
             pendingFuncCurve = null
             pendingSkinMatch = null
+            pendingTips.clear()
+            pendingRuns.clear()
             throw t
         } finally {
             recordDepth--
@@ -3364,64 +3485,41 @@ class Document {
         scriptSpace = activeSpace
     }
 
-    // ---- names: one authority, and it is the file's (OP-18) ----
+    // ---- names: one authority, and it is the file's (OP-18, OP-32) ----
 
     /**
-     * **The** name of [el], everywhere a user can read one: its **script-local** name (`e1`, `e2`, …) —
-     * derived from the journal exactly as [DocumentFormat.save] derives it, because it *is* what the save
-     * writes.
+     * **The** name of [el], everywhere a user can read one: `e` and its **file identity** ([Element.serial]) —
+     * exactly what the file states for it, because it *is* that identity (OP-32).
      *
      * There used to be two numbering schemes for one thing. The panel, the status line and every dialog
      * showed the runtime [Element.id], which counts *everything* the document ever created (parameters,
-     * measurements, frames, local coordinates — [nextId] is one counter), while the file numbers only the
-     * elements the journal declares, from 1, gapless. Same `eN` shape, different numbers, so a drawing whose
-     * file said `e17` had the user looking at `e21` — reported as a defect, and it garbled every conversation
-     * *about* a drawing, which is the point of a name.
+     * measurements, frames, local coordinates — [nextId] is one counter), while the file numbered only the
+     * elements the journal declares. Same `eN` shape, different numbers, so a drawing whose file said `e17` had
+     * the user looking at `e21` — reported as a defect, and it garbled every conversation *about* a drawing,
+     * which is the point of a name. The runtime id stays what it was: an internal key nothing shows.
      *
-     * The runtime id stays exactly what it was: an internal, stable key (the DOM rows, the per-element maps,
-     * the undo snapshots all address elements by it). What changed is that nothing *shows* it.
-     *
-     * The map is cached and recomputed when the journal changes ([namesStamp]). An append is stable — a new
-     * step names only new elements — and a delete replays the whole script into a fresh document anyway, so
-     * names are stable in exactly the cases the user can observe.
+     * **The reversal OP-32 made.** The name used to be the element's *position* in the journal (`e1`, `e2`, …
+     * gapless, in the order the steps declared them), derived afresh whenever the journal changed — so deleting
+     * `e3` renamed every element after it, and a refusal quoted in a bug report named a different element once
+     * anything earlier had gone. The name is now the identity the element was given once, when the step that
+     * created it was recorded, and the file stores it: a delete leaves every other name where it was, and a
+     * new element takes a number nothing in this document ever had. A drawing built without deletes is named
+     * exactly as before, and a file written by an older build keeps every name it had on import.
      */
     fun nameOf(el: Element): String {
-        val names = scriptNames()
-        names[el.id]?.let { return it }
-        // An element the operation *now recording* created already has its name determined: the journal grows
-        // at the end, and its step will declare what it created in creation order — so the note an operation
-        // writes about what it just built can name it, instead of falling back to the internal id.
+        if (el.serial > 0) return "e${el.serial}"
+        // An element the operation *now recording* created already has its name determined: the step will
+        // number what it created in creation order ([recording]) — so the note an operation writes about what it
+        // just built can name it, instead of falling back to the internal id.
         pendingBefore?.let { before ->
             val i = elements.filter { it !in before }.indexOfFirst { it === el }
-            if (i >= 0) return "e${names.size + 1 + i}"
+            if (i >= 0) return "e${elementCounter + 1 + i}"
         }
         return el.id
     }
 
     /** The elements that existed when the operation now recording began — see [nameOf] and [recording]. */
     private var pendingBefore: Set<Element>? = null
-
-    private var nameCache: Map<String, String>? = null
-    private var namesStamp: Int = -1
-
-    /**
-     * Every element's script-local name, by runtime id — the *whole* map, since a panel asks for all of them.
-     *
-     * A retired element (a vertex a join coalesced) keeps its name: replay must still create it before the
-     * later step removes it again, so it still occupies a number in the file. That is the one place where
-     * "the name the file gives it" and "the name of something you can see" differ, and the file wins, because
-     * the point of the name is to be the same on both sides.
-     */
-    private fun scriptNames(): Map<String, String> {
-        var stamp = journal.size
-        for (s in journal) stamp = stamp * 31 + s.creates.size
-        nameCache?.let { if (stamp == namesStamp) return it }
-        val names = HashMap<String, String>()
-        for (step in journal) for (el in step.creates) names[el.id] = "e${names.size + 1}"
-        nameCache = names
-        namesStamp = stamp
-        return names
-    }
 
     // ---- a user-facing name for an element (OP-7's "nodes get names", recorded as its own step) ----
 
@@ -3629,6 +3727,8 @@ class Document {
         // registry rather than in the step's original arguments once a *Match* has re-stamped them: a step
         // left behind by a deleted curve would name it on load and the file would not open (OP-18).
         skinMatches[step]?.let { out.addAll(it) }
+        // …and the bodies its build decided to work on (OP-32's recorded tips): the feature is built on them
+        out.addAll(step.tips.filterNotNull())
         return out
     }
 
@@ -3668,8 +3768,8 @@ class Document {
      *
      * Three dependency kinds, checked in one forward walk:
      * - **explicit** — an argument references a dropped element or scalar;
-     * - **path context** — the ortho steps address the "current path" without an element argument, so
-     *   a path's topology steps chain: dropping one drops the rest of that path's steps. Per-vertex
+     * - **path context** — a path's topology steps chain ([Step.path] says which path each belongs to):
+     *   dropping one drops the rest of that path's steps. Per-vertex
      *   surgery is deliberately not attempted — replay coalesces a straight-on step into the previous
      *   leg and a wall's face count follows the leg count, so removing one topology step changes how
      *   many elements later steps create, which the loader rejects as a count mismatch.
@@ -3689,7 +3789,7 @@ class Document {
      * a member, together they leave it none.
      */
     fun dependentSteps(roots: Set<Step>): Set<Step> {
-        // one drawn path; mirrors the loader's "current path" resolution so the chain matches replay
+        // one drawn path, and whether something of it has gone
         class PathChain {
             var dropped = false
         }
@@ -3726,8 +3826,7 @@ class Document {
             if (step.kind != "wall") chain?.dropped = true
         }
 
-        var current: PathChain? = null
-        val chainOfEl = HashMap<Element, PathChain>()
+        val chainOf = HashMap<OrthoPath, PathChain>()
         var seenRoot = false
         var currentSpace = PLAN_SPACE
         for (step in journal) {
@@ -3736,15 +3835,9 @@ class Document {
             // and a replay agree on what belongs where
             if (step.kind == "sketchspace" || step.kind == "space") currentSpace = labelOfStep(step) ?: currentSpace
             val stepSpace = currentSpace
-            val chain: PathChain? =
-                when (step.kind) {
-                    "orthostart" -> PathChain().also { current = it }
-                    "orthoresume" -> (els.firstNotNullOfOrNull { chainOfEl[it] } ?: current).also { current = it }
-                    "orthojoin", "orthobreak" -> els.firstNotNullOfOrNull { chainOfEl[it] } ?: current
-                    "orthovertex", "orthoprepend", "orthoclose", "orthodiscard", "wall" -> current
-                    else -> null
-                }
-            if (chain != null) step.creates.forEach { chainOfEl[it] = chain }
+            // the path a step belongs to is **stated** on it ([Step.path], OP-32) — no longer re-derived from
+            // "the current path", which is what the file has stopped carrying
+            val chain: PathChain? = step.path?.let { p -> chainOf.getOrPut(p) { PathChain() } }
             if (roots.any { it === step }) {
                 drop(step, chain)
                 seenRoot = true
@@ -4072,8 +4165,16 @@ class Document {
         if (scalars.any { it !== e && dependsOn(it.ref.node, node, HashSet()) }) return false
         journal.remove(own)
         scalars.remove(e)
+        // …and the identity it took is handed back when it is still the newest one (OP-32): a value that never
+        // became part of the construction was never in a file either, so the number is not spent — and the
+        // drawing saves to exactly the bytes it had before the gesture began
+        handedBack.add(own.fid)
+        while (featureCounter in handedBack) handedBack.remove(featureCounter--)
         return true
     }
+
+    /** Identities a retraction gave back while a newer one was still out — taken back once they are on top. */
+    private val handedBack = HashSet<Int>()
 
     // ---- flat named groups (OP-16 step 1): organizational membership, nothing geometric ----
 
@@ -8776,7 +8877,9 @@ class Document {
 
     /** The path being drawn or extended — what a following vertex step belongs to. */
     var currentOrthoPath: OrthoPath? = null
-        private set
+        // internal rather than private for one reader: a graph file states which path a vertex belongs to, and the
+        // load makes that path current before handing the vertex to the replay engine (OP-32)
+        internal set
 
     /**
      * The open ortho path that [el] terminates, and whether it is that path's *last* vertex.
@@ -8809,7 +8912,10 @@ class Document {
         atEnd: Boolean,
     ): OrthoPath {
         val end = if (atEnd) path.vertices.last() else path.vertices.first()
-        recording("orthoresume", Arg.El(elementFor(end.ref) ?: return path)) { currentOrthoPath = path }
+        recording("orthoresume", Arg.El(elementFor(end.ref) ?: return path)) {
+            pendingPath = path
+            currentOrthoPath = path
+        }
         return path
     }
 
@@ -8829,7 +8935,11 @@ class Document {
     fun prependOrthoVertex(
         path: OrthoPath,
         to: Vec2,
-    ): OrthoVertex? = recording("orthoprepend", Arg.Pos(to), skipIfEmpty = true) { prependOrthoVertexNow(path, to) }
+    ): OrthoVertex? =
+        recording("orthoprepend", Arg.Pos(to), skipIfEmpty = true) {
+            pendingPath = path
+            prependOrthoVertexNow(path, to)
+        }
 
     private fun prependOrthoVertexNow(
         path: OrthoPath,
@@ -8872,12 +8982,18 @@ class Document {
             path.vertices.add(orthoVertex(scalarSource(at.x), scalarSource(at.y), -1))
             orthoPaths.add(path)
             currentOrthoPath = path
+            pendingPath = path
             path
         }
 
     /** Forget a path that never got a second vertex (its lone vertex element stays as a free corner). */
     fun discardOrthoPath(path: OrthoPath) {
-        if (path.vertices.size < 2) recording("orthodiscard") { orthoPaths.remove(path) }
+        if (path.vertices.size < 2) {
+            recording("orthodiscard") {
+                pendingPath = path
+                orthoPaths.remove(path)
+            }
+        }
     }
 
     /**
@@ -8894,7 +9010,11 @@ class Document {
         to: Vec2,
         // skipIfEmpty: a step that creates nothing here *extended* the previous leg, which changes no
         // topology — only a value, and values already travel with the step that introduced the node
-    ): OrthoVertex? = recording("orthovertex", Arg.Pos(to), skipIfEmpty = true) { addOrthoVertexNow(path, to) }
+    ): OrthoVertex? =
+        recording("orthovertex", Arg.Pos(to), skipIfEmpty = true) {
+            pendingPath = path
+            addOrthoVertexNow(path, to)
+        }
 
     private fun addOrthoVertexNow(
         path: OrthoPath,
@@ -9003,6 +9123,7 @@ class Document {
         // gone, so the topology edit is refused instead
         if (definesAMacro(listOf(leg))) return false
         return recording("orthobreak", Arg.El(leg), Arg.Pos(mPos), Arg.Pos(nPos)) {
+            pendingPath = path
             breakOrthoLegNow(path, legIndex, mPos, nPos)
         }
     }
@@ -9125,7 +9246,10 @@ class Document {
                     path.vertices.getOrNull(legIndex + 1)?.let { elementFor(it.ref) },
                 )
         if (definesAMacro(retired)) return null
-        return recording("orthojoin", Arg.El(leg)) { joinCollapsedLegNow(path, legIndex, keepPerp) }
+        return recording("orthojoin", Arg.El(leg)) {
+            pendingPath = path
+            joinCollapsedLegNow(path, legIndex, keepPerp)
+        }
     }
 
     private fun joinCollapsedLegNow(
@@ -9812,7 +9936,11 @@ class Document {
      * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
      * rather than being pinned. Both vertices stop being endpoints.
      */
-    fun closeOrthoPath(path: OrthoPath): Boolean = recording("orthoclose") { closeOrthoPathNow(path) }
+    fun closeOrthoPath(path: OrthoPath): Boolean =
+        recording("orthoclose") {
+            pendingPath = path
+            closeOrthoPathNow(path)
+        }
 
     private fun closeOrthoPathNow(path: OrthoPath): Boolean {
         if (path.vertices.size < 3 || path.closed) return false
@@ -10598,6 +10726,7 @@ class Document {
         justification: Justification = Justification.CENTER,
     ): ThickNetwork? =
         recording("wall", Arg.Sc(scalarEntryFor(thickness)), Arg.Text(justification.name.lowercase())) {
+            pendingPath = path
             buildThickNetworkNow(path.vertices.map { it.ref }, thickness, justification, path.closed, path)
         }
 
@@ -10774,11 +10903,15 @@ class Document {
         val grown = Step("tool", step.args.map { rewritten(it, curves, clicks) })
         grown.creates.addAll(step.creates)
         grown.createsScalars.addAll(step.createsScalars)
+        // the same feature, grown — so the same identity (OP-32): the file states it under the number it had
+        grown.fid = step.fid
+        grown.path = step.path
+        grown.ownDofs.addAll(step.ownDofs)
+        grown.tips = step.tips
+        grown.runs = step.runs
         val previous = journal.toList()
         val signsBefore = storedSigns(step)
         val was = nameOf(tn.footprint)
-        // which curve dragged the step forward, for the note — the one no earlier step declares
-        val afterEl = curves.firstOrNull { el -> journal.indexOfFirst { s -> s.creates.any { it === el } } == moveTo }
         journal[at] = grown
         if (moveTo > at) {
             // The wall's step moves **with everything built on it**, in order. It has to move at all because a
@@ -10793,21 +10926,16 @@ class Document {
         // the per-curve sides ride the step's `signs=` (OP-18), so the grown list has to be in place for the
         // save exactly as it is for a fresh wall
         registerSigns(tn.footprint, sides.map { it.ordinal })
-        nameCache = null // the names are the journal's order, and the order just changed
         try {
-            val now = nameOf(tn.footprint)
-            val moved =
-                if (now == was) {
-                    Msg.EMPTY
-                } else {
-                    Msgs.noteExtendingWallItsStepMovedAfterSo(name = afterEl?.let { Msg.text(nameOf(it)) } ?: Msgs.noteExtendingWallCurvesItNowNames(), now = now)
-                }
             noteMsg =
                 Msgs.noteExtendingWallWallCarrierCurves2(
                     was = was,
                     count = base.curves.size,
                     count2 = curves.size,
-                    moved = moved,
+                    // the step moving after the curve it now names used to rename the wall, which the note had to
+                    // say; a name is the element's identity since OP-32, so a move renames nothing and there is
+                    // nothing to say here any more
+                    moved = Msg.EMPTY,
                     clause0 = if (body.approximated) Msgs.noteExtendingWallItsOffsetsAreApproximatedOp() else Msg.EMPTY,
                 )
             return DocumentFormat.save(this)
@@ -10815,7 +10943,6 @@ class Document {
             journal.clear()
             journal.addAll(previous)
             registerSigns(tn.footprint, signsBefore)
-            nameCache = null
         }
     }
 
@@ -14503,7 +14630,7 @@ class Document {
             noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = Section3.edges(body.feature).second ?: Msg.EMPTY)
             return null
         }
-        val tipEl = tipOfChain(on, ev) ?: on
+        val tipEl = decideTip(on) { tipOfChain(on, ev) }
         // **The dressing this gesture may join** (OP-30): the body must be the one the click addresses
         // *and* the drawing's tip of its own chain — a body an ordinary boolean stands on top of is cut at
         // that tip and not dressed further (OP-17's sequential-feature rule), and a body whose edges are
@@ -14567,7 +14694,12 @@ class Document {
             } else {
                 regrouped
             }
-        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, oneRun(baseEl, ev))
+        val (targets, whyTargets) =
+            if (whole) {
+                Blend3.targets(body.feature, true, address)
+            } else {
+                decideRun(address, Blend3.targets(body.feature, false, address)) { Blend3.targets(body.feature, false, address, oneRun(baseEl, ev)) }
+            }
         if (targets == null) {
             noteMsg = Msgs.noteFrameWhatNameDash(what = what, name = nameOf(on), why = whyTargets ?: Msg.EMPTY)
             return null
@@ -14898,7 +15030,7 @@ class Document {
             return null
         }
         val ev = Evaluator()
-        val tipEl = tipOfChain(solid, ev) ?: solid
+        val tipEl = decideTip(solid) { tipOfChain(solid, ev) }
         val body =
             (ev.valueOf(tipEl.ref) as? SolidValue)?.solid ?: run {
                 noteMsg = Msgs.noteOneDressedBodyHasNoValueRightNow3(what = what, name = nameOf(tipEl))
@@ -18015,11 +18147,21 @@ class Document {
             // once, before the loop: the freedoms belong to the gesture, not to a copy of it
             val refs = toolScalarRefs(tool, dofs, scalars)
             var first = true
+            // **the chain** (OP-17's sequential-feature rule, per index): copy 0 works on the part's tip, which is
+            // a decision taken from what the user sees and therefore recorded (OP-32, [decideTip]); copy k works on
+            // what copy k-1 just made — a fact of the construction, not of the view — so one Cut on one member
+            // becomes a bolt circle of pockets in one body, and not four features that each fork back onto the plate
+            var chainTip: Element? =
+                if (!g.chainsPart) {
+                    null
+                } else {
+                    activeSpace.anchor?.let { anchor -> decideTip(anchor) { tipOfChain(anchor, Evaluator()) } }
+                }
             for (index in cells(plan.copies)) {
                 val before = elements.toHashSet()
                 // a fresh pass per copy: a chained gesture resolves its base against what the copy before it
                 // just built, so this loop is the one place a cached pass would be looking at the wrong document
-                val copyPicks = picksFor(g, index, scored, Evaluator()) ?: break
+                val copyPicks = picksFor(g, index, scored, Evaluator(), chainTip) ?: break
                 // …and *which* copy is being built, so a pattern this one creates is born into the nesting (#18)
                 building = Building(g, index)
                 try {
@@ -18028,6 +18170,7 @@ class Document {
                     building = outerBuilding
                 }
                 val made = elements.filter { it !in before }
+                if (g.chainsPart) made.lastOrNull { it.kind == ElementKind.SOLID }?.let { chainTip = it }
                 // the first copy scores its choices from its own clicks; every other copy is handed the
                 // result, and the step writes it down — so a reload never scores again (OP-1)
                 if (first && scored.isEmpty()) scored = storedSigns(made)
@@ -18111,6 +18254,8 @@ class Document {
         index: List<Int>,
         signs: List<Int>,
         ev: Evaluator,
+        /** The part a face-part gesture's copy works on — the chain [buildOrbit] carries (OP-17, OP-32). */
+        chainTip: Element?,
     ): Picks? {
         // The composed address, resolved outermost inward (#18): the outer indices name *which copy's* pattern
         // this pick's orbit belongs to, and the innermost index says where along that orbit it sits. Nothing is
@@ -18126,10 +18271,8 @@ class Document {
 
         @Suppress("UNCHECKED_CAST")
         val points = g.points.map { (at(it) ?: return null).ref as? PointRef ?: return null }
-        // the chain (OP-17's sequential-feature rule, per index): copy k's base is the tip *now*, which after
-        // copy k-1 is copy k-1's own result — so one Cut on one member becomes a bolt circle of pockets in one
-        // body, and not four features that each fork back onto the plate
-        val part = if (g.chainsPart) listOfNotNull(facePartTip(ev)) else emptyList()
+        // the chain (OP-17's sequential-feature rule, per index), as [buildOrbit] carries it
+        val part = if (g.chainsPart) listOfNotNull(chainTip) else emptyList()
         val els = part + g.elements.map { at(it) ?: return null }
         val clicks =
             g.cells.mapIndexed { i, c ->

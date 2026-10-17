@@ -115,7 +115,7 @@ hide els=e7
     private fun assertRoundTrips(text: String) {
         val once = DocumentFormat.save(DocumentFormat.load(text))
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is a fixed point")
-        assertEquals(atThisVersion(text), once, "an older file comes back byte for byte but for its header")
+        assertEquals(imported(atThisVersion(text)), once, "an older file imports as the same graph as at the last journal version")
     }
 
     // ---- #25: the ortho path's own corner radius ----

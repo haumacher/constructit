@@ -2211,7 +2211,7 @@ class EditorTest {
         val slid = Evaluator().point(p.ref as constructit.dsl.PointRef)
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("attach ") && it.contains("dofs=") }, "the attach states where it sits:\n$text")
+        assertTrue(saved(text).kind("attach").any { it.containsKey("dofs") }, "the attach states where it sits:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal on the first pass")
         val back = DocumentFormat.load(text)
         val there = Evaluator().point(back.elements.first { it.kind == ElementKind.ON_CURVE }.ref as constructit.dsl.PointRef)
@@ -2240,8 +2240,8 @@ class EditorTest {
         val slid = Evaluator().point(p.ref as constructit.dsl.PointRef)
 
         val text = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(text.lines().firstOrNull { it.startsWith("attach ") }, "the attach step:\n$text")
-        assertTrue(step.contains("dofs=") && step.endsWith("deg"), "an angle about the centre, in degrees: $step")
+        val step = assertNotNull(saved(text).kind("attach").firstOrNull(), "the attach step:\n$text")
+        assertTrue(step.arr("dofs").single().toString().startsWith("{\"deg\":"), "an angle about the centre, in degrees: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal on the first pass")
         val back = DocumentFormat.load(text)
         val there = Evaluator().point(back.elements.first { it.kind == ElementKind.ON_CURVE }.ref as constructit.dsl.PointRef)

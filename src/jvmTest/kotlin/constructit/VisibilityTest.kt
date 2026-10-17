@@ -62,7 +62,7 @@ class VisibilityTest {
         assertEquals(2, ed.setSelectionVisible(false))
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("hide ") }, "one step for the whole selection: $text")
+        assertEquals(2, saved(text).hidden.size, "the file states both as hidden: $text")
         val reloaded = DocumentFormat.load(text)
         assertEquals(2, reloaded.elements.count { !it.visible }, "the hidden circles come back hidden")
         assertEquals(
@@ -84,8 +84,7 @@ class VisibilityTest {
         assertEquals(1, ed.setSelectionVisible(true))
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("hide ") })
-        assertEquals(1, text.lines().count { it.startsWith("show ") })
+        assertTrue(saved(text).hidden.isEmpty(), "hidden then shown is nothing hidden — the file states what is: $text")
         assertTrue(DocumentFormat.load(text).elements.all { it.visible }, "the show wins, being later")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "byte-equal round trip")
     }
@@ -97,11 +96,7 @@ class VisibilityTest {
         ed.click(Vec2(-40.0, 10.0))
         assertEquals(1, ed.setSelectionVisible(false))
         assertEquals(0, ed.setSelectionVisible(false), "hiding what is already hidden changes nothing")
-        assertEquals(
-            1,
-            DocumentFormat.save(ed.doc).lines().count { it.startsWith("hide ") },
-            "and records no second step",
-        )
+        assertEquals(1, saved(ed.doc).hidden.size, "and the file states the one hidden element once")
     }
 
     /**
@@ -119,14 +114,14 @@ class VisibilityTest {
         ed.selectElement(ed.doc.elements.first { it.kind == ElementKind.CIRCLE })
         assertTrue(ed.deleteSelection())
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("hide ") }, "the step survives with its other member: $text")
+        assertEquals(1, saved(text).hidden.size, "the survivor is still stated hidden: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and still replays byte for byte")
 
         // now the last hidden element goes too: nothing is left to hide, so no step is written
         ed.selectElement(ed.doc.elements.first { !it.visible })
         assertTrue(ed.deleteSelection())
         val bare = DocumentFormat.save(ed.doc)
-        assertEquals(0, bare.lines().count { it.startsWith("hide ") }, "a step with no members left is gone: $bare")
+        assertTrue(saved(bare).hidden.isEmpty(), "nothing hidden is left to state: $bare")
         assertEquals(bare, DocumentFormat.save(DocumentFormat.load(bare)))
     }
 
@@ -143,7 +138,7 @@ class VisibilityTest {
         assertFalse(ed.isGroupVisible(g))
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("hide ") }, "the members, not the group: $text")
+        assertEquals(ed.doc.groupMembers(g).map { ed.doc.nameOf(it) }.sorted(), saved(text).hidden.sorted(), "the members, not the group: $text")
         val reloaded = DocumentFormat.load(text)
         assertEquals(
             ed.doc.elements.count { !it.visible },
@@ -169,7 +164,7 @@ class VisibilityTest {
         assertFalse(alias.visible, "a welded alias hides by construction")
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(0, text.lines().count { it.startsWith("hide ") }, "which is not a decision, so not a step: $text")
+        assertTrue(saved(text).hidden.isEmpty(), "which is not a decision, so not stated: $text")
         ed.selectElement(alias)
         assertEquals(0, ed.setSelectionVisible(true), "and showing it is refused")
         assertEquals(text, DocumentFormat.save(ed.doc))

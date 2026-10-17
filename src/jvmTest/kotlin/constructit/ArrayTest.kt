@@ -232,7 +232,7 @@ class ArrayTest {
         ed.click(Vec2(35.0, 0.0))
         ed.click(Vec2(0.0, 0.0))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("count=5"), "got:\n$text")
+        assertEquals(5, saved(text).tools(Tools.ARRAY_CIRCULAR).single().int("count"), "got:\n$text")
 
         val fresh = Editor()
         fresh.count = 3 // the editor's current count must not leak into a replay

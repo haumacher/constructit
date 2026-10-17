@@ -91,7 +91,7 @@ class RatioPointTest {
         assertEquals(Vec2(50.0, 25.0), pos(mid))
         assertTrue(ed.doc.scalars.isEmpty(), "no parameter appears out of nowhere")
         assertEquals(
-            atThisVersion(
+            imported(
                 """
 constructit 3
 point 0,0 -> e1
@@ -100,7 +100,7 @@ tool midpoint pts=e1,e2 clicks=0,0;100,50 -> e3
 """.trimStart(),
             ),
             DocumentFormat.save(ed.doc),
-            "the step is unchanged: a slot nobody used records nothing",
+            "the step is unchanged: a slot nobody used records nothing — the graph is the old file's",
         )
     }
 
@@ -261,8 +261,8 @@ tool midpoint pts=e1,e2 clicks=0,0;100,50 -> e3
         ed.click(Vec2(100.0, 50.0))
         ed.drag(pos(ed.doc.elements.last()), Vec2(70.0, 35.0)) // the factor is dragged, i.e. state
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("tool midpoint"), once)
-        assertTrue(once.contains("scalar=\"factor\""), "the factor rides the ordinary scalar seam: $once")
+        assertTrue(saved(once).hasTool("midpoint"), once)
+        assertEquals(listOf(saved(once).param("factor")!!.str("id")), saved(once).tool("midpoint").ids("params"), "the factor rides the ordinary scalar seam: $once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         val fresh = Editor()

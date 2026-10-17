@@ -68,10 +68,9 @@ param "h2" = 4mm
     private fun stepOf(
         ed: Editor,
         word: String,
-    ): String? =
-        DocumentFormat.save(ed.doc).lines().map { it.trim() }.firstOrNull { it.startsWith("tool $word") }
+    ): kotlinx.serialization.json.JsonObject? = saved(ed.doc).tools(word).firstOrNull()
 
-    private fun addressOf(step: String): Int = step.substringAfter("signs=").substringBefore(";").toInt()
+    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.ints("signs").first()
 
     @Suppress("UNCHECKED_CAST")
     private fun feature(ed: Editor) = Evaluator().solid(ed.solids().first().ref as SolidRef).feature
@@ -140,7 +139,7 @@ param "h2" = 4mm
         ed.pointerUp(s)
         val flat = assertNotNull(stepOf(ed, "filletedge"), "from the plan: ${ed.statusHint}")
         assertEquals(addressOf(in3d), addressOf(flat), "one edge, two gestures: $in3d vs $flat")
-        assertEquals(in3d.substringAfter("scalar="), flat.substringAfter("scalar="), "same choices after the click")
+        assertEquals(in3d.ids("params") to in3d.ints("signs"), flat.ids("params") to flat.ints("signs"), "same choices after the click")
         assertSolidsManifold(ed)
     }
 }

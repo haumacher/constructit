@@ -192,7 +192,7 @@ class ChainCutReachTest {
 
     /**
      * **`save → load → save` is a fixed point on the FIRST pass** — and, where [text] is the user's own
-     * pre-package paste, leaves every line alone but the three named below.
+     * pre-package paste, the import is the same drawing.
      *
      * The fixed point is the strong half and is asserted first, for any text: what a save writes is exactly
      * what the next load says, with nothing left to settle. It was not so until session 63's creep was closed
@@ -202,49 +202,27 @@ class ChainCutReachTest {
      * about 1e-13 mm on every pass and took four of them to settle. The step now restates the parameter, as
      * `pointoncurve` always has, so the position it derives is bit-identical to the one that was written.
      *
-     * Three named differences remain on the **first** save of the user's file, none of them a change of
-     * meaning. (1) `attach e40 e32` gains that very `dofs=`, an argument no earlier build wrote — an absent one
-     * still means "re-derive it from the recorded position", which is what that file always meant (OP-18).
-     * (2) The `point -> e40` line moves by that same last digit, once: the file's stored foot is re-derived one
-     * final time on the way in, and never again. (3) The revolve step gains its *offset* freedom (`dofs=0deg`),
-     * for the same versioning reason as (1). And the header itself comes up: this fixture was written at format
-     * 2 and is kept that way, because a fixture edited to say the current version stops being a test of
-     * anything.
+     * The user's paste is a journal (format 2) and is **imported** (OP-32): what the first save writes is the
+     * graph, so there are no lines left to compare one by one. What is held instead is what the line comparison
+     * was for — the import is **the same drawing**: every element under the name the paste gave it, of the same
+     * kind, at the same place, to a picometre. The one value that moves at all is the attached point's restated
+     * foot (`e40`), re-derived once on the way in and never again — which is the fixed point asserted first.
      *
      * A text this build wrote is held to more than that: it must come back **byte-identical**, no exceptions.
      */
     private fun assertRoundTrips(text: String) {
-        val once = DocumentFormat.save(DocumentFormat.load(text))
+        val first = DocumentFormat.load(text)
+        val once = DocumentFormat.save(first)
         assertEquals(
             once,
             DocumentFormat.save(DocumentFormat.load(once)),
             "save -> load -> save must be a fixed point on the first pass, with nothing left to settle",
         )
-        if (text.startsWith(DocumentFormat.HEADER)) {
+        if (DocumentFormat.isGraph(text)) {
             assertEquals(text, once, "a text this build wrote comes back byte for byte, attachment and all")
             return
         }
-        val differing = text.lines().zip(once.lines()).filter { it.first != it.second }
-        assertEquals(text.lines().size, once.lines().size, "no step is added or lost")
-        for (d in differing) {
-            if (d.first.startsWith("constructit ")) {
-                assertEquals(DocumentFormat.HEADER, d.second, "the header comes up to the version this build writes and nothing else does")
-                continue
-            }
-            if (d.first.startsWith("tool revolve ")) {
-                assertEquals(d.first.replace(" -> ", " dofs=0deg -> "), d.second, "the revolve gains its offset freedom and nothing else")
-                continue
-            }
-            if (d.first.startsWith("attach ")) {
-                assertEquals(d.first, withoutRestatedAttach(d.second), "the attach gains the freedom it restates and nothing else")
-                continue
-            }
-            assertTrue(d.first.endsWith("-> e40"), "only the attached point's restated position moves, not ${d.first}")
-            val a = d.first.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }
-            val b = d.second.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }
-            assertClose(a[0], b[0], 1e-12, msg = "and it moves by less than a picometre in x")
-            assertClose(a[1], b[1], 1e-12, msg = "and in y")
-        }
+        assertSameDrawing(first, DocumentFormat.load(once), tol = 1e-12, what = "the imported paste")
     }
 
     // ---- 0. the drawing itself ----
@@ -312,10 +290,10 @@ class ChainCutReachTest {
 
         val saved = DocumentFormat.save(doc)
         assertTrue(
-            saved.contains("tool cutbychain els=${doc.nameOf(handle(doc))},${doc.nameOf(chain2(doc))}"),
+            saved(saved).tools("cutbychain").single().ids("els") == listOf(doc.nameOf(handle(doc)), doc.nameOf(chain2(doc))),
             "the step names the handle the ray found and the line, in pick order:\n$saved",
         )
-        assertTrue(saved.contains("signs=1 ->"), "and the side it kept is a persisted sign (OP-1):\n$saved")
+        assertEquals(listOf(1), saved(saved).tools("cutbychain").single().ints("signs"), "and the side it kept is a persisted sign (OP-1):\n$saved")
         assertRoundTrips(saved)
         val reloaded = DocumentFormat.load(saved)
         assertClose(
@@ -503,7 +481,7 @@ class ChainCutReachTest {
         val span = sideSpan(meshOf(cut), moved.line.origin, moved.line.dir.normalized())
         assertTrue(span.first > -1e-3, "the same half — the chain's left — is still the one kept, not the complement")
         assertTrue(span.second > 1.0, "and it is a body, not an empty one")
-        assertTrue(DocumentFormat.save(doc).contains("signs=1 ->"), "the sign in the file never moved")
+        assertEquals(listOf(1), saved(doc).tools("cutbychain").single().ints("signs"), "the sign in the file never moved")
     }
 
     // ---- 2. what a chain may be, and what it may not ----
@@ -672,7 +650,7 @@ class ChainCutReachTest {
         ed.click(onChain2(30.0))
         ed.click(besideChain2(30.0, 20.0))
         assertTrue(
-            DocumentFormat.save(doc).contains("tool cutbychain els=${doc.nameOf(handle(doc))},"),
+            saved(doc).tools("cutbychain").single().ids("els").first() == doc.nameOf(handle(doc)),
             "…and the nearer one is what the click picked",
         )
     }
@@ -741,7 +719,7 @@ class ChainCutReachTest {
         ed.click(onChain2(30.0))
         ed.click(besideChain2(30.0, 20.0))
         assertTrue(
-            DocumentFormat.save(doc).contains("tool cutbychain els=${doc.nameOf(handle(doc))},"),
+            saved(doc).tools("cutbychain").single().ids("els").first() == doc.nameOf(handle(doc)),
             "…and what it answered with is the handle, by name",
         )
     }

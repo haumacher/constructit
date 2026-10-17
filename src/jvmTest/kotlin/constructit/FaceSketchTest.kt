@@ -394,8 +394,9 @@ class FaceSketchTest {
 
         // and it round-trips: the space is a step, the cut is a tool step (OP-18)
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("sketchspace \"face1\" el=e9 piece=0"), text)
-        assertTrue(text.contains("tool cut"), text)
+        val face1 = saved(text).kind("sketchspace").single()
+        assertTrue(face1.str("name") == "face1" && face1.str("el") == "e9" && face1.int("piece") == 0, text)
+        assertTrue(saved(text).hasTool("cut"), text)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save must be byte-equal")
     }
 
@@ -474,7 +475,7 @@ class FaceSketchTest {
 
         // (4) the file, and undo
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(2, Regex("(?m)^tool cut ").findAll(text).count(), text)
+        assertEquals(2, saved(text).tools("cut").size, text)
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
         @Suppress("UNCHECKED_CAST")
@@ -693,9 +694,9 @@ class FaceSketchTest {
     // ---- the file (OP-18) ----
 
     /**
-     * The file records **which space each step was built in**, by ordering — a `space` switch step, exactly
-     * like the ortho path's "current path". A switch alone records nothing: it is view state, so what makes
-     * it into the script is only the switch a *step* needs.
+     * The file records **which space each feature was built in** — since OP-32 as the feature's own `space`,
+     * naming the sketch space by identity, where the journal used a switch step and the order. A switch alone
+     * records nothing: it is view state, so what makes it into the file is only the space a *feature* was built in.
      */
     @Test
     fun twoSpacesWithGeometryInBothRoundTripByteEqual() {
@@ -718,8 +719,13 @@ class FaceSketchTest {
         ed.click(Vec2(20.0, 10.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("\nsketchspace \"face1\""), text)
-        assertEquals(2, Regex("(?m)^space ").findAll(text).count(), "one switch step per switch a step needed:\n$text")
+        val s = saved(text)
+        val face1 = s.kind("sketchspace").single { it.str("name") == "face1" }.str("id")
+        assertEquals(
+            listOf(face1, face1, null, face1, face1),
+            s.features.dropWhile { it.str("kind") != "sketchspace" }.drop(1).map { it.str("space") },
+            "the face's centre and circle, the plan's point, the face's second centre and circle — each says where it was built:\n$text",
+        )
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
         assertEquals(ed.doc.elements.size, reloaded.elements.size)
@@ -794,7 +800,7 @@ class FaceSketchTest {
         assertTrue(ed.activeSpace.isPlan)
         // the surviving script still replays (and still round-trips)
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("sketchspace"), text)
+        assertTrue(saved(text).kind("sketchspace").isEmpty(), text)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
 
         assertTrue(ed.undo(), "and undo brings the whole cone back")
@@ -870,6 +876,6 @@ class FaceSketchTest {
         assertTrue(ed.activeSpace.isPlan)
         assertTrue(ed.doc.elements.all { it.space == Document.PLAN_SPACE })
         assertNull(ed.doc.faceOutline(ed.doc.planSpace, Evaluator()), "the plan has no face outline")
-        assertFalse(DocumentFormat.save(ed.doc).contains("space"), "and the file says nothing about spaces")
+        assertTrue(saved(ed.doc).let { s -> s.kind("sketchspace").isEmpty() && s.features.none { it.containsKey("space") } }, "and the file says nothing about spaces")
     }
 }

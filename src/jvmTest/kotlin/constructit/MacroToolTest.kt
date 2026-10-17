@@ -357,8 +357,13 @@ class MacroToolTest {
         instantiate(ed, tool, listOf("r"), listOf(Vec2(0.0, 100.0), Vec2(40.0, 100.0)))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("macrodef \"widget\" els=e1,e2,e3,e4,e5 pts=e1,e2 scalar=\"r\""), "got:\n$once")
-        assertTrue(once.contains("tool macro:widget pts=e6,e7"), "an instance is an ordinary tool step; got:\n$once")
+        val def = saved(once).kind("macrodef").single { it.str("name") == "widget" }
+        assertTrue(
+            def.ids("els") == listOf("e1", "e2", "e3", "e4", "e5") && def.ids("pts") == listOf("e1", "e2") && def.ids("params") == saved(once).paramIds("r"),
+            "got:\n$once",
+        )
+        val widget = def.str("id")
+        assertTrue(saved(once).tools("macro").any { it.str("macro") == widget && it.ids("pts") == listOf("e6", "e7") }, "an instance is an ordinary tool step; got:\n$once")
 
         val back = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(back), "save -> load -> save must be identical")

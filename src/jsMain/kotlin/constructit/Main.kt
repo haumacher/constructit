@@ -1038,7 +1038,7 @@ private fun setupApp() {
         editor.doc.elements.firstOrNull { e -> e.id == eid }?.let { el -> editor.selectElement(el) }
     })
 
-    // ---- drawing file: the document as a construction script (DocumentFormat) ----
+    // ---- drawing file: the document as a graph of features, in JSON (DocumentFormat, OP-32) ----
     val fileNote = document.getElementById("file-note") as HTMLElement
 
     fun note(
@@ -1098,7 +1098,8 @@ private fun setupApp() {
         text: String,
         why: (String) -> String = { Messages.msgSaved(it) },
     ) {
-        val blob = Blob(arrayOf(text), BlobPropertyBag(type = "text/plain"))
+        // the content is JSON (OP-32); the extension stays the drawing's own, `.cit`
+        val blob = Blob(arrayOf(text), BlobPropertyBag(type = "application/json"))
         val url = URL.createObjectURL(blob)
         anchor.href = url
         anchor.download = DocumentName.fileName(docName())
@@ -1147,7 +1148,7 @@ private fun setupApp() {
     /** The `.cit` file type, as both pickers want it described. */
     fun citTypes(): dynamic {
         val accept: dynamic = js("({})")
-        accept["text/plain"] = arrayOf(DocumentName.EXTENSION)
+        accept["application/json"] = arrayOf(DocumentName.EXTENSION)
         val type: dynamic = js("({})")
         type.description = Messages.msgCitDescription()
         type.accept = accept
@@ -1292,7 +1293,7 @@ private fun setupApp() {
             return@addEventListener
         }
         window.navigator.clipboard.writeText(text).then(
-            { note(Messages.msgCopied(text.lines().size - 1)) },
+            { note(Messages.msgCopied(DocumentFormat.featureCount(text))) },
             { note(Messages.msgClipboardRefused(), error = true) },
         )
     })

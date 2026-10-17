@@ -115,9 +115,14 @@ class SweepLawToolTest {
         val tube = tubeAlong(ed, "7", Vec2(60.0, 0.0))
 
         val once = DocumentFormat.save(ed.doc)
-        val step = once.lines().first { it.startsWith("tool tube") }
-        assertFalse(step.contains("law="), "a section of one size states none: $step")
-        assertEquals("tool tube els=e3 clicks=60,0 scalar=\"radius\" dofs=0deg;0deg -> e4", step, "and the step is the one it always was")
+        val step = saved(once).tools("tube").first()
+        assertFalse(step.containsKey("law"), "a section of one size states none: $step")
+        assertEquals(
+            """{"id":"${step.str("id")}","kind":"tool","tool":"tube","els":["e3"],"clicks":[[60,0]],"params":["${saved(once).paramIds("radius").single()}"],""" +
+                """"dofs":[{"deg":0},{"deg":0}],"creates":["e4"]}""",
+            step.toString(),
+            "and the step is the one it always was",
+        )
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "it round-trips byte for byte")
 
         // …and the same script, read as the older file it is byte for byte, builds the identical solid
@@ -158,7 +163,7 @@ class SweepLawToolTest {
         assertEquals("5mm * (1 - t/2)", assertNotNull(round.law).text, "the feature carries the law it was built with")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.contains("law=\"5mm * (1 - t/2)\"") }, "stored verbatim, quoted so it may breathe: $once")
+        assertTrue(saved(once).features.any { it.str("law") == "5mm * (1 - t/2)" }, "stored verbatim, as the text it is: $once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is byte-equal")
 
         // …and the reloaded body is the same body
@@ -240,7 +245,7 @@ class SweepLawToolTest {
         assertClose((hi0 + lo0) / 2.0, (hi1 + lo1), 1e-12, "and the offset halves with it — the scale is about the anchor")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool sweep") && it.contains("law=\"1 - t/2\"") }, "stored on the sweep's own step: $once")
+        assertTrue(saved(once).tools("sweep").any { it.str("law") == "1 - t/2" }, "stored on the sweep's own step: $once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save is byte-equal")
     }
 
@@ -269,12 +274,12 @@ class SweepLawToolTest {
         assertManifold(meshOf(tube), "the re-tapered tube")
 
         val beforeRename = DocumentFormat.save(ed.doc)
-        assertTrue(beforeRename.lines().any { it.contains("law=\"d * (1 - t/2)\"") }, "stored under the name it reads: $beforeRename")
+        assertTrue(saved(beforeRename).features.any { it.str("law") == "d * (1 - t/2)" }, "stored under the name it reads: $beforeRename")
 
         assertEquals("module", ed.renameParameter(d, "module"), "the parameter is renamed: ${ed.statusHint}")
         val afterRename = DocumentFormat.save(ed.doc)
-        assertTrue(afterRename.lines().any { it.contains("law=\"module * (1 - t/2)\"") }, "the law re-stamped in place: $afterRename")
-        assertFalse(afterRename.contains("law=\"d *"), "and the old name is gone from it: $afterRename")
+        assertTrue(saved(afterRename).features.any { it.str("law") == "module * (1 - t/2)" }, "the law re-stamped in place: $afterRename")
+        assertFalse(saved(afterRename).features.any { it.str("law")?.startsWith("d *") == true }, "and the old name is gone from it: $afterRename")
         assertEquals(afterRename, DocumentFormat.save(DocumentFormat.load(afterRename)), "and it is still byte-equal on a round trip")
 
         // the re-stamp is exact: the only characters that changed are the name's own
@@ -298,7 +303,7 @@ class SweepLawToolTest {
         assertManifold(mesh, "the tube whose law shadows a drawing scalar")
         assertClose(ringRadius(mesh, 0.0), 5.0, 1e-12, "the start of the run is t = 0, not the drawing's 50 mm")
         assertClose(ringRadius(mesh, 100.0), 2.5, 1e-12, "and its end is t = 1")
-        assertTrue(DocumentFormat.save(ed.doc).lines().none { it.startsWith("tool tube") && it.contains("scalar=\"t\"") }, "the law took no scalar input for t")
+        assertTrue(saved(ed.doc).tools("tube").none { it.ids("params").contains(saved(ed.doc).param("t")?.str("id")) }, "the law took no scalar input for t")
     }
 
     /**
@@ -421,7 +426,7 @@ class SweepLawToolTest {
         val plain = assertNotNull(ed.doc.elements.firstOrNull { ed.doc.nameOf(it) == name })
         assertNull(ed.doc.sweepLawOf(plain), "the law is gone")
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("law="), "and so is the argument: $text")
+        assertFalse(saved(text).features.any { it.containsKey("law") }, "and so is the argument: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "which is byte-equal again")
         assertClose(ringRadius(meshOf(plain), 100.0), 5.0, 1e-12, "and the body is the constant tube")
     }
@@ -521,10 +526,7 @@ class SweepLawToolTest {
         ed.type("40")
         ed.click(Vec2(60.0, -30.0))
         val text = DocumentFormat.save(ed.doc)
-        val tampered =
-            text.lines().joinToString("\n") { line ->
-                if (line.startsWith("tool extrude")) line.replace(" -> ", " law=\"1 - t/2\" -> ") else line
-            }
+        val tampered = mapFeatures(text) { if (it.str("tool") == "extrude") it.with("law", "\"1 - t/2\"") else it }
         val err =
             try {
                 DocumentFormat.load(tampered)
@@ -576,7 +578,7 @@ class SweepLawToolTest {
         val tube = tubeAlong(ed, "5", Vec2(50.0, 0.0))
         assertClose(ringRadius(meshOf(tube), 0.0), 10.0, 1e-12, "the law reads the point's own x")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("law=\"P.x * (1 - t/2)\""), "stored under the point's current name: $text")
+        assertTrue(saved(text).features.any { it.str("law") == "P.x * (1 - t/2)" }, "stored under the point's current name: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and it round-trips")
 
         ed.setTool(Tools.SELECT)
@@ -585,7 +587,7 @@ class SweepLawToolTest {
         assertTrue(ed.deleteSelection(), "and deleted: ${ed.statusHint}")
         assertEquals(0, ed.solids().size, "the body went with the coordinate its law read: ${ed.statusHint}")
         val after = DocumentFormat.save(ed.doc)
-        assertFalse(after.contains("law="), "and the file has no dangling reference: $after")
+        assertFalse(saved(after).features.any { it.containsKey("law") }, "and the file has no dangling reference: $after")
         assertEquals(after, DocumentFormat.save(DocumentFormat.load(after)), "so it still loads")
     }
 

@@ -641,8 +641,9 @@ class PlacedPathTest {
     fun aPlacedPathSurvivesSaveLoadSaveByteIdentically() {
         val (ed, g) = placedL()
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("place \"flat\" at=50,30 angle=0deg"), "got:\n$once")
-        assertTrue(once.contains("orthostart 0,0"), "an unturned placed path restates its world positions: got\n$once")
+        val place = assertNotNull(saved(once).placeOf("flat"), "got:\n$once")
+        assertTrue(place.pos("at") == (50.0 to 30.0) && place["angle"].toString() == """{"deg":0}""", "got:\n$once")
+        assertEquals(0.0 to 0.0, saved(once).kind("path").single().pos("at"), "an unturned placed path restates its world positions: got\n$once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         assertEquals(geometry(ed), geometry(Editor(reloaded)), "and the reloaded drawing is the same drawing")
@@ -658,7 +659,7 @@ class PlacedPathTest {
         ed.click(Vec2(50.0, 0.0))
         ed.drag(Vec2(50.0, 0.0), Vec2(75.0, 20.0)) // the frame
         val afterFrame = DocumentFormat.save(ed.doc)
-        assertTrue(afterFrame.contains("at=75,50"), "the frame's origin is restated: got\n$afterFrame")
+        assertEquals(75.0 to 50.0, saved(afterFrame).placeOf("flat")?.pos("at"), "the frame's origin is restated: got\n$afterFrame")
         assertEquals(afterFrame, DocumentFormat.save(DocumentFormat.load(afterFrame)))
 
         val corner = vertex(ed, 2)
@@ -676,9 +677,9 @@ class PlacedPathTest {
         ed.click(vertex(ed, 0))
         assertTrue(ed.writeSelectionField(2, 30.0), "got: ${ed.statusHint}")
         val turned = DocumentFormat.save(ed.doc)
-        assertTrue(Regex("angle=(30|29\\.9+\\d*)deg").containsMatchIn(turned), "got:\n$turned")
+        assertTrue(Regex("""\{"deg":(30|29\.9+\d*)}""").matches(saved(turned).placeOf("flat")!!["angle"].toString()), "got:\n$turned")
         assertTrue(
-            turned.contains("orthostart 25,20"),
+            saved(turned).kind("path").single().pos("at") == (25.0 to 20.0),
             "a turned placed path restates the shape the frame then turns — its local coordinates plus the origin: got\n$turned",
         )
         assertEquals(turned, DocumentFormat.save(DocumentFormat.load(turned)), "a turned placed path round-trips too")
@@ -719,7 +720,7 @@ class PlacedPathTest {
         assertClose(vertex(ed, 0).y, 0.0)
         assertClose(leg(ed, 0).a.y, leg(ed, 0).b.y, msg = "and axis-aligned in the world again")
         val text = DocumentFormat.save(ed.doc)
-        assertFalse(text.contains("place"), "got:\n$text")
+        assertFalse(saved(text).anyPlaced(), "got:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
     }
 
@@ -762,7 +763,7 @@ class PlacedPathTest {
         assertClose(vertex(ed, 0).x, 0.0, msg = "and it did not move")
         assertClose(vertex(ed, 0).y, 0.0)
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("place \"flat\" at=50,30"), "got:\n$text")
+        assertEquals(50.0 to 30.0, saved(text).placeOf("flat")?.pos("at"), "got:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "the pruned script replays as it stands")
     }
 

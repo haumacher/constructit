@@ -191,7 +191,7 @@ class BooleanProvenanceScriptTest {
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save → load → save is a fixed point")
         val filleted = DocumentFormat.save(DocumentFormat.load(withFillet(EDGE)))
         assertEquals(filleted, DocumentFormat.save(DocumentFormat.load(filleted)), "…with the rounding on it too")
-        assertTrue(filleted.contains("tool filletedge els=e76"), "and the rounding is a step of the file: $filleted")
+        assertEquals(listOf("e76"), saved(filleted).tools("filletedge").single().ids("els"), "and the rounding is a step of the file: $filleted")
     }
 
     /**

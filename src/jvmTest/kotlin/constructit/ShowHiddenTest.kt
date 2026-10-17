@@ -293,8 +293,7 @@ class ShowHiddenTest {
         assertTrue(ed.doc.elements.all { it.visible })
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("hide ") }, "one hide: $text")
-        assertEquals(1, text.lines().count { it.startsWith("show ") }, "and exactly one show: $text")
+        assertTrue(saved(text).hidden.isEmpty(), "hidden and shown again is nothing hidden — no trace of the toggle: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
 
         ed.showHidden = false
@@ -313,8 +312,8 @@ class ShowHiddenTest {
         // as it came, but for the freedom its `attachortho` step now restates — see
         // [LiftedRunTest.theUsersFileLoadsCleanAndRoundTripsByteEqual], which owns that story
         assertEquals(
-            atThisVersion(LiftedRunTest.ROUND_PILLAR_CIT),
-            withoutRestatedAttach(DocumentFormat.save(ed.doc)),
+            imported(atThisVersion(LiftedRunTest.ROUND_PILLAR_CIT)),
+            DocumentFormat.save(ed.doc),
             "the fixture round trips as it came",
         )
 
@@ -336,7 +335,8 @@ class ShowHiddenTest {
         assertEquals(1, ed.setSelectionVisible(true))
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { it.startsWith("show ") }, "one show step: $text")
+        assertTrue(ed.doc.nameOf(circle) !in saved(text).hidden, "the shown circle is no longer stated hidden: $text")
+        assertEquals(ed.doc.elements.count { !it.visible && !ed.doc.hiddenByConstruction(it) }, saved(text).hidden.size, "and every other hidden one still is")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and the file still replays byte for byte")
     }
 

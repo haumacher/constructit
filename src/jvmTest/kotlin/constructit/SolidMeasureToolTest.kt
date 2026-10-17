@@ -218,8 +218,8 @@ class SolidMeasureToolTest {
         ed.click(Vec2(0.0, 0.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool mvolume"), "a measurement rides the generic tool step (OP-18):\n$text")
-        assertTrue(text.contains("tool mextentz"), text)
+        assertTrue(saved(text).hasTool("mvolume"), "a measurement rides the generic tool step (OP-18):\n$text")
+        assertTrue(saved(text).hasTool("mextentz"), text)
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
 

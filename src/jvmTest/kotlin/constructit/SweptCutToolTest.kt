@@ -181,8 +181,8 @@ class SweptCutToolTest {
             val v = ed.volumeOf(cut)
 
             val text = DocumentFormat.save(ed.doc)
-            assertTrue(text.contains("tool $tool"), "the mode is the tool id the file records (OP-18):\n$text")
-            assertTrue(Regex("tool $tool[^\n]*signs=-1").containsMatchIn(text), "…and the kept side still rides signs= beside it:\n$text")
+            assertTrue(saved(text).hasTool(tool), "the mode is the tool id the file records (OP-18):\n$text")
+            assertTrue(saved(text).tools(tool).any { it.ints("signs").contains(-1) }, "…and the kept side still rides signs= beside it:\n$text")
             val reloaded = DocumentFormat.load(text)
             assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
 

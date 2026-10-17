@@ -108,7 +108,7 @@ class NumbersInLanguageProbeTest {
         val solid = ed.doc.elements.last { it.kind == ElementKind.SOLID }
         val mesh = Evaluator().solid(solid.ref as constructit.dsl.SolidRef).mesh
         assertEquals(7.5, mesh.vertices.maxOf { it.z }, 1e-9, "the typed comma became 7.5 mm of depth")
-        assertTrue("7.5mm" in DocumentFormat.save(ed.doc), "and the file says 7.5mm")
+        assertTrue(saved(ed.doc).parameters.any { it.str("value") == "7.5 mm" }, "and the file says 7.5 mm")
         assertTrue("7,5" in Format.display(7.5, "de"), "while the panel shows 7,5")
     }
 }

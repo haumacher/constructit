@@ -298,8 +298,8 @@ class JtWireframeTest {
 
         // ...save → load → save byte-equal, with the points bit-identical
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("importcurve ") }, "the run is one `importcurve` step")
-        assertTrue(text.contains("path="), "which carries the points themselves, never the file's bytes")
+        assertEquals(1, saved(text).kind("importcurve").size, "the run is one `importcurve` feature")
+        assertTrue(saved(text).kind("importcurve").single().containsKey("path"), "which carries the points themselves, never the file's bytes")
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save → load → save is byte-equal")
         val back = reloaded.elements.filter { it.kind == ElementKind.SPACE_CURVE && it.visible }.single()
@@ -326,7 +326,7 @@ class JtWireframeTest {
         assertEquals(2, runsOf(ed).size, "the literal and the placement riding it")
         assertEquals(1, shownRuns(ed).size, "and only the placement is drawn")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("hide ") }, "the hide is a recorded decision, not runtime state")
+        assertTrue(saved(text).hidden.isNotEmpty(), "the hide is a recorded decision, not runtime state")
         val reloaded = DocumentFormat.load(text)
         assertEquals(1, reloaded.elements.count { it.kind == ElementKind.SPACE_CURVE && it.visible }, "and it survives a reload")
     }
@@ -437,8 +437,8 @@ class JtWireframeTest {
         assertClose(segs.sumOf { lengthOf(it) }, 60.0 + 40.0 + 60.0 + 40.0, 1e-9, "the traced segments measure the file's own chords")
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.lines().any { it.startsWith("wiresketch ") }, "the tracing is one recorded step")
-        assertTrue(text.lines().any { it.startsWith("sketchspace ") && it.contains("wire=") }, "and the plane is another")
+        assertEquals(1, saved(text).kind("wiresketch").size, "the tracing is one recorded feature")
+        assertTrue(saved(text).kind("sketchspace").any { it.containsKey("wire") }, "and the plane is another")
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save → load → save is byte-equal")
         assertEquals(4, reloaded.elements.count { it.kind == ElementKind.SEGMENT }, "and the sketch replays")

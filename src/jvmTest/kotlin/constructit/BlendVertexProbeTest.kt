@@ -153,7 +153,7 @@ class BlendVertexProbeTest {
         val ed = fullyRounded()
         val v = Geom3.volume(ed.meshOf(ed.solids().last()))
         val saved = DocumentFormat.save(ed.doc)
-        assertEquals(4, saved.lines().count { it.trim().startsWith("tool filletfaceedges") }, "four recorded gestures:\n$saved")
+        assertEquals(4, saved(saved).tools("filletfaceedges").size, "four recorded gestures:\n$saved")
         val again = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(again), "byte-equal round trip")
         val back = again.elements.last { it.kind == ElementKind.SOLID }

@@ -10,6 +10,7 @@ import constructit.editor.Tools
 import constructit.geom.Vec2
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -64,7 +65,7 @@ class GroupRenameTest {
         val g = ed.doc.groups.first()
         assertEquals("larder", ed.renameGroup(g, "larder"))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("group \"larder\""), "the declaring step writes the name it has now; got:\n$text")
+        assertNotNull(saved(text).group("larder"), "the declaring step writes the name it has now; got:\n$text")
         assertTrue(!text.contains("kitchen"), "…and only that one")
         val back = DocumentFormat.load(text)
         assertEquals("larder", back.groups.first().name, "a reload brings the new name back")
@@ -80,8 +81,8 @@ class GroupRenameTest {
         assertEquals("larder", ed.renameGroup(g, "larder"))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("group \"larder\""), "the group step follows the rename; got:\n$text")
-        assertTrue(text.contains("place \"larder\""), "and so does the placement, which names it too")
+        assertNotNull(saved(text).group("larder"), "the group follows the rename; got:\n$text")
+        assertTrue(saved(text).group("larder")!!.containsKey("place"), "and the placement is part of it")
 
         val back = DocumentFormat.load(text)
         val placed = back.groups.first()
@@ -130,8 +131,8 @@ class GroupRenameTest {
 
         assertEquals("hub", ed.renameGroup(g, "hub"))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("pattern \"P1\""), "a pattern is named in its own namespace; got:\n$text")
-        assertTrue(text.contains("group \"hub\""), "and the group's rename reaches only the group's steps")
+        assertTrue(saved(text).kind("pattern").any { it.str("name") == "P1" }, "a pattern is named in its own namespace; got:\n$text")
+        assertNotNull(saved(text).group("hub"), "and the group's rename reaches only the group")
         DocumentFormat.load(text) // both still resolve
     }
 }

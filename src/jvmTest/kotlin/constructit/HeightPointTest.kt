@@ -432,8 +432,8 @@ class HeightPointTest {
         // the height is **state**, so the `param` step the tool introduced re-reads it at save (OP-18) —
         // exactly as a 2D drag's coordinates are re-read, and with no new file machinery for the drag
         val once = DocumentFormat.save(ed.doc)
-        val restated = assertNotNull(Regex("""param "height" = ([-0-9.eE]+)mm""").find(once), "the file states the height:\n$once")
-        assertClose(restated.groupValues[1].toDouble(), 75.0, tol = 1e-6, msg = "restated as the value it now is, not the one typed:\n$once")
+        val restated = assertNotNull(saved(once).valueOf("height"), "the file states the height:\n$once")
+        assertClose(restated.removeSuffix(" mm").toDouble(), 75.0, tol = 1e-6, msg = "restated as the value it now is, not the one typed:\n$once")
         val back = DocumentFormat.load(once)
         val reloaded = back.elements.single { it.kind == ElementKind.HEIGHT_POINT }
         val p = assertNotNull(Evaluator().valueOf(reloaded.ref) as? Point3Value).p

@@ -301,8 +301,8 @@ class GroupCreationWordsTest {
         assertTrue(d.includeClosure())
         assertTrue(ed.confirmCreate())
         val after = DocumentFormat.save(ed.doc)
-        assertTrue(after.lines().any { it.startsWith("group \"base\"") })
-        assertTrue(after.lines().any { it.startsWith("place \"base\"") })
+        assertNotNull(saved(after).group("base"))
+        assertTrue(saved(after).group("base")!!.containsKey("place"))
 
         assertTrue(ed.undo())
         assertEquals(before, DocumentFormat.save(ed.doc), "one undo removes the group *and* its frame")

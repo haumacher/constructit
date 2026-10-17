@@ -119,11 +119,11 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
 
         val once = DocumentFormat.save(DocumentFormat.load(reported))
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save → load → save is a fixed point")
-        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}"), "…at the new version: ${once.lines().first()}")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "…at the new version: ${once.lines().first()}")
         // the first rounding declares the body *and* its own entry; every later one names the body
-        assertEquals(1, once.lines().count { it.contains("tool filletedge els=e13") }, "one rounding on the base:\n$once")
-        assertEquals(6, once.lines().count { it.contains("tool filletedge els=e14") }, "six more on the body:\n$once")
-        assertTrue(once.lines().any { it.endsWith("-> e14,e15") }, "the body and its first rounding:\n$once")
+        assertEquals(1, saved(once).tools("filletedge").count { it.ids("els") == listOf("e13") }, "one rounding on the base:\n$once")
+        assertEquals(6, saved(once).tools("filletedge").count { it.ids("els") == listOf("e14") }, "six more on the body:\n$once")
+        assertTrue(saved(once).features.any { it.ids("creates") == listOf("e14", "e15") }, "the body and its first rounding:\n$once")
         assertTrue(DocumentFormat.load(once).loadNotes.isEmpty(), "and the migrated file needs no note of its own")
     }
 
@@ -164,7 +164,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertTrue(doc.loadNotes.none { "chain of solids" in it }, "no chain was migrated, so nothing is said of one: ${doc.loadNotes}")
         // every level's step declares its own body **and** that body's one rounding
         val once = DocumentFormat.save(doc)
-        assertEquals(7, once.lines().count { it.startsWith("tool filletedge") && Regex("-> e\\d+,e\\d+$").containsMatchIn(it) }, "seven chain steps:\n$once")
+        assertEquals(7, saved(once).tools("filletedge").count { it.ids("creates").size == 2 }, "seven chain steps:\n$once")
     }
 
     @Test
@@ -177,10 +177,10 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertEquals(1, doc.loadNotes.count { "chain of solids" in it }, "…and the load says the prefix was re-stated once: ${doc.loadNotes}")
         // the boundary is where the read intermediate is, and it is the declaration count that states it
         val once = DocumentFormat.save(doc)
-        val steps = once.lines().filter { it.startsWith("tool filletedge") }
+        val steps = saved(once).tools("filletedge")
         assertEquals(7, steps.size, "all seven steps are still there:\n$once")
-        assertEquals(2, steps.count { Regex("-> e\\d+,e\\d+$").containsMatchIn(it) }, "two of them make a body:\n$once")
-        assertEquals(5, steps.count { Regex("-> e\\d+$").containsMatchIn(it) }, "…and five join one:\n$once")
+        assertEquals(2, steps.count { it.ids("creates").size == 2 }, "two of them make a body:\n$once")
+        assertEquals(5, steps.count { it.ids("creates").size == 1 }, "…and five join one:\n$once")
     }
 
     @Test
@@ -344,9 +344,9 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val text = DocumentFormat.save(ed.doc)
         // …and its **step stays** as a tombstone (OP-30's next step): the row keeps its place, declares the
         // body and no rounding, and says how many band slots it holds, so nothing after it renumbers
-        assertEquals(3, text.lines().count { it.startsWith("tool filletedge") }, "three steps, one of them a tombstone:\n$text")
-        assertEquals(1, text.lines().count { "removed=" in it }, "…and it says so: \n$text")
-        assertTrue(text.lines().any { it.startsWith("tool filletedge") && "removed=1" in it && it.endsWith("-> e10") }, "the tombstone still declares the body it made:\n$text")
+        assertEquals(3, saved(text).tools("filletedge").size, "three steps, one of them a tombstone:\n$text")
+        assertEquals(1, saved(text).tombstones().size, "…and it says so: \n$text")
+        assertTrue(saved(text).tombstones().any { it.int("removed") == 1 && it.ids("creates") == listOf("e10") }, "the tombstone still declares the body it made:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and the file is a fixed point")
     }
 
@@ -378,9 +378,15 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
 
         // the pick, stated as the file states it: the address in `signs=`, the choices scored on the load
         val text =
-            DocumentFormat.save(ed.doc).trimEnd() + "\n" +
-                "param \"rr\" = 1mm\n" +
-                "tool chamferedge els=${ed.doc.nameOf(body)} clicks=0,0 scalar=\"rr\" signs=$rail -> eRail,eRailEntry\n"
+            withEntries(
+                DocumentFormat.save(ed.doc),
+                parameters = listOf("""{"id":"f900","name":"rr","value":"1 mm"}"""),
+                features =
+                    listOf(
+                        """{"id":"f901","kind":"tool","tool":"chamferedge","els":["${ed.doc.nameOf(body)}"],"clicks":[[0,0]],""" +
+                            """"params":["f900"],"signs":[$rail],"creates":["e900","e901"]}""",
+                    ),
+            )
         val doc = DocumentFormat.load(text)
         assertEquals(3, doc.elements.count { it.kind == ElementKind.SOLID }, "a dressing of its own, not an entry:\n$text")
         assertEquals(3, entriesOf(doc).size, "…with a rounding row of its own")
@@ -434,7 +440,7 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val back = DocumentFormat.load(text)
         assertEquals(1, entriesOf(back).size, "one rounding left: $text")
         assertEquals(2, back.elements.count { it.kind == ElementKind.SOLID }, "…on the one body it always was")
-        assertEquals(2, text.lines().count { "removed=" in it }, "…and two tombstones stated in the file:\n$text")
+        assertEquals(2, saved(text).tombstones().size, "…and two tombstones stated in the file:\n$text")
         assertEquals(text, DocumentFormat.save(back), "and the file is a fixed point")
     }
 
@@ -449,8 +455,8 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val after = volumeOf(bodyOf(ed.doc))
         assertTrue(after < before, "a bigger rounding takes more material: $after vs $before")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("param \"r1\" = 6mm"), "the file records the change:\n$text")
-        assertTrue(text.contains("param \"r0\" = 3mm") && text.contains("param \"r2\" = 5mm"), "…and the others are untouched:\n$text")
+        assertEquals("6 mm", saved(text).param("r1")?.str("value"), "the file records the change:\n$text")
+        assertTrue(saved(text).param("r0")?.str("value") == "3 mm" && saved(text).param("r2")?.str("value") == "5 mm", "…and the others are untouched:\n$text")
         assertClose(volumeOf(bodyOf(DocumentFormat.load(text))), after, abs(after) * 1e-9, "and it reloads the same body")
     }
 
@@ -529,6 +535,6 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertTrue("not a picture" in why && "Press Delete" in why, "and it says why and what to do: $why")
         // …and the gesture says it out loud rather than leaving "Nothing to hide" to read as a bug
         assertEquals(why.render(), ed.statusHint, "the status line carries the refusal: ${ed.statusHint}")
-        assertTrue(DocumentFormat.save(ed.doc).lines().none { it.startsWith("hide ") }, "and nothing was recorded")
+        assertTrue(saved(ed.doc).hidden.isEmpty(), "and nothing was recorded")
     }
 }

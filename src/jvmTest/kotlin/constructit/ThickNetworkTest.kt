@@ -498,8 +498,8 @@ class ThickNetworkTest {
         assertClose(areaOf(ed.doc, tn), 2000.0, tol = 1e-6)
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool thicken"), "got:\n$text")
-        assertTrue(text.contains("signs=1;2"), "the two sides ride the step's own signs=; got:\n$text")
+        assertTrue(saved(text).hasTool("thicken"), "got:\n$text")
+        assertEquals(listOf(1, 2), saved(text).tool("thicken").ints("signs"), "the two sides ride the step's own signs=; got:\n$text")
 
         val reloaded = DocumentFormat.load(text)
         val back = reloaded.thickNetworks.single()

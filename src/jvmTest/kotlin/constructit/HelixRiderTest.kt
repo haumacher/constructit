@@ -217,7 +217,7 @@ class HelixRiderTest {
         assertTrue(ed.doc.steplessElements().isEmpty(), "every one of them has a step (OP-27)")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool keypoints") }, "the gesture is in the script: $once")
+        assertTrue(saved(once).hasTool("keypoints"), "the gesture is in the script: $once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save → load → save is byte-equal")
         val back = DocumentFormat.load(once)
         assertEquals(3, back.elements.count { it.inSpace && it.kind == ElementKind.DERIVED_POINT }, "and they come back as points in space")
@@ -506,10 +506,10 @@ class HelixRiderTest {
         val here = assertNotNull(at(rider))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ptonhelix") }, "the rider is in the script: $once")
+        assertTrue(saved(once).hasTool("ptonhelix"), "the rider is in the script: $once")
         val dof =
             assertNotNull(
-                Regex("dofs=([0-9.]+)deg").find(once)?.groupValues?.get(1)?.toDouble(),
+                saved(once).tool("ptonhelix").nums("dofs").firstOrNull(),
                 "the rider's own angle is restated: $once",
             )
         assertClose(dof, 810.0, 1e-9, "windings and all — a normalization anywhere would write 90 here")

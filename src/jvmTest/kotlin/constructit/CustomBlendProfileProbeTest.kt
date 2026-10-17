@@ -111,7 +111,7 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(2, ed.solids().size, "back")
         assertClose(Geom3.volume(meshOf(ed.solids().last())), v, tol = 1e-9, msg = "the same body after redo")
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.lines().any { it.trim().startsWith("tool blendedge") }, "the step is recorded:\n$saved")
+        assertTrue(saved(saved).hasTool("blendedge"), "the step is recorded:\n$saved")
         val again = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(again), "byte-equal round trip")
         val back = again.elements.last { it.kind == ElementKind.SOLID }

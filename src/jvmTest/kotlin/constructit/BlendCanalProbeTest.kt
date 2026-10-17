@@ -334,7 +334,7 @@ class BlendCanalProbeTest {
         val cx = Construction()
         val box = prism(cx, listOf(Vec2(0.0, 0.0), Vec2(width, 0.0), Vec2(width, depth), Vec2(0.0, depth)), height)
         val tops = topsAtFarCorner(edgesOf(Evaluator().solid(box)))
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart 0.0,0.0 -> e1\n")
         sb.append("orthovertex $width,0.0 -> e2,e3\n")
         sb.append("orthovertex $width,$depth -> e4,e5\n")

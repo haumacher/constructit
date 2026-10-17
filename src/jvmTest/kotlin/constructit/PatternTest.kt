@@ -418,7 +418,7 @@ class PatternTest {
         assertClose(ed.volume(), plate(4), tol = plate(4) * 2e-3, msg = "four pockets in one body, not one")
         // the chained base is recorded as the *rule* that resolved it, since copy k's base is a different
         // body at every count — a baked chain of names could not survive a re-stamp
-        assertTrue(DocumentFormat.save(ed.doc).contains("orbit \"P1\" cut els=e15@0 part=tip"), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).orbits("P1", "cut").any { it.picks("els") == "e15@0" && it.str("part") == "tip" }, DocumentFormat.save(ed.doc))
         assertRoundTrips(ed, "a chained cut")
 
         // the whole chain is one gesture, hence one undo
@@ -483,9 +483,9 @@ class PatternTest {
         val p = patternOf(ed)
         assertEquals(6, p.ring.size, "and it is a live pattern, not a frozen shape")
         val script = DocumentFormat.save(assertRoundTrips(ed, "rounded polygon"))
-        assertTrue(script.contains("pattern \"P1\" circular"), script)
-        assertTrue(script.contains("orbit \"P1\" segment"), script)
-        assertTrue(script.contains("orbit \"P1\" fillet"), script)
+        assertTrue(saved(script).kind("pattern").any { it.str("name") == "P1" && it.str("shape") == "circular" }, script)
+        assertTrue(saved(script).orbits("P1", "segment").isNotEmpty(), script)
+        assertTrue(saved(script).orbits("P1", "fillet").isNotEmpty(), script)
 
         // one radius drives every corner, and the count re-stamps like any other pattern
         ed.doc.setParameter(ed.doc.scalars.single { it.name == "corner" }, 10.0.mm)
@@ -506,8 +506,8 @@ class PatternTest {
         assertEquals(0, arcs(ed.doc).size)
         assertNull(ed.doc.patterns.firstOrNull(), "no pattern: the plain polygon is the construction it was")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool polygon pts=e1,e2"), text)
-        assertFalse(text.contains("scalar="), "an unused defaulted slot costs the step nothing: $text")
+        assertEquals(listOf("e1", "e2"), saved(text).tool("polygon").ids("pts"), text)
+        assertFalse(saved(text).features.any { it.containsKey("params") }, "an unused defaulted slot costs the step nothing: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)))
     }
 

@@ -511,7 +511,10 @@ class DatumPlaneTest {
         ed.type("60")
         ed.click(Vec2(50.0, 30.0))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(Regex("sketchspace \"plane1\" line=e\\d+ angle=\"angle\" offset=\"offset\"").containsMatchIn(text), text)
+        val plane1 = saved(text).kind("sketchspace").single { it.str("name") == "plane1" }
+        assertTrue(plane1.str("line")!!.startsWith("e"), text)
+        assertEquals(saved(text).param("angle")?.str("id"), plane1.str("angle"), text)
+        assertEquals(saved(text).param("offset")?.str("id"), plane1.str("offset"), text)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save must be byte-equal")
 
         // the pre-offset form, as a permanent load test: same two steps, no `offset=`
@@ -542,8 +545,10 @@ class DatumPlaneTest {
         ed.click(Vec2(25.0, 8.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(Regex("sketchspace \"plane1\" line=e\\d+ angle=\"angle\" part=e\\d+").containsMatchIn(text), text)
-        assertTrue(text.contains("param \"angle\" = 45deg"), text)
+        val plane1 = saved(text).kind("sketchspace").single { it.str("name") == "plane1" }
+        assertTrue(plane1.str("line")!!.startsWith("e") && plane1.str("part")!!.startsWith("e"), text)
+        assertEquals(saved(text).param("angle")?.str("id"), plane1.str("angle"), text)
+        assertEquals("45 deg", saved(text).param("angle")?.str("value"), text)
         val again = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(again), "save -> load -> save must be byte-equal")
 
@@ -580,10 +585,11 @@ class DatumPlaneTest {
         ed.sketchPlaneOn(Vec2(25.0, 10.0), "90")
 
         val text = DocumentFormat.save(ed.doc)
-        val lines = text.lines()
-        val switch = lines.indexOfLast { it.startsWith("space \"$first\"") }
-        val second = lines.indexOfLast { it.startsWith("sketchspace \"plane2\"") }
-        assertTrue(switch in 0 until second, "the switch back must precede the datum built there:\n$text")
+        // the space a feature is built in is stated on it (OP-32): the second datum names the first as its base
+        val spaces = saved(text).kind("sketchspace")
+        val firstId = spaces.single { it.str("name") == first }.str("id")
+        val second = spaces.single { it.str("name") == "plane2" }
+        assertEquals(firstId, second.str("space"), "the datum built after switching back is built in the space it was switched to:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and it replays byte-equal")
     }
 

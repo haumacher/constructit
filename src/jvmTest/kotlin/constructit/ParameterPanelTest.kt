@@ -91,14 +91,17 @@ class ParameterPanelTest {
     fun aRenamedParameterKeepsWhatItDrivesAndTheFileRoundTripsByteIdentically() {
         val (ed, r) = circleOfR()
         val before = DocumentFormat.save(ed.doc)
-        assertTrue(before.contains("param \"r\" = 20mm"), "got:\n$before")
-        assertTrue(before.contains("scalar=\"r\""), "the tool step names the parameter: got\n$before")
+        assertEquals("20 mm", saved(before).valueOf("r"), "got:\n$before")
+        val rId = saved(before).param("r")!!.str("id")
+        assertTrue(saved(before).features.any { it.ids("params") == listOf(rId) }, "the tool step names the parameter: got\n$before")
 
         assertEquals("radius", ed.renameParameter(r, "radius"))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("param \"radius\" = 20mm"), "got:\n$once")
-        assertTrue(once.contains("scalar=\"radius\""), "and every reference is restated with it: got\n$once")
+        assertEquals("20 mm", saved(once).valueOf("radius"), "got:\n$once")
+        // a reference is the parameter's identity, never its name (OP-32): the rename touches one field
+        assertEquals(rId, saved(once).param("radius")!!.str("id"), "and every reference still names it: got\n$once")
+        assertTrue(saved(once).features.any { it.ids("params") == listOf(rId) }, "…unchanged: got\n$once")
         assertFalse(once.contains("\"r\""), "nothing is left under the old name: got\n$once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save -> load -> save must be identical")
 
@@ -188,7 +191,7 @@ class ParameterPanelTest {
         pos.name = "sill" // the worst case: the name of *another* key of the same step
         ed.doc.setParameter(pos, 120.0.mm)
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("pos=120mm"), "the position is restated by position, not by name: got\n$once")
+        assertEquals("""{"mm":120}""", saved(once).kind("opening").single()["pos"].toString(), "the position is restated by position, not by name: got\n$once")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)))
     }
 

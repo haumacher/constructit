@@ -104,10 +104,10 @@ param "h2" = 9mm
     private fun stepOf(
         ed: Editor,
         word: String,
-    ): String? = DocumentFormat.save(ed.doc).lines().map { it.trim() }.firstOrNull { it.startsWith("tool $word") }
+    ): kotlinx.serialization.json.JsonObject? = saved(ed.doc).tools(word).firstOrNull()
 
     /** The edge index a blend step recorded — the first of its `signs=`. */
-    private fun addressOf(step: String): Int = step.substringAfter("signs=").substringBefore(";").toInt()
+    private fun addressOf(step: kotlinx.serialization.json.JsonObject): Int = step.ints("signs").first()
 
     /** Where the edge that step named actually runs, so a test can say *which* edge in the drawing's terms. */
     @Suppress("UNCHECKED_CAST")
@@ -184,9 +184,11 @@ param "h2" = 9mm
             .clickWorld(rimOverE12)
         val step = assertNotNull(stepOf(ed, "filletedge"), "the fillet was made: ${ed.statusHint}")
         assertTrue(
-            step.startsWith("tool filletedge els=e13 clicks=") &&
+            step.ids("els") == listOf("e13") && step.containsKey("clicks") &&
+                step.ids("params") == listOf(ed.doc.scalars.first { it.name == "h2" }.serial.let { "f$it" }) &&
+                step.ints("signs") == listOf(12, -1, 1, 0, 1) &&
                 // …and it declares two names: the dressed body, and the rounding that is its first entry (OP-30)
-                step.endsWith("scalar=\"h2\" signs=12;-1;1;0;1 -> e14,e15"),
+                step.ids("creates") == listOf("e14", "e15"),
             "the reporter's own expected step: $step",
         )
         assertTrue("picked in the 3D view" in ed.statusHint, "and it says which picture answered: ${ed.statusHint}")

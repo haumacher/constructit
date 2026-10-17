@@ -385,7 +385,7 @@ class BlendCurvedCreaseTest {
         val edges = edgesOf(Evaluator().solid(on))
         val rim = edges.indices.first { edges[it].name is EdgeName.BlendRail }.let { (edges[it].name as EdgeName.BlendRail).edge }
         val notch = edges.indices.first { edges[it].name is EdgeName.BlendNotch }
-        val sb = StringBuilder("constructit ${DocumentFormat.VERSION}\n")
+        val sb = StringBuilder("constructit ${DocumentFormat.JOURNAL_VERSION}\n")
         sb.append("orthostart ${plate[0].x},${plate[0].y} -> e1\n")
         var n = 2
         for (i in 1 until plate.size) {

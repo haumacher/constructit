@@ -62,8 +62,8 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
         assertTrue(ed.doc.loadNotes.isNotEmpty(), "a version-7 file is told once what moved")
         val before = volumeOf(ed, "e18")
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.startsWith("constructit ${DocumentFormat.VERSION}\n"), "written at the current version")
-        assertTrue(saved.contains("slots="), "the dressing's body records its corner slots: $saved")
+        assertEquals(DocumentFormat.VERSION, saved(saved).version, "written at the current version")
+        assertTrue(saved(saved).features.any { it.containsKey("slots") }, "the dressing's body records its corner slots: $saved")
         val again = load(saved)
         assertTrue(again.doc.loadNotes.isEmpty(), "and nothing is said twice: ${again.doc.loadNotes}")
         assertEquals(saved, DocumentFormat.save(again.doc), "fixed point")
@@ -71,10 +71,16 @@ tool filletedge els=e14 clicks=-33.91557367038956,-1.7134784580017737 scalar="r2
         // a fourth rounding on the dressing, far from every other: edge 16 (the top edge along y = 15.375, 88.75 mm,
         // touching no rounded edge), a 4 mm bevel — a plain triangular prism ending free in two square end faces,
         // so its figure is exact, and the rail step at the far corner must be untouched to float noise
-        val lines = saved.lines().toMutableList()
-        val body = lines.indexOfFirst { it.startsWith("tool chamferedge els=e14") && it.contains("signs=14;") }
-        lines.add(body + 1, "tool chamferedge els=e14 clicks=17.5,15.4 scalar=\"r\" signs=16;-1;1;0;1 -> e20")
-        val grown = load(lines.joinToString("\n"))
+        // added to the file as the newest feature (OP-32): a rounding made now joins the dressing after every
+        // other one, which is the order a gesture gives it
+        val r = saved(saved).paramIds("r").single()
+        val grown =
+            load(
+                withEntries(
+                    saved,
+                    features = listOf("""{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[17.5,15.4]],"params":["$r"],"signs":[16,-1,1,0,1],"creates":["e20"]}"""),
+                ),
+            )
         val after = volumeOf(grown, "e18")
         val bevel = 16.0 / 2.0 * (61.875 + 26.875)
         assertClose(bevel, before - after, 1e-6 * before, "the fourth bevel takes exactly its own wedge and nothing else moves")

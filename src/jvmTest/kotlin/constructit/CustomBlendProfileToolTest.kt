@@ -127,12 +127,12 @@ class CustomBlendProfileToolTest {
         assertEquals(2, ed.solids().size, "the shaped body: ${ed.statusHint}")
 
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool ${Tools.PROFILE_FACE}") }
-        val els = step.substringAfter("els=").substringBefore(" ").trim().split(",")
+        val step = saved(text).tool(Tools.PROFILE_FACE)
+        val els = step.ids("els")
         assertEquals(2, els.size, "the step names the body and the profile: $step")
-        val chainStep = text.lines().single { it.startsWith("tool ${Tools.CHAIN}") }
-        assertEquals(chainStep.substringAfter("-> ").trim(), els[1], "…the profile second, in slot order: $step")
-        val signs = step.substringAfter("signs=").substringBefore(" ").trim().split(";")
+        val chainStep = saved(text).tool(Tools.CHAIN)
+        assertEquals(chainStep.ids("creates").single(), els[1], "…the profile second, in slot order: $step")
+        val signs = step.ints("signs")
         assertEquals(1 + 5 * 4, signs.size, "one address and **five** choices per edge: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
 
@@ -155,7 +155,7 @@ class CustomBlendProfileToolTest {
         ed.click(Vec2(40.0, 20.0))
         ed.click(Vec2(1.5, 3.0))
         val text = DocumentFormat.save(ed.doc)
-        assertEquals("constructit ${DocumentFormat.VERSION}", text.lines().first(), "the header is unchanged")
+        assertEquals(DocumentFormat.VERSION, saved(text).version, "the header is unchanged")
     }
 
     // ---- the profile is an ordinary drawing ----

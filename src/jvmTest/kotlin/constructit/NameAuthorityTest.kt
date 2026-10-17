@@ -33,11 +33,8 @@ class NameAuthorityTest {
         pointerUp(s)
     }
 
-    /** The names a saved script declares, in order: everything after each step's `->`. */
-    private fun declaredNames(text: String): List<String> =
-        text.lines().mapNotNull { line ->
-            line.substringAfter("->", "").trim().takeIf { it.isNotEmpty() }
-        }.flatMap { it.split(",").map { n -> n.trim() } }
+    /** The names a saved file declares, in order: every identity a feature creates (OP-32). */
+    private fun declaredNames(text: String): List<String> = saved(text).declared()
 
     /** Every element's name as the *document* gives it — what the panel row, the labels and the notes show. */
     private fun shownNames(doc: Document): List<String> = doc.elements.map { doc.nameOf(it) }
@@ -133,7 +130,7 @@ class NameAuthorityTest {
         ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
         ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
         assertEquals(1, ed.doc.orthoPaths.single().legCount, "the jog is gone: ${ed.statusHint}")
-        assertTrue(DocumentFormat.save(ed.doc).contains("orthojoin"), "and the join is a step")
+        assertEquals(1, saved(ed.doc).kind("orthojoin").size, "and the join is a feature")
 
         val text = DocumentFormat.save(ed.doc)
         val declared = declaredNames(text)

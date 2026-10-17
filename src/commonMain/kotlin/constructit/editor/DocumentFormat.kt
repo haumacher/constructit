@@ -76,6 +76,30 @@ sealed interface Arg {
 class Step(val kind: String, val args: List<Arg>) {
     val creates = ArrayList<Element>()
 
+    /**
+     * This step's **feature identity** in the file (OP-32) — the `12` of `f12`, given once when the step was
+     * recorded and kept through every save, load and undo. It is what a file's features are told apart by, what
+     * a load replays in where no reference decides, and what names a feature in a load error. 0 for a step the
+     * file folds into something else ([DocumentFormat.UNNUMBERED]).
+     */
+    var fid: Int = 0
+
+    /**
+     * The ortho path this step belongs to, **stated** (OP-32) — set for every step that draws, closes, resumes,
+     * breaks or joins a path, and for the wall built over one. The journal left it to "the current path"; the
+     * file says which path, so a feature can be read without the ones before it.
+     */
+    var path: OrthoPath? = null
+
+    /**
+     * The decisions this step's build took from **what the user sees** (OP-32): the tip of a chain it worked on,
+     * one per decision in the order taken, null where it was the picked body itself ([Document.decideTip]); and
+     * the run an edge blend ran along, null where it was the picked edge alone ([Document.decideRun]). Taken once —
+     * by the gesture, or by the journal importer where the old replay took it — and only ever read back after.
+     */
+    var tips: List<Element?> = emptyList()
+    var runs: List<List<Int>?> = emptyList()
+
     /** Scalars this step introduced (a parameter, a measurement) — a dependency unit for delete too. */
     val createsScalars = ArrayList<ScalarEntry>()
 
@@ -101,20 +125,22 @@ class Step(val kind: String, val args: List<Arg>) {
 class StepDof(val name: String, val node: SourceNode, val dim: Dimension)
 
 /**
- * Reads and writes a document as a **construction script**: the drawing *is* a construction (OP-5),
- * so the file is the sequence of steps that built it, and loading replays them.
+ * Reads and writes a document — since OP-32 as a **graph of features** in JSON ([GraphFormat]), and every file
+ * an older build wrote as a **journal** (`constructit 1` … `constructit 10`, one step per line), which this
+ * object goes on reading for ever through the importer below.
  *
- * What is deliberately *not* in the file:
- * - **Nodes.** A step rebuilds its own sub-graph, so no op needs a name or a rebuild path.
+ * What is deliberately *not* in either (OP-18, and OP-32 keeps all of it):
+ * - **Nodes.** A feature rebuilds its own sub-graph by running the same [ToolDef.build] that made it, so no op
+ *   needs a name or a rebuild path.
  * - **Handles, styles, path and thick-path structure.** All synthetic: created by the same methods that
  *   create the geometry, hence recreated by replay.
- * - **A separate values section.** Instead, a step's positional literals are written as the *current*
- *   value of what that step introduced, so the script always describes the drawing as it is now. That
- *   keeps the file purely a construction, with no naming scheme for internal nodes leaking into it.
+ * - **A separate values section.** A feature's literals are written as the *current* value of what that
+ *   feature introduced, so the file always describes the drawing as it is now.
  *
- * Elements are referred to by script-local names (`e1`, `e2`, …) declared by the step that creates
- * them, so the format does not depend on runtime id generation. A count mismatch on load is an error
- * rather than a silently different drawing.
+ * What OP-32 changed is the shape around those literals: no line order, no "current path", no "current
+ * space", no positional names — every element and feature carries an identity of its own and every reference
+ * names one. The journal reader stays the replay engine both formats run through: the graph reader hands it
+ * one feature at a time, in the order the references decide.
  */
 object DocumentFormat {
     /**
@@ -122,7 +148,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 10
+    const val VERSION = 11
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -289,9 +315,28 @@ object DocumentFormat {
      */
     const val CAP_SLOT_VERSION = 10
 
-    const val HEADER = "constructit $VERSION"
+    /**
+     * The last version written as a **journal** — `constructit 10` and one step per line (OP-18). Every file up
+     * to it stays readable for ever, through the importer below; nothing writes one any more.
+     */
+    const val JOURNAL_VERSION = 10
 
-    private const val MAGIC = "constructit"
+    /**
+     * The first version that is a **graph of features** in JSON (OP-32): the drawing as what exists, every element
+     * and feature under an identity of its own, every reference stated, and an order the load derives from the
+     * references rather than from where a line stands. See [GraphFormat].
+     */
+    const val GRAPH_VERSION = 11
+
+    /**
+     * The step kinds the file **folds into something else** and therefore numbers nothing for (OP-32): a space
+     * switch is a feature's `space`, a resume is implied by the path a vertex is added to, a name or a material
+     * is an attribute of the element it is given to, and a hide or a show is the element's visibility — which
+     * the file states as what *is* (`view.hidden`), never as the gestures that made it so.
+     */
+    internal val UNNUMBERED = setOf("space", "orthoresume", "name", "material", "hide", "show")
+
+    internal const val MAGIC = "constructit"
 
     // ---- writing ----
 
@@ -331,25 +376,11 @@ object DocumentFormat {
         )
     }
 
-    fun save(doc: Document): String {
-        val ev = Evaluator()
-        val present = doc.elements.toHashSet()
-        val names = HashMap<String, String>() // element id -> script name
-        val out = StringBuilder(HEADER).append('\n')
-        for ((index, step) in doc.journal.withIndex()) {
-            val args = restate(doc, step, index, ev, present, names).joinToString(" ") { encode(it, names) }
-            // asked of the document, which derives it from this very journal ([Document.nameOf]) — so the name
-            // written here and the name the panel, the status line and every dialog show cannot drift apart.
-            // The local map is still what [encode] resolves *references* through, because a reference no
-            // earlier step declared has to stand out as one (`?e17`) rather than read as a name.
-            val created = step.creates.map { el -> doc.nameOf(el).also { names[el.id] = it } }
-            out.append(step.kind)
-            if (args.isNotEmpty()) out.append(' ').append(args)
-            if (created.isNotEmpty()) out.append(" -> ").append(created.joinToString(","))
-            out.append('\n')
-        }
-        return out.toString()
-    }
+    /**
+     * The document as a **graph of features**, in JSON (OP-32) — see [GraphFormat] for the layout and why. Also
+     * the undo substrate: a snapshot is exactly this text, so an undo is a load of it.
+     */
+    fun save(doc: Document): String = GraphFormat.write(doc)
 
     /**
      * A step's literals as they are *now*, not as they were typed.
@@ -359,13 +390,14 @@ object DocumentFormat {
      * literals that are state are replaced; a literal that encodes a *choice* — which side of a line,
      * which intersection branch — is kept verbatim, since replay must make the same choice.
      */
-    private fun restate(
+    internal fun restate(
         doc: Document,
         step: Step,
         stepIndex: Int,
         ev: Evaluator,
         present: Set<Element>,
-        names: Map<String, String>,
+        /** The runtime ids of every element some step of the journal declares — what a reference may name. */
+        declared: Set<String>,
     ): List<Arg> {
         // where this element is *as this step replays*: its world position, or — for a vertex of a path a
         // later `place` step captures — the position it has before that capture (OP-16, see
@@ -389,7 +421,7 @@ object DocumentFormat {
                 step.args.map { arg ->
                     val els = (arg as? Arg.Keyed)?.value as? Arg.Els
                     when {
-                        arg is Arg.Keyed && els != null -> Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names }))
+                        arg is Arg.Keyed && els != null -> Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in declared }))
                         // a group's name is state too (OP-7's rename pattern one level up): the step that
                         // *declares* it writes the name it has now, and load resolves the `place` step by it
                         arg is Arg.Label && step.kind == "group" -> doc.groupDeclaredBy(step)?.let { Arg.Label(it.name) } ?: arg
@@ -703,7 +735,7 @@ object DocumentFormat {
      * depending on (OP-18). Semicolon-separated, like `signs=`, and the edge slots and the face slots ride
      * one list because their letters already tell them apart.
      */
-    private fun encodeSlots(slots: CornerSlots): String {
+    internal fun encodeSlots(slots: CornerSlots): String {
         val out = ArrayList<String>()
         for ((k, block) in slots.edges.withIndex()) for (slot in block) out.add(encodeSlot(k, slot))
         for ((k, block) in slots.faces.withIndex()) for (slot in block) out.add(encodeSlot(k, slot))
@@ -724,7 +756,7 @@ object DocumentFormat {
     }
 
     /** The same record, read back — malformed is a load error, because a slot guessed at is an address moved. */
-    private fun parseSlots(v: String): CornerSlots {
+    internal fun parseSlots(v: String): CornerSlots {
         val edges = HashMap<Int, MutableList<CornerSlot>>()
         val faces = HashMap<Int, MutableList<CornerSlot>>()
         for (item in v.split(';').filter { it.isNotEmpty() }) {
@@ -794,40 +826,6 @@ object DocumentFormat {
         ev: Evaluator,
     ): List<Quantity> = doc.reparamDofs(step, ev)
 
-    private fun scalarValue(
-        node: SourceNode,
-        ev: Evaluator,
-    ): Quantity? = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q
-
-    private fun encode(
-        arg: Arg,
-        names: Map<String, String>,
-    ): String =
-        when (arg) {
-            is Arg.El -> names[arg.el.id] ?: "?${arg.el.id}"
-            is Arg.Els -> arg.els.joinToString(",") { names[it.id] ?: "?${it.id}" }
-            is Arg.Member -> (names[arg.el.id] ?: "?${arg.el.id}") + arg.offsets.joinToString("") { "@$it" }
-            is Arg.Refs -> arg.items.joinToString(",") { encode(it, names) }
-            is Arg.Sc -> quote(arg.entry.name)
-            is Arg.Scs -> arg.entries.joinToString(",") { quote(it.name) }
-            is Arg.Pos -> pos(arg.p)
-            is Arg.Positions -> arg.ps.joinToString(";") { pos(it) }
-            is Arg.Nums -> arg.qs.joinToString(";") { num(it) }
-            is Arg.Num -> num(arg.q)
-            is Arg.Text -> arg.s
-            is Arg.Label -> quote(arg.s)
-            is Arg.Keyed -> "${arg.key}=" + encode(arg.value, names)
-        }
-
-    private fun pos(p: Vec2) = "${trim(p.x)},${trim(p.y)}"
-
-    private fun num(q: Quantity): String =
-        when (q.dim) {
-            Dimension.LENGTH -> "${trim(q.mm)}mm"
-            Dimension.ANGLE -> "${trim(q.deg)}deg"
-            else -> trim(q.value)
-        }
-
     /**
      * **The one canonical number format of the file**: a plain decimal that reloads to the *same double*,
      * with no trailing noise and — the part that had to be added — **never in scientific notation**.
@@ -843,7 +841,7 @@ object DocumentFormat {
      * Deliberately not fixed-precision rounding, which would be stable but would quietly *move* the drawing on
      * every reload.
      */
-    private fun trim(v: Double): String {
+    internal fun trim(v: Double): String {
         val r = (if (v == 0.0) 0.0 else v).toString() // normalise -0.0, which reads as noise
         val plain = if (r.contains('E') || r.contains('e')) expand(r) else r
         return if (plain.endsWith(".0")) plain.dropLast(2) else plain
@@ -869,7 +867,7 @@ object DocumentFormat {
         return sign + out.trimEnd('.')
     }
 
-    private fun quote(s: String) = "\"" + s.replace("\"", "'") + "\""
+    internal fun quote(s: String) = "\"" + s.replace("\"", "'") + "\""
 
     // ---- reading ----
 
@@ -890,13 +888,13 @@ object DocumentFormat {
         val pattern: String,
         val count: Int,
         /**
-         * Which step's own `count=` is rewritten instead of the pattern step's — the journal index of an
-         * `orbit` step whose ride carries a count of its own (#18), or -1 for OP-23's pattern re-stamp.
+         * Which feature's own `count` is rewritten instead of the pattern's — the identity ([Step.fid]) of an
+         * `orbit` feature whose ride carries a count of its own (#18), or -1 for OP-23's pattern re-stamp.
          *
-         * A **positional** reference, of the same kind the ortho steps have always used for "the current
-         * path": the script prefix before it is the same on every replay, so the *n*-th step is the *n*-th
-         * step. The pattern is still named, because everything a nested count changes rides that pattern and
-         * so may legitimately come back a different size ([resized]).
+         * An identity, since OP-32: the journal named the step by its line index, which was only stable because
+         * the script prefix before it was; a feature's number is stable by itself. The pattern is still named,
+         * because everything a nested count changes rides that pattern and so may legitimately come back a
+         * different size ([resized]).
          */
         internal val step: Int = -1,
     ) {
@@ -919,77 +917,84 @@ object DocumentFormat {
         internal var alignFromEnd = false
     }
 
+    /**
+     * Read a drawing — a **graph** (OP-32) or a **journal** written by an older build, told apart by the first
+     * character that is not white space: a JSON document opens with `{`, and no journal ever did (its first
+     * line is `constructit <n>`). The journal is imported: it replays exactly as it always did, and the next
+     * save writes the graph.
+     */
     fun load(text: String): Document {
+        if (isGraph(text)) return GraphFormat.read(text, null).first
         val doc = Document()
         replay(doc, text)
+        importTap?.invoke(text, doc)
         return doc
     }
 
     /**
+     * How many construction steps [text] states — its parameters and features for a graph (OP-32), its lines but
+     * the header for a journal. What the shell's *Copied* note counts.
+     */
+    fun featureCount(text: String): Int = if (isGraph(text)) GraphFormat.count(text) else text.lines().count { it.isNotBlank() } - 1
+
+    /** Whether [text] is a graph file (OP-32) rather than a journal — its first non-blank character is `{`. */
+    fun isGraph(text: String): Boolean = text.firstOrNull { !it.isWhitespace() } == '{'
+
+    /**
+     * Seen by every **journal import** that succeeded, with the text and the document it made — a test seam
+     * and nothing else (OP-32): it is how the suite's corpus test reaches every old script any test loads.
+     */
+    internal var importTap: ((String, Document) -> Unit)? = null
+
+    /**
      * Replay [text] with pattern [pattern] **re-stamped** at [count] instances (OP-23).
      *
-     * A journal rewrite plus a replay — the delete machinery's move. The pattern step is replayed with the new
-     * count, and every `orbit` step re-runs its own rule at that count, which is what makes the whole
-     * downstream cone come out right without anything being copied. Names map positionally: a member the new
-     * count adds is simply unnamed (nothing referred to it), and a member it removes leaves the steps that
-     * named it to be dropped, each with a reason.
+     * A rewrite of one literal plus a replay — the delete machinery's move. The pattern feature is replayed with
+     * the new count, and every `orbit` feature re-runs its own rule at that count, which is what makes the whole
+     * downstream cone come out right without anything being copied. Identities map positionally: a member the
+     * new count adds takes a fresh one (nothing referred to it), and a member it removes leaves the features
+     * that named it to be dropped, each with a reason.
      */
     fun restamp(
         text: String,
         pattern: String,
         count: Int,
-    ): Pair<Document, List<String>> = restamped(text, Restamp(pattern, count))
+    ): Pair<Document, List<String>> = GraphFormat.read(asGraph(text), Restamp(pattern, count))
 
     /**
-     * Replay [text] with the **ride** recorded by step [step] re-stamped at [count] (#18).
+     * Replay [text] with the **ride** recorded by the `orbit` feature [feature] re-stamped at [count] (#18).
      *
-     * The identical journal rewrite, one literal further in: a gesture that carries a pattern of its own keeps
-     * that pattern's count in its `orbit` step, so re-running the script with that number changed re-stamps
-     * every copy of the ride at once. [pattern] is the ride's own pattern, named so its steps may come back a
-     * different size while every other step is held to the strict count check (OP-18).
+     * The identical rewrite, one literal further in: a gesture that carries a pattern of its own keeps that
+     * pattern's count in its `orbit` feature, so re-running the drawing with that number changed re-stamps every
+     * copy of the ride at once. [pattern] is the ride's own pattern, named so its features may come back a
+     * different size while every other one is held to the strict count check (OP-18). [feature] is the
+     * feature's identity ([Step.fid]).
      */
     fun restampRide(
         text: String,
-        step: Int,
+        feature: Int,
         pattern: String,
         count: Int,
-    ): Pair<Document, List<String>> = restamped(text, Restamp(pattern, count, step))
+    ): Pair<Document, List<String>> = GraphFormat.read(asGraph(text), Restamp(pattern, count, feature))
 
-    private fun restamped(
-        text: String,
-        ctx: Restamp,
-    ): Pair<Document, List<String>> {
-        val doc = Document()
-        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
-        doc.replayingVersion = versionOf(lines.firstOrNull() ?: throw LoadError("empty document"))
-        try {
-            replaySteps(doc, lines, ctx)
-        } finally {
-            doc.replayingVersion = null
-            doc.dressingJoins = true
-            doc.dressingDeclares = -1
-            doc.dressingRemoved = -1
-            doc.dressingSlots = CornerSlots.NONE
-        }
-        // **the record every loaded dressing needs** (OP-31, slice 5g) — a migration for a file older than
-        // it, taken from the body as that file draws it so that no address moves, and a no-op for a file at
-        // it, which already states its own
-        doc.recordSlotsOfEveryDressing(say = versionOf(lines.first()) < CORNER_SLOT_VERSION)
-        doc.publishLoadNotes()
-        return doc to ctx.notes
-    }
+    /** [text] as a graph: itself, or a journal imported and written as one. */
+    private fun asGraph(text: String): String = if (isGraph(text)) text else save(load(text))
 
     /**
-     * The format version [text] declares, checked against what this build can read (OP-18).
+     * The format version a **journal** [head] declares, checked against what the importer can read (OP-18).
      *
      * A number rather than a whole-line match, so a *newer* file says so — "written by a newer version of
-     * ConstructIt" is a fact the user can act on, where "unsupported format" is not.
+     * ConstructIt" is a fact the user can act on, where "unsupported format" is not. A journal header claiming
+     * a graph version is no file any build wrote, and says so.
      */
     private fun versionOf(head: String): Int {
         if (!head.startsWith("$MAGIC ")) throw LoadError("not a ConstructIt drawing: '$head'")
         val v = head.removePrefix("$MAGIC ").trim().toIntOrNull() ?: throw LoadError("unsupported format: '$head'")
         if (v > VERSION) {
             throw LoadError("this drawing is format $v; this build reads up to $VERSION — it was written by a newer version")
+        }
+        if (v > JOURNAL_VERSION) {
+            throw LoadError("format $v is a JSON document, and this text is a journal ('$head') — no build wrote such a file")
         }
         if (v < OLDEST_READABLE) throw LoadError("this drawing is format $v; this build reads $OLDEST_READABLE and newer")
         return v
@@ -1024,7 +1029,6 @@ object DocumentFormat {
     private fun replaySteps(
         doc: Document,
         lines: List<String>,
-        restamp: Restamp? = null,
     ) {
         val byName = HashMap<String, Element>()
         // **Which of an older file's chain steps may be re-stated as entries** (OP-30) — decided once, over
@@ -1034,63 +1038,83 @@ object DocumentFormat {
         val joins = if ((doc.replayingVersion ?: VERSION) < DRESSED_BODY_VERSION) dressingJoins(lines) else null
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
-            var words = splitWords(body)
-            // the one literal a re-stamp rewrites: the count of the pattern being re-stamped (OP-23) — or, one
-            // level in, the count of the ride whose own step this is (#18)
-            val target = restamp != null && (if (restamp.step >= 0) restamp.step == lineNo else words.firstOrNull() == "pattern" && words.getOrNull(1)?.let { unquote(it) } == restamp.pattern)
-            if (restamp != null && target) {
-                words = words.map { if (it.startsWith("count=")) "count=${restamp.count}" else it }
-            }
-            val before = doc.elements.toHashSet()
-            restamp?.resized = false
-            restamp?.alignFromEnd = false
+            val words = splitWords(body)
             doc.dressingJoins = joins == null || lineNo in joins
-            // …and, for a file at this version, the step's own declaration is the structure of the dressing:
-            // one name joins, two make a body (see [Document.dressingDeclares])
-            doc.dressingDeclares = declared.size
-            // …and the tombstone marker is this step's alone, read from its own `removed=` (OP-30)
-            doc.dressingRemoved = -1
-            // …and so is the shared-slot record, read from its own `slots=` (OP-31, slice 5g)
-            doc.dressingSlots = CornerSlots.NONE
-            // …and the migration's element-count allowance is this step's alone: a step that was dropped
-            // with a reason must not lend its allowance to the next one (OP-18)
-            doc.takeMigrationExtras()
-            try {
-                apply(doc, words, byName, restamp)
-            } catch (e: DropStep) {
-                restamp?.notes?.add("dropped ${describe(words)} — ${e.why}")
-                continue
-            } catch (e: LoadError) {
-                // in a re-stamp a reference to a member the new count does not have is a *loss*, not a
-                // malformed file: the step is dropped and named, and the rest of the drawing rebuilds
-                if (restamp != null && e.message?.startsWith("unknown element") == true) {
-                    restamp.notes.add("dropped ${describe(words)} — it named a member that ${restamp.count} instances do not have")
-                    continue
-                }
-                throw LoadError("line ${lineNo + 2}: ${e.message} in '$line'")
-            } catch (e: Exception) {
-                throw LoadError("line ${lineNo + 2}: ${e.message ?: e.toString()} in '$line'")
-            }
-            val created = doc.elements.filter { it !in before }
-            // only a step the re-stamp itself resized may create a different number of elements than the
-            // script declares; everywhere else that is still the load error it always was (OP-18)
-            val elastic = restamp?.resized == true
-            // …and the one **named** migration that legitimately creates more than the script declares: a
-            // rounding in a file older than [DRESSED_BODY_VERSION] now makes its body's first entry too
-            // (see [Document.migrationExtras]). The names still map from the start, so `-> e14` is the body.
-            val migrated = doc.takeMigrationExtras()
-            if (created.size != declared.size + migrated && !elastic) {
-                throw LoadError(
-                    "line ${lineNo + 2}: '${words.firstOrNull()}' created ${created.size} element(s) " +
-                        "but the script declares ${declared.size} (${declared.joinToString(",")}) — the file was " +
-                        "written by a different version",
-                )
-            }
-            // positional, so a name keeps meaning the same *copy*: what a bigger count adds is unnamed, and
-            // what a smaller one removes leaves its name unmapped for the drop rule above to catch
-            val shift = if (elastic && restamp?.alignFromEnd == true) created.size - declared.size else 0
-            declared.forEachIndexed { i, n -> created.getOrNull(i + shift)?.let { byName[n] = it } }
+            val created =
+                runRow(
+                    doc,
+                    words,
+                    declared.size,
+                    byName,
+                    null,
+                    where = { why -> "line ${lineNo + 2}: $why in '$line'" },
+                    countError = { n ->
+                        "line ${lineNo + 2}: '${words.firstOrNull()}' created $n element(s) " +
+                            "but the script declares ${declared.size} (${declared.joinToString(",")}) — the file was " +
+                            "written by a different version"
+                    },
+                ) ?: continue
+            declared.forEachIndexed { i, n -> created.getOrNull(i)?.let { byName[n] = it } }
         }
+    }
+
+    /**
+     * Run **one row** — a journal line, or one feature of a graph handed over in the order its references
+     * decide (OP-32) — and return the elements it created, or null when a re-stamp dropped it with a reason.
+     *
+     * The one replay engine both formats share: everything a row's words can say is read by [apply], and the
+     * per-row facts a dressing reads ([Document.dressingDeclares] and its siblings) are reset here, so a graph
+     * feature and a journal line that say the same thing build the same thing. A count mismatch is still the
+     * load error it always was (OP-18), except for a row the re-stamp itself resized.
+     */
+    internal fun runRow(
+        doc: Document,
+        words: List<String>,
+        declared: Int,
+        byName: Map<String, Element>,
+        restamp: Restamp?,
+        where: (String) -> String,
+        countError: (Int) -> String,
+    ): List<Element>? {
+        val before = doc.elements.toHashSet()
+        restamp?.resized = false
+        restamp?.alignFromEnd = false
+        // …and, for a file at a version that states it, the step's own declaration is the structure of the
+        // dressing: one name joins, two make a body (see [Document.dressingDeclares])
+        doc.dressingDeclares = declared
+        // …and the tombstone marker is this step's alone, read from its own `removed=` (OP-30)
+        doc.dressingRemoved = -1
+        // …and so is the shared-slot record, read from its own `slots=` (OP-31, slice 5g)
+        doc.dressingSlots = CornerSlots.NONE
+        // …and the migration's element-count allowance is this step's alone: a step that was dropped
+        // with a reason must not lend its allowance to the next one (OP-18)
+        doc.takeMigrationExtras()
+        try {
+            apply(doc, words, byName, restamp)
+        } catch (e: DropStep) {
+            restamp?.notes?.add("dropped ${describe(words)} — ${e.why}")
+            return null
+        } catch (e: LoadError) {
+            // in a re-stamp a reference to a member the new count does not have is a *loss*, not a
+            // malformed file: the step is dropped and named, and the rest of the drawing rebuilds
+            if (restamp != null && e.message?.startsWith("unknown element") == true) {
+                restamp.notes.add("dropped ${describe(words)} — it named a member that ${restamp.count} instances do not have")
+                return null
+            }
+            throw LoadError(where(e.message ?: ""))
+        } catch (e: Exception) {
+            throw LoadError(where(e.message ?: e.toString()))
+        }
+        val created = doc.elements.filter { it !in before }
+        // only a step the re-stamp itself resized may create a different number of elements than the
+        // file declares; everywhere else that is still the load error it always was (OP-18)
+        val elastic = restamp?.resized == true
+        // …and the one **named** migration that legitimately creates more than the script declares: a
+        // rounding in a file older than [DRESSED_BODY_VERSION] now makes its body's first entry too
+        // (see [Document.migrationExtras]). The names still map from the start, so `-> e14` is the body.
+        val migrated = doc.takeMigrationExtras()
+        if (created.size != declared + migrated && !elastic) throw LoadError(countError(created.size))
+        return created
     }
 
     /** The tool rows that make a rounding — the steps OP-30's dressing is built out of. */

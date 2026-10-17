@@ -226,9 +226,9 @@ class ShellToolTest {
         assertEquals(2, ed.solids().size)
 
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool ${Tools.SHELL}") }
-        assertTrue(step.contains("signs="), "the shell restates the face it opened: $step")
-        assertEquals(1, step.substringAfter("signs=").substringBefore(" ").trim().split(";").size, "one address and nothing else: $step")
+        val step = saved(text).tool(Tools.SHELL)
+        assertTrue(step.containsKey("signs"), "the shell restates the face it opened: $step")
+        assertEquals(1, step.ints("signs").size, "one address and nothing else: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
         val back = DocumentFormat.load(text)
         assertClose(
@@ -252,8 +252,8 @@ class ShellToolTest {
         ed.setTool(Tools.SHELL_CLOSED)
         ed.click(Vec2(20.0, 0.0))
         val text = DocumentFormat.save(ed.doc)
-        val step = text.lines().single { it.startsWith("tool ${Tools.SHELL_CLOSED}") }
-        assertTrue(!step.contains("signs="), "nothing was scored, so nothing is restated: $step")
+        val step = saved(text).tool(Tools.SHELL_CLOSED)
+        assertTrue(!step.containsKey("signs"), "nothing was scored, so nothing is restated: $step")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
     }
 
@@ -273,7 +273,7 @@ class ShellToolTest {
         val chosen = assertNotNull(ed.statusHint)
         assertTrue(chosen.contains("the top face left open"), "the click chose the cap: $chosen")
         val text = DocumentFormat.save(ed.doc)
-        val address = text.lines().single { it.startsWith("tool ${Tools.SHELL}") }.substringAfter("signs=").substringBefore(" ").trim()
+        val address = saved(text).tool(Tools.SHELL).ints("signs")
 
         // drag the rectangle's two right-hand corners left, until the clicked point is outside the footprint —
         // a fresh score there would land on no face at all. (The tool stays armed after a gesture, so it is
@@ -291,7 +291,7 @@ class ShellToolTest {
         val back = DocumentFormat.load(moved)
         assertEquals(moved, DocumentFormat.save(back), "save -> load -> save byte-equal after the drag")
         assertTrue(
-            DocumentFormat.save(back).lines().single { it.startsWith("tool ${Tools.SHELL}") }.contains("signs=$address"),
+            saved(back).tool(Tools.SHELL).ints("signs") == address,
             "the reload takes the recorded face verbatim rather than scoring the click again",
         )
         val body = back.elements.last { it.kind == ElementKind.SOLID }

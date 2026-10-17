@@ -236,8 +236,8 @@ class SolidToolTest {
         assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.SOLID })
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool extrude"), "the seam rides the generic tool step (OP-18):\n$text")
-        assertTrue(text.contains("tool revolve"), text)
+        assertTrue(saved(text).hasTool("extrude"), "the seam rides the generic tool step (OP-18):\n$text")
+        assertTrue(saved(text).hasTool("revolve"), text)
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
         assertEquals(ed.doc.elements.size, reloaded.elements.size)

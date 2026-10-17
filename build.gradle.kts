@@ -192,6 +192,9 @@ kotlin {
             dependencies {
                 // the JT writer/reader (sibling project, substituted by the composite build in settings)
                 implementation("de.haumacher.kotlinjt:kotlinJT:0.1.0-SNAPSHOT")
+                // the drawing file's container (OP-32): JSON, read and written by the reference implementation
+                // for Kotlin — its element API only (`JsonObject`, `parseToJsonElement`), so no compiler plugin
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
             }
             // the compiled ARB bundles (OP-29) — the English table and the typed accessors, which both
             // binaries carry. The other languages are wired into jvmMain and into jsMain's resources below.

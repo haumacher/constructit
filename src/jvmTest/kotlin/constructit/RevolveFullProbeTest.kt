@@ -94,8 +94,8 @@ class RevolveFullProbeTest {
             msg = "a full turn is twelve of the fixture's 30-degree sweeps",
         )
         val savedRing = DocumentFormat.save(doc)
-        val revolveStep = savedRing.lineSequence().last { it.startsWith("tool revolve") }
-        assertTrue(!revolveStep.contains("scalar="), "the full turn is spelled structurally — no angle at all: $revolveStep")
+        val revolveStep = saved(savedRing).tools("revolve").last()
+        assertTrue(!revolveStep.containsKey("params"), "the full turn is spelled structurally — no angle at all: $revolveStep")
 
         // ---- the cut: ray-pick the ring where it passes through the drawn handle, chain2, keep a side ----
         ed.setActiveSpace(Document.PLAN_SPACE)

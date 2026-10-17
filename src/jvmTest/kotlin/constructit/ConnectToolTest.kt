@@ -229,7 +229,7 @@ class ConnectToolTest {
         val r = routed()
         val once = DocumentFormat.save(r.ed.doc)
         assertTrue(
-            once.lines().any { it.startsWith("tool ${Tools.CONNECT}") && it.contains("signs=1;0") },
+            saved(once).tools(Tools.CONNECT).any { it.ints("signs") == listOf(1, 0) },
             "the step records the tool id and the two ends it joined (OP-1/OP-18): $once",
         )
         val doc = DocumentFormat.load(once)
@@ -518,7 +518,7 @@ class ConnectToolTest {
         assertTrue(ka.length() > 1e-4 && kb.length() > 1e-4, "and both are curvatures worth matching")
 
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.lines().any { it.startsWith("tool ${Tools.CONNECT_G2}") }, "the mode is the tool id: $saved")
+        assertTrue(saved(saved).hasTool(Tools.CONNECT_G2), "the mode is the tool id: $saved")
         val doc = DocumentFormat.load(saved)
         assertEquals(saved, DocumentFormat.save(doc), "save -> load -> save is byte-equal")
         assertEquals(path, runOf(doc.elements.last { it.kind == ElementKind.SPACE_CURVE }), "and it reloads piece for piece")

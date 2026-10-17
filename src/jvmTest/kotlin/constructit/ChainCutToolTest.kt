@@ -120,7 +120,7 @@ class ChainCutToolTest {
         // one step that creates two elements, and the file says so: replay rebuilds both, in order, with no
         // choice recorded — the pair is ordered by the chain's own run
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool splitbychain"), text)
+        assertTrue(saved(text).hasTool("splitbychain"), text)
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
         val back = reloaded.elements.filter { it.kind == ElementKind.SOLID }.takeLast(2)
@@ -170,8 +170,8 @@ class ChainCutToolTest {
         assertClose(ed.volumeOf(cut), 80.0 * 30.0 * 20.0, tol = 1e-6)
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool cutbychain"), "the cut rides the generic tool step (OP-18):\n$text")
-        assertTrue(Regex("tool cutbychain[^\n]*signs=1").containsMatchIn(text), "the kept side is written as a sign:\n$text")
+        assertTrue(saved(text).hasTool("cutbychain"), "the cut rides the generic tool step (OP-18):\n$text")
+        assertEquals(listOf(1), saved(text).tool("cutbychain").ints("signs"), "the kept side is written as a sign:\n$text")
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
 

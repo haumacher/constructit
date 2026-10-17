@@ -116,23 +116,16 @@ class BreakCurveTest {
     @Test
     fun anUnconsumedSegmentHasItsCreatingStepReplaced() {
         val ed = segmentDoc()
-        assertTrue(DocumentFormat.save(ed.doc).contains("tool segment pts=e1,e2"), DocumentFormat.save(ed.doc))
+        assertEquals(listOf("e1", "e2"), saved(ed.doc).tool("segment").ids("pts"), DocumentFormat.save(ed.doc))
         ed.breakAt(Vec2(40.0, 20.0))
         val script = DocumentFormat.save(ed.doc)
-        assertEquals(
-            atThisVersion(
-                """
-constructit 3
-point 0,0 -> e1
-point 100,50 -> e2
-point 40,20 -> e3
-tool segment pts=e1,e3 -> e4
-tool segment pts=e3,e2 -> e5
-""".trimStart(),
-            ),
-            script,
-            "the original's step is replaced, not annotated",
-        )
+        // the file (OP-32): the two end points, the break point, and the two halves between them — and no
+        // segment from end to end any more, which is the original's feature gone rather than annotated
+        val s = saved(script)
+        assertEquals(listOf(0.0 to 0.0, 100.0 to 50.0, 40.0 to 20.0), s.kind("point").map { it.pos("at") }, script)
+        val (a, b, m) = s.kind("point").map { it.ids("creates").single() }
+        assertEquals(listOf(listOf(a, m), listOf(m, b)), s.tools("segment").map { it.ids("pts") }, "the original's step is replaced, not annotated")
+        assertEquals(5, s.features.size, script)
         assertTrue(ed.statusHint.contains("split into"), "got: ${ed.statusHint}")
     }
 
@@ -181,8 +174,8 @@ tool segment pts=e3,e2 -> e5
         assertClose((pos(rider) - Vec2(80.0, 40.0)).length(), 0.0, 1e-6, "it still slides along the segment it was given")
         // ...and the script still declares the hidden original, plus the recorded hide
         val script = DocumentFormat.save(ed.doc)
-        assertTrue(script.contains("tool segment pts=e1,e2"), script)
-        assertTrue(script.contains("hide els=e3"), script)
+        assertEquals(listOf("e1", "e2"), saved(script).tools("segment").first().ids("pts"), script)
+        assertEquals(listOf("e3"), saved(script).hidden, script)
     }
 
     /** A *measurement* is a consumer too (OP-4): the number reads the segment, so the segment stays. */
@@ -224,7 +217,7 @@ tool segment pts=e3,e2 -> e5
         ed.breakAt((was.a + was.b) * 0.5)
         assertTrue(ed.statusHint.contains("stays (hidden)"), "got: ${ed.statusHint}")
         assertFalse(side.visible)
-        assertTrue(DocumentFormat.save(ed.doc).contains("tool keypoints"), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).hasTool("keypoints"), DocumentFormat.save(ed.doc))
         val halves = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.visible }.takeLast(2)
         assertEquals(2, halves.size)
         assertClose((seg(halves[0]).a - was.a).length(), 0.0, 1e-9)
@@ -394,8 +387,9 @@ tool segment pts=e3,e2 -> e5
         ed.breakAt(Vec2(35.0, 35.0))
         ed.drag(pos(ed.doc.elements.last { it.kind == ElementKind.ON_CURVE }), Vec2(20.0, 45.0))
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("breakarc e4"), once)
-        assertTrue(once.contains("ccw"), "the sweep is a stored discrete choice (OP-1): $once")
+        val brk = saved(once).kind("breakarc").single()
+        assertEquals("e4", brk.str("arc"), once)
+        assertEquals("ccw", brk.str("sweep"), "the sweep is a stored discrete choice (OP-1): $once")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         val fresh = Editor()
@@ -551,7 +545,8 @@ tool segment pts=e3,e2 -> e5
             assertEquals(listOf("factor"), r.handle!!.fields().map { it.label }, "and the one field it has writes t (OP-13)")
         }
         val script = DocumentFormat.save(ed.doc)
-        assertEquals(6, Regex("tool midpoint pts=\\S+ scalar=\"t\"").findAll(script).count(), script)
+        val tId = saved(script).param("t")?.str("id")
+        assertEquals(6, saved(script).tools("midpoint").count { it.ids("params") == listOf(tId) }, script)
     }
 
     /**
@@ -617,11 +612,11 @@ tool segment pts=e3,e2 -> e5
         ed.breakAt(GeomMath.bezierPointAt(bez(ed.doc.elements.last()), 0.4))
         val script = DocumentFormat.save(ed.doc)
         assertFalse(
-            script.contains("tool bezier pts=e1,e2,e3,e4"),
+            saved(script).tools("bezier").any { it.ids("pts") == listOf("e1", "e2", "e3", "e4") },
             "the original's step is gone:\n$script",
         )
-        assertEquals(2, Regex("tool bezier ").findAll(script).count(), "replaced by the two halves:\n$script")
-        assertTrue(script.contains("param \"t\" ="), script)
+        assertEquals(2, saved(script).tools("bezier").size, "replaced by the two halves:\n$script")
+        assertNotNull(saved(script).param("t"), script)
         assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.BEZIER && !it.visible }, "nothing hidden, nothing left over")
     }
 

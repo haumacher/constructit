@@ -330,8 +330,8 @@ class SeamDownToolTest {
 
         // the file: the chain is four ordinary tool steps, and it comes back identically (OP-18)
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("tool section"), "the section rides the generic tool step:\n$text")
-        assertTrue(text.contains("tool extrudeface"), text)
+        assertTrue(saved(text).hasTool("section"), "the section rides the generic tool step:\n$text")
+        assertTrue(saved(text).hasTool("extrudeface"), text)
         val reloaded = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
         assertEquals(ed.doc.elements.size, reloaded.elements.size)

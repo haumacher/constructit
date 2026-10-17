@@ -159,7 +159,7 @@ orthoclose -> e12
         ed.click(pos(el(ed, 10)))
         ed.click(pos(el(ed, 1)))
         assertTrue(ed.statusHint.contains("e10 now follows e1 along x"), "got: ${ed.statusHint}")
-        assertTrue(DocumentFormat.save(ed.doc).contains("tool makerel"), "got:\n${DocumentFormat.save(ed.doc)}")
+        assertTrue(saved(ed.doc).hasTool("makerel"), "got:\n${DocumentFormat.save(ed.doc)}")
 
         ed.drag(Vec2(-68.625, 46.0), Vec2(-58.625, 46.0))
         assertClose(closingLeg(ed), 20.25, 1e-6)
@@ -264,7 +264,8 @@ orthoclose -> e12
         val ed = loaded()
         assertTrue(ed.doc.makeRelative(el(ed, 10), el(ed, 1)))
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue(saved.contains("relative e10 e1 dofs=20.25mm"), "got:\n$saved")
+        val relative = saved(saved).kind("relative").single()
+        assertTrue(relative.str("point") == "e10" && relative.str("base") == "e1" && relative["dofs"].toString() == """[{"mm":20.25}]""", "got:\n$saved")
         assertRoundTrips(ed, "the relative step")
 
         // drag it, free it, drag it again: the freed literal is state on the `absolute` step or it is lost
@@ -272,7 +273,7 @@ orthoclose -> e12
         assertTrue(ed.doc.makeAbsolute(el(ed, 10)))
         ed.drag(pos(el(ed, 10)), pos(el(ed, 10)) + Vec2(5.0, 0.0))
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("absolute e10 dofs="), "got:\n$text")
+        assertTrue(saved(text).kind("absolute").any { it.str("point") == "e10" && it.containsKey("dofs") }, "got:\n$text")
         assertRoundTrips(ed, "the absolute step")
 
         val back = Editor()

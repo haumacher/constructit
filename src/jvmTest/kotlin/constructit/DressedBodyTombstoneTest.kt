@@ -184,9 +184,15 @@ class DressedBodyTombstoneTest {
 
         // a chamfer of that rail, as the file states it: the address in `signs=`, the choices scored on load
         val text =
-            DocumentFormat.save(ed.doc).trimEnd() + "\n" +
-                "param \"rr\" = 1mm\n" +
-                "tool chamferedge els=${ed.doc.nameOf(body)} clicks=0,0 scalar=\"rr\" signs=$rail -> eRail,eRailEntry\n"
+            withEntries(
+                DocumentFormat.save(ed.doc),
+                parameters = listOf("""{"id":"f900","name":"rr","value":"1 mm"}"""),
+                features =
+                    listOf(
+                        """{"id":"f901","kind":"tool","tool":"chamferedge","els":["${ed.doc.nameOf(body)}"],"clicks":[[0,0]],""" +
+                            """"params":["f900"],"signs":[$rail],"creates":["e900","e901"]}""",
+                    ),
+            )
         val back = Editor()
         back.replaceDocument(DocumentFormat.load(text))
         assertEquals(3, back.doc.elements.count { it.kind == ElementKind.SOLID }, "a dressing of its own on the rail:\n$text")
@@ -219,9 +225,9 @@ class DressedBodyTombstoneTest {
         val v = volumeOf(bodyOf(ed.doc))
 
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(1, text.lines().count { "removed=" in it }, "the tombstone is written:\n$text")
+        assertEquals(1, saved(text).tombstones().size, "the tombstone is written:\n$text")
         assertTrue(
-            text.lines().first { "removed=" in it }.substringAfter("->", "").isBlank(),
+            saved(text).tombstones().first().ids("creates").isEmpty(),
             "…and it declares no name:\n$text",
         )
         val back = DocumentFormat.load(text)
@@ -243,11 +249,11 @@ class DressedBodyTombstoneTest {
         val all = volumeOf(bodyOf(ed.doc))
         ed.selectElement(entriesOf(ed.doc)[1])
         assertTrue(ed.deleteSelection(), "the middle rounding off: ${ed.statusHint}")
-        assertTrue("removed=" in DocumentFormat.save(ed.doc), "there is a tombstone")
+        assertTrue(saved(ed.doc).tombstones().isNotEmpty(), "there is a tombstone")
 
         assertTrue(ed.undo(), "one undo")
         assertEquals(3, entriesOf(ed.doc).size, "all three rows back")
-        assertTrue("removed=" !in DocumentFormat.save(ed.doc), "and no tombstone left:\n${DocumentFormat.save(ed.doc)}")
+        assertTrue(saved(ed.doc).tombstones().isEmpty(), "and no tombstone left:\n${DocumentFormat.save(ed.doc)}")
         assertClose(volumeOf(bodyOf(ed.doc)), all, abs(all) * 1e-9, "the body is what it was")
     }
 
@@ -265,8 +271,8 @@ class DressedBodyTombstoneTest {
         assertEquals(slot, bandSlot(body, 10), "the third rounding kept its band slot")
 
         val text = DocumentFormat.save(ed.doc)
-        val row = text.lines().first { "removed=" in it }
-        assertTrue(row.substringAfter("-> ").trim().let { it.isNotEmpty() && !it.contains(',') }, "one name — the body: $row")
+        val row = saved(text).tombstones().first()
+        assertEquals(1, row.ids("creates").size, "one name — the body: $row")
         val back = DocumentFormat.load(text)
         assertEquals(2, entriesOf(back).size, "two roundings")
         assertEquals(2, back.elements.count { it.kind == ElementKind.SOLID }, "…on the one body it always was")
@@ -310,8 +316,8 @@ class DressedBodyTombstoneTest {
         ed.selectElement(bodyOf(ed.doc))
         assertTrue(ed.deleteSelection(), "the body goes: ${ed.statusHint}")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue("filletedge" !in text, "no rounding step is left at all:\n$text")
-        assertTrue("removed=" !in text, "…and no tombstone either:\n$text")
+        assertTrue(!saved(text).hasTool("filletedge"), "no rounding step is left at all:\n$text")
+        assertTrue(saved(text).tombstones().isEmpty(), "…and no tombstone either:\n$text")
         assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "the extrusion stands alone")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and the file is a fixed point")
     }

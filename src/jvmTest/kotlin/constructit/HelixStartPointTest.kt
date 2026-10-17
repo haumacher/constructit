@@ -276,7 +276,7 @@ class HelixStartPointTest {
         assertEquals(3.0, h.turns)
         assertEquals(Handedness.RIGHT, h.hand, "and the handedness its tool id states")
         assertVec(h.at(0.0), Vec3(20.0, 0.0, 0.0), "and it still starts along the space's own x — the phase-free spelling")
-        assertEquals(atThisVersion(text), DocumentFormat.save(doc), "and it saves back byte for byte")
+        assertEquals(imported(atThisVersion(text)), DocumentFormat.save(doc), "and it imports as itself")
     }
 
     /** The old gesture builds exactly the same curve it always did, beside the new one in one drawing. */
@@ -322,7 +322,7 @@ class HelixStartPointTest {
         assertManifold(mesh, "a spring about a stated start point")
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ${Tools.HELIX_PT_LEFT}") }, "the step records the tool id: $once")
+        assertTrue(saved(once).hasTool(Tools.HELIX_PT_LEFT), "the step records the tool id: $once")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "the script round-trips byte for byte")
 

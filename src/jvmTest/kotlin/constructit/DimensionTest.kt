@@ -335,7 +335,7 @@ class DimensionTest {
         ed.drag(Vec2(50.0, 20.0), Vec2(53.0, 37.5))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.contains("dofs="), "the placement is restated as a value")
+        assertTrue(saved(once).features.any { it.containsKey("dofs") }, "the placement is restated as a value")
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
         assertEquals(3, dimensions(reloaded).size)

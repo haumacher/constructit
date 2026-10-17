@@ -83,7 +83,7 @@ class DressedAddressStabilityTest {
     private fun plate(vararg rims: Int): String {
         val sb =
             StringBuilder(
-                """constructit ${DocumentFormat.VERSION}
+                """constructit ${DocumentFormat.JOURNAL_VERSION}
 orthostart 0,0 -> e1
 orthovertex 60,0 -> e2,e3
 orthovertex 60,40 -> e4,e5
@@ -209,7 +209,7 @@ param "r" = 4mm
     private fun loadedBevels(): constructit.editor.Document {
         val sb =
             StringBuilder(
-                """constructit ${DocumentFormat.VERSION}
+                """constructit ${DocumentFormat.JOURNAL_VERSION}
 orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
 """,
             )
@@ -358,8 +358,10 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
 
         // the third bevel, **added to the file** — the upright between the two, which turns their corner
         // into a corner of three edges
-        val third = "tool chamferedge els=e14 clicks=0,0 scalar=\"c\" signs=2;-1;1;0;-1 -> e17\n"
-        val grown = load(DocumentFormat.save(ed.doc) + third)
+        val now0 = DocumentFormat.save(ed.doc)
+        val c = saved(now0).paramIds("c").single()
+        val third = """{"id":"f900","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[0,0]],"params":["$c"],"signs":[2,-1,1,0,-1],"creates":["e17"]}"""
+        val grown = load(withEntries(now0, features = listOf(third)))
         val now = appendedEdges(refOf(body(grown)), base)
         val nowF = appendedFaces(refOf(body(grown)), L.block.faces.size)
         assertEquals(was[rail], now.getOrNull(rail), "the pair's corner rail is where it was")
@@ -375,7 +377,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
 
         // …and the record is in the file, so the same body comes back out of it
         val text = DocumentFormat.save(grown.doc)
-        assertTrue("slots=" in text, "the record is written down:\n$text")
+        assertTrue(saved(text).slotRecords().isNotEmpty(), "the record is written down:\n$text")
         val again = DocumentFormat.load(text)
         assertEquals(text, DocumentFormat.save(again), "the file round-trips byte-equal")
         assertEquals(now, appendedEdges(again.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef, base), "…and lays the same slots out")
@@ -396,7 +398,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
     @Test
     fun aStepAddressingACornerCurveSurvivesAnotherRoundingInTheDressing() {
         val three = DocumentFormat.save(DocumentFormat.load(script2.lines().filter { "r2" !in it }.joinToString("\n") + "\n"))
-        assertTrue("slots=2:r2.13.14-0" in three, "the three bevels record their corner's slots:\n$three")
+        assertTrue(saved(three).slotRecords().any { it.startsWith("2:r2.13.14-0") }, "the three bevels record their corner's slots:\n$three")
         val rail = EdgeName.BlendCornerRail(listOf(2, 13, 14), 0)
 
         fun dressed(doc: constructit.editor.Document): Element = doc.elements.filter { it.kind == ElementKind.SOLID }.let { it[it.size - 2] }
@@ -405,19 +407,25 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         val at = 30
         // …the rounding of the corner rail, and an **unrelated** fourth bevel on an upright no rounding of
         // this dressing touches, whose own choices the load scores (an address with no signs after it)
-        val roundIt = "param \"r2\" = 1mm\ntool filletedge els=e14 clicks=0,0 scalar=\"r2\" signs=$at -> e18,e19\n"
-        val fourth = "tool chamferedge els=e14 clicks=0,0 scalar=\"r\" signs=4 -> e20\n"
+        // the two additions as the file states them (OP-32): the order they stand in is their identities' —
+        // the order they were made in — never their place in the list
+        val r = saved(three).paramIds("r").single()
+        val r2 = """{"id":"f899","name":"r2","value":"1 mm"}"""
 
-        val plain = DocumentFormat.load(three + roundIt)
+        fun roundIt(id: Int) = """{"id":"f$id","kind":"tool","tool":"filletedge","els":["e14"],"clicks":[[0,0]],"params":["f899"],"signs":[$at],"creates":["e18","e19"]}"""
+
+        fun fourth(id: Int) = """{"id":"f$id","kind":"tool","tool":"chamferedge","els":["e14"],"clicks":[[0,0]],"params":["$r"],"signs":[4],"creates":["e20"]}"""
+
+        val plain = DocumentFormat.load(withEntries(three, listOf(r2), listOf(roundIt(900))))
         assertEquals(rail, edgesOf(refOf(dressed(plain))).getOrNull(at)?.name, "the step addresses the corner's own rail")
         val alone = volumeOf(tip(plain))
 
-        val grown = DocumentFormat.load(three + fourth + roundIt)
+        val grown = DocumentFormat.load(withEntries(three, listOf(r2), listOf(fourth(900), roundIt(901))))
         assertEquals(rail, edgesOf(refOf(dressed(grown))).getOrNull(at)?.name, "…and still does, with a fourth rounding ahead of it")
         val a = volumeOf(tip(grown))
         assertTrue(a < alone, "the fourth rounding really did take material off: $a against $alone")
-        val b = volumeOf(tip(DocumentFormat.load(three + roundIt + fourth)))
-        assertClose(a, b, abs(a) * 1e-9, "and where the fourth rounding stands in the file makes no difference to the body")
+        val b = volumeOf(tip(DocumentFormat.load(withEntries(three, listOf(r2), listOf(roundIt(900), fourth(901))))))
+        assertClose(a, b, abs(a) * 1e-9, "and whether the fourth rounding was made before or after makes no difference to the body")
         val text = DocumentFormat.save(grown)
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "the file round-trips byte-equal")
     }
@@ -447,7 +455,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertTrue(edges[at].reason == null, "the crease between the two rims is a crease of this body still")
         assertTrue(volumeOf(body(ed)) > congruent, "…and the smaller first rounding really did take less away")
         // …and the record is not touched by a *value*: it is structure, decided when the gesture ran (OP-21)
-        assertTrue("slots=1:m8.9-0;2:m9.10-0" in DocumentFormat.save(ed.doc), "the record is the gesture's:\n${DocumentFormat.save(ed.doc)}")
+        assertTrue(saved(ed.doc).slotRecords().any { it.startsWith("1:m8.9-0;2:m9.10-0") }, "the record is the gesture's:\n${DocumentFormat.save(ed.doc)}")
     }
 
     /**
@@ -483,7 +491,25 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
     fun anOlderFileHasItsCornerSlotsRecordedOnceAndMovesNothing() {
         assertEquals(9, DocumentFormat.CORNER_SLOT_VERSION, "the version that records a corner's slots")
         assertTrue(DocumentFormat.VERSION >= DocumentFormat.CORNER_SLOT_VERSION, "…and this build writes that record or a later numbering")
-        val old = DocumentFormat.save(rims(3).doc).replace("constructit ${DocumentFormat.VERSION}", "constructit 8").replace(Regex(" slots=\\S+"), "")
+        // `rims(3)` as the last journal-writing build saved it (format 10), verbatim, taken back to format 8 and
+        // without the record — a graph cannot be made an older file, so the journal comes from a build that wrote one
+        val rimsAtTen =
+            """
+constructit 10
+orthostart 0,0 -> e1
+orthovertex 40,0 -> e2,e3
+orthovertex 40,30 -> e4,e5
+orthovertex 0,30 -> e6,e7
+orthoclose -> e8
+param "depth" = 20mm
+tool extrude els=e3 clicks=20,0 scalar="depth" -> e9
+param "r" = 4mm
+tool filletedge els=e9 clicks=20,0 scalar="r" signs=8;-1;1;0;1 slots=1:m8.9-0;2:m9.10-0 -> e10,e11
+tool filletedge els=e10 clicks=40,15 scalar="r" signs=9;-1;1;0;1 -> e12
+tool filletedge els=e10 clicks=20,30 scalar="r" signs=10;-1;1;0;1 -> e13
+""".trimStart()
+        assertEquals(contentOf(DocumentFormat.save(rims(3).doc)), contentOf(imported(rimsAtTen)), "the fixture is this drawing")
+        val old = rimsAtTen.replace("constructit 10", "constructit 8").replace(Regex(" slots=\\S+"), "")
         val doc = DocumentFormat.load(old)
         assertTrue(doc.loadNotes.any { "numbered from a record" in it }, "the load says the record was taken: ${doc.loadNotes}")
         // the layout is the one that file was written against: the shared curves after every block, which is
@@ -492,7 +518,7 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertEquals(EdgeName.BlendMitre(listOf(8, 9), 0), edges[12], "the first mitre is where the older numbering had it")
         assertEquals(EdgeName.BlendMitre(listOf(9, 10), 0), edges[13], "…and so is the second")
         val once = DocumentFormat.save(doc)
-        assertTrue("slots=2:m8.9-0;2:m9.10-0" in once, "…and the record says so, in the last block:\n$once")
+        assertTrue(saved(once).slotRecords().any { it.startsWith("2:m8.9-0;2:m9.10-0") }, "…and the record says so, in the last block:\n$once")
         val again = DocumentFormat.load(once)
         assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
         assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")
@@ -524,8 +550,8 @@ orthostart ${L.plan[0].x},${L.plan[0].y} -> e1
         assertClose(a, volumeOf(nine.elements.last { it.kind == ElementKind.SOLID }), abs(a) * 1e-9, "and it is the same body")
 
         val once = DocumentFormat.save(doc)
-        assertTrue(once.startsWith("constructit ${DocumentFormat.VERSION}\n"), "it is saved at the version this build writes:\n$once")
-        assertTrue("slots=2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2" in once, "…with the record the body states:\n$once")
+        assertEquals(DocumentFormat.VERSION, saved(once).version, "it is saved at the version this build writes:\n$once")
+        assertTrue(saved(once).slotRecords().any { it.startsWith("2:r2.13.14-0;2:r2.13.14-1;2:r2.13.14-2") }, "…with the record the body states:\n$once")
         val again = DocumentFormat.load(once)
         assertTrue(again.loadNotes.none { "numbered from a record" in it }, "said once only: ${again.loadNotes}")
         assertEquals(once, DocumentFormat.save(again), "and the file is a fixed point of save")
@@ -600,7 +626,7 @@ tool filletedge els=e14 clicks=0,0 scalar="r2" signs=30 -> e18,e19
     /** The L-block with the two bevels that meet at its inside corner, as a file this build has written. */
     private val twoBevels =
         """
-constructit ${DocumentFormat.VERSION}
+constructit ${DocumentFormat.JOURNAL_VERSION}
 orthostart -26.875,-32.375 -> e1
 orthovertex -26.875,15.375 -> e2,e3
 orthovertex 61.875,15.375 -> e4,e5

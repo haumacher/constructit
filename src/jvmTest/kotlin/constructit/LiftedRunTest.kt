@@ -170,9 +170,9 @@ class LiftedRunTest {
         assertTrue(doc.loadNotes.isEmpty(), "nothing about this file is ambiguous: ${doc.loadNotes}")
         val once = DocumentFormat.save(doc)
         assertEquals(
-            atThisVersion(ROUND_PILLAR_CIT),
-            withoutRestatedAttach(once),
-            "the file is written back exactly as it came, but for the freedom its attach now states",
+            imported(atThisVersion(ROUND_PILLAR_CIT)),
+            once,
+            "the file imports as itself",
         )
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again — byte-equal from the first save on")
     }
@@ -340,9 +340,9 @@ class LiftedRunTest {
         assertTrue(note.contains("pick a point of the section to ride it elsewhere"), "…and the alternative: $note")
 
         val script = DocumentFormat.save(doc)
-        val step = script.lineSequence().last { it.startsWith("tool sweep") }
-        assertTrue(step.contains("els=e43,e34"), "the step names the drawing it swept along: $step")
-        assertTrue(step.contains("signs=1"), "and the crossing it chose: $step")
+        val step = saved(script).tools("sweep").last()
+        assertEquals(listOf("e43", "e34"), step.ids("els"), "the step names the drawing it swept along: $step")
+        assertEquals(listOf(1), step.ints("signs"), "and the crossing it chose: $step")
         assertEquals(script, DocumentFormat.save(DocumentFormat.load(script)), "and the drawing round-trips byte-equal")
         val back = DocumentFormat.load(script)
         assertTrue(back.loadNotes.isEmpty(), "nothing is ambiguous about it: ${back.loadNotes}")
@@ -473,7 +473,7 @@ class LiftedRunTest {
         assertClose(Curves3.length(pathOf(run)), 2.0 * 48.0 + 2.0 * 40.5 + 2.0 * kotlin.math.PI * 10.0, 1e-9, "the run is the border")
 
         val script = DocumentFormat.save(ed.doc)
-        assertTrue(script.lineSequence().any { it.startsWith("tool lift els=e43") }, "the lift is a step of its own:\n$script")
+        assertTrue(saved(script).tools("lift").any { it.ids("els") == listOf("e43") }, "the lift is a step of its own:\n$script")
         assertEquals(script, DocumentFormat.save(DocumentFormat.load(script)), "and it round-trips byte-equal")
         val back = DocumentFormat.load(script)
         assertClose(

@@ -371,7 +371,7 @@ class CombineViewsToolTest {
     fun theRunSurvivesSaveAndLoadByteForByte() {
         val (ed, run) = routed()
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("tool ${Tools.COMBINE_VIEWS}") }, "the step records the tool id: $once")
+        assertTrue(saved(once).hasTool(Tools.COMBINE_VIEWS), "the step records the tool id: $once")
         val doc = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(doc), "the script round-trips byte for byte")
         val back = doc.elements.last { it.kind == ElementKind.SPACE_CURVE }

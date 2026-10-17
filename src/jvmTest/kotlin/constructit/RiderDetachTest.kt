@@ -269,7 +269,7 @@ class RiderDetachTest {
         ed.click(pos(rider))
         assertTrue(ed.deleteSelection(), "got: ${ed.statusHint}")
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(!text.contains("absolute"), "the step went with the element it named: $text")
+        assertTrue(saved(text).kind("absolute").isEmpty(), "the step went with the element it named: $text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and what is left still replays")
     }
 
@@ -283,7 +283,7 @@ class RiderDetachTest {
         ed.drag(pos(rider), Vec2(70.0, 55.0))
 
         val text = DocumentFormat.save(ed.doc)
-        assertTrue(text.contains("absolute e4 dofs="), "the step restates the freed coordinates: $text")
+        assertTrue(saved(text).kind("absolute").any { it.str("point") == "e4" && it.containsKey("dofs") }, "the step restates the freed coordinates: $text")
         val fresh = DocumentFormat.load(text)
         val reloaded = named(fresh, "e4")
         assertEquals(ElementKind.POINT, reloaded.kind, "it comes back free")
@@ -353,7 +353,7 @@ class RiderDetachTest {
 
         // and the file carries the change: one step, and a byte-stable round trip at format 2
         val text = DocumentFormat.save(doc)
-        assertTrue(text.contains("absolute e18 dofs="), "the freed position is state: the step restates it")
+        assertTrue(saved(text).kind("absolute").any { it.str("point") == "e18" && it.containsKey("dofs") }, "the freed position is state: the step restates it")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save is byte-equal")
     }
 

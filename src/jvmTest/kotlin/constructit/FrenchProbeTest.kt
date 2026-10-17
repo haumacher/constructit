@@ -54,7 +54,7 @@ class FrenchProbeTest {
         L10n.locale = "en"
         assertNotEquals(fr, ed.statusHint, "the same message, English now")
         val saved = DocumentFormat.save(ed.doc)
-        assertTrue("7.5mm" in saved, "the file keeps the point: $saved")
+        assertTrue(saved(saved).parameters.any { it.str("value") == "7.5 mm" }, "the file keeps the point: $saved")
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)))
     }
 

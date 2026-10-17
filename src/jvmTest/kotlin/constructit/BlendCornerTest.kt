@@ -333,7 +333,7 @@ tool filletedge els=e12 clicks=3.392929260632428,51.410033777603246 scalar="r" s
         val ed = reporterGesture(Tools.BLEND_FACE, Vec2(19.6875, 3.1875))
         val once = DocumentFormat.save(ed.doc)
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "the whole drawing round-trips byte-equal")
-        assertTrue(once.contains("tool filletfaceedges"), "…and the corner rides the generic tool step: $once")
+        assertTrue(saved(once).hasTool("filletfaceedges"), "…and the corner rides the generic tool step: $once")
 
         val a = Evaluator().solid(tipOf(once)).mesh
         val b = Evaluator().solid(tipOf(once)).mesh

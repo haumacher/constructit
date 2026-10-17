@@ -134,8 +134,9 @@ group "g1" els=e6,e3
             "the ticked candidates are members",
         )
         // …and the recorded step lists them, so the membership survives the file
-        val line = DocumentFormat.save(ed.doc).lines().first { it.startsWith("group ") }
-        assertEquals("group \"fig\" els=e6,e3,e1,e2,e4,e5", line)
+        val group = saved(ed.doc).kind("group").first()
+        assertEquals("fig", group.str("name"))
+        assertEquals(listOf("e6", "e3", "e1", "e2", "e4", "e5"), group.ids("members"))
         assertTrue(d.warnings.isEmpty(), "nothing is left outside, so there is nothing to warn about")
     }
 
@@ -206,7 +207,7 @@ group "g1" els=e6,e3
     fun theePlacedFixtureRoundTripsAndStillMoves() {
         val ed = placed()
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.lines().any { it.startsWith("place ") }, once)
+        assertTrue(saved(once).kind("group").any { it.containsKey("place") }, once)
         val reloaded = DocumentFormat.load(once)
         assertEquals(once, DocumentFormat.save(reloaded), "save -> load -> save must be identical")
 
@@ -405,9 +406,9 @@ group "g1" els=e6,e3
         assertTrue(g.placed, "got: ${ed.statusHint}")
 
         // the step states the rider's parameter and keeps the click it was placed by
-        val line = DocumentFormat.save(ed.doc).lines().first { it.startsWith("tool ptonline") }
-        assertTrue(line.contains("clicks=-10,20"), "the click is a choice and stays verbatim: $line")
-        assertTrue(line.contains("dofs="), "and the position is state: $line")
+        val line = saved(ed.doc).tools("ptonline").first()
+        assertEquals("[[-10,20]]", line["clicks"].toString(), "the click is a choice and stays verbatim: $line")
+        assertTrue(line.containsKey("dofs"), "and the position is state: $line")
 
         // turn the frame 90° — the case that used to break the file
         ed.selectGroup(g)
@@ -485,21 +486,15 @@ group "g1" els=e6,e3
         ed.setTool(Tools.MAKE_RELATIVE)
         ed.click(Vec2(30.0, 40.0))
         ed.click(Vec2(0.0, 0.0))
+        // the free point's restated position carries the last bit of the polar round trip Make absolute
+        // performed (x = 50 mm at 53.13°), which is arithmetic and not a leak
+        val s = saved(ed.doc)
+        assertEquals(listOf(0.0 to 0.0, 30.000000000000004 to 40.0), s.kind("point").map { it.pos("at") }, "$s")
+        assertEquals(listOf("makerel", "makeabs", "makerel"), s.kind("tool").map { it.str("tool") }, "three operations, three features")
         assertEquals(
-            // the free point's restated position carries the last bit of the polar round trip Make absolute
-            // performed (x = 50 mm at 53.13°), which is arithmetic and not a leak
-            atThisVersion(
-                """
-constructit 3
-point 0,0 -> e1
-point 30.000000000000004,40 -> e2
-tool makerel els=e2,e1 clicks=30,40;0,0
-tool makeabs els=e2 clicks=30,40
-tool makerel els=e2,e1 clicks=30,40;0,0 dofs=50mm;53.13010235415598deg
-""".trimStart(),
-            ),
-            DocumentFormat.save(ed.doc),
-            "three operations, three steps, and only the live one restates its offset",
+            listOf(null, null, """[{"mm":50},{"deg":53.13010235415598}]"""),
+            s.kind("tool").map { it["dofs"]?.toString() },
+            "…and only the live one restates its offset",
         )
     }
 
@@ -514,7 +509,7 @@ tool makerel els=e2,e1 clicks=30,40;0,0 dofs=50mm;53.13010235415598deg
         ed.replaceDocument(DocumentFormat.load(fixture))
         assertTrue(ed.doc.journal.none { it.kind == "attach" }, "the refused attaches are not re-recorded")
         val saved = DocumentFormat.save(ed.doc)
-        assertFalse(saved.contains("attach"), saved)
+        assertTrue(saved(saved).kind("attach").isEmpty(), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "and the healed file is stable")
         // the geometry is the file's: the rim point still follows the centre, and the circle still fits
         assertNotNull(ed.doc.relativeOf(el(ed, 5)))

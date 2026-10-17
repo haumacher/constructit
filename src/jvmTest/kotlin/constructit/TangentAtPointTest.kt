@@ -210,8 +210,8 @@ class TangentAtPointTest {
         val before = lineValue(tangent)
 
         val once = DocumentFormat.save(ed.doc)
-        val step = assertNotNull(once.lines().firstOrNull { it.startsWith("tool tangentat") }, "the step: $once")
-        assertEquals(2, step.substringAfter("els=").substringBefore(' ').split(",").size, "it names the point and the circle: $step")
+        val step = assertNotNull(saved(once).tools("tangentat").firstOrNull(), "the step: $once")
+        assertEquals(2, step.ids("els").size, "it names the point and the circle: $step")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "save ∘ load is a fixed point")
 
         val reloaded = DocumentFormat.load(once)

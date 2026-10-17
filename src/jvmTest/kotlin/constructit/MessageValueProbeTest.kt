@@ -99,7 +99,7 @@ tool connect els=e3,e5 clicks=-59.875,-12.875;-4.375,-26.875 signs=0;0 dofs=1;1 
         assertTrue('{' !in de, de)
         // the file itself is English whatever the session speaks
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.startsWith("constructit ") && "Verrundung" !in saved && "Kurve" !in saved, "the file is format, not prose")
+        assertTrue(DocumentFormat.isGraph(saved) && "Verrundung" !in saved && "Kurve" !in saved, "the file is format, not prose")
     }
 
     @Test

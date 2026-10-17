@@ -104,14 +104,13 @@ class RectanglePathTest {
         assertRectangle(ed.doc, -20.0, -10.0, 30.0, 25.0)
         assertEquals(0, ed.doc.freePoints.size, "no stray points beside the path's own corners")
 
-        // the file reads as an ortho path, with no `tool` step and no new kind
+        // the file reads as an ortho path — a start, three vertices and a close — with no `tool` and no new kind
         val saved = DocumentFormat.save(ed.doc)
-        assertEquals(
-            listOf("orthostart", "orthovertex", "orthovertex", "orthovertex", "orthoclose"),
-            saved.lineSequence().drop(1).filter { it.isNotBlank() }.map { it.substringBefore(' ') }.toList(),
-            saved,
-        )
-        assertFalse(saved.contains("tool rect"), saved)
+        val pathFeature = saved(saved).features.single()
+        assertEquals("path", pathFeature.str("kind"), saved)
+        assertEquals(3, pathFeature.arr("vertices").size, saved)
+        assertTrue(pathFeature.containsKey("close"), saved)
+        assertFalse(saved(saved).hasTool("rect"), saved)
     }
 
     /** A degenerate second click builds nothing rather than half a rectangle. */
@@ -122,7 +121,7 @@ class RectanglePathTest {
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(40.0, 0.0))
         assertEquals(0, ed.doc.orthoPaths.size, "no rectangle there")
-        assertEquals("", DocumentFormat.save(ed.doc).lineSequence().drop(1).joinToString("").trim(), "and no steps")
+        assertTrue(saved(ed.doc).let { it.features.isEmpty() && it.parameters.isEmpty() }, "and no steps")
     }
 
     /**
@@ -170,7 +169,7 @@ class RectanglePathTest {
         ed.setTool(Tools.RECTANGLE)
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(50.0, 30.0))
-        assertTrue(DocumentFormat.save(ed.doc).contains("weldortho"), DocumentFormat.save(ed.doc))
+        assertTrue(saved(ed.doc).kind("weldortho").isNotEmpty(), DocumentFormat.save(ed.doc))
 
         // dragging the anchor now reshapes the rectangle, which is what "joined" means
         ed.drag(Vec2(50.0, 30.0), Vec2(70.0, 45.0))
@@ -227,7 +226,7 @@ tool rect pts=e1,e2 clicks=0,0;80,40 -> e3,e4,e5,e6,e7,e8
 
         // and it round-trips as itself: the step is rewritten with the same tool id, so it never becomes a path
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.contains("tool rect "), saved)
+        assertTrue(saved(saved).hasTool("rect"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "save -> load -> save")
 
         // dragging a clicked corner still reshapes it, exactly as it always did
